@@ -1,6 +1,7 @@
 // Controlador Principal de la Aplicación (SPA) con Menú Lateral Izquierdo Inmóvil
 const App = {
   currentUser: null,
+  sessionVersion: 0,
   catalogs: null,
   activeTab: 'register',
   sidebarCollapsed: false,
@@ -9,14 +10,24 @@ const App = {
     this.initToastContainer();
     this.initSidebarEvents();
 
-    // Cada vez que se abre la aplicación, inicia con rol de Usuario y espacios de correo/nombre vacíos
-    API.setToken('');
-    this.currentUser = null;
-    localStorage.removeItem('tec_qs_pref_recomienda_email');
-    localStorage.removeItem('tec_qs_pref_recomienda_nombre');
-    localStorage.removeItem('tec_qs_pref_sede');
-    localStorage.removeItem('tec_qs_pref_depto');
-    await this.loginUser('wgarita@itcr.ac.cr', 'TecQS2026!');
+    // Retirar tokens antiguos; los permisos ahora se resuelven desde cookies HttpOnly.
+    localStorage.removeItem('tec_qs_token');
+    try {
+      const result = await API.get('/api/auth/me');
+      this.currentUser = result.user;
+    } catch (err) {
+      if (err.status !== 401) {
+        this.showToast('No se logró iniciar la sesión. Actualice la página.', 'error');
+        return;
+      }
+      try {
+        this.currentUser = (await API.post('/api/auth/guest')).user;
+      } catch (_) {
+        this.showToast('No se logró iniciar la sesión. Actualice la página.', 'error');
+        return;
+      }
+    }
+    this.startSessionMonitor();
 
     // 2. Cargar catálogos
     try {
@@ -73,76 +84,136 @@ const App = {
     }
   },
 
-  async loginUser(email, password) {
+  showAdminLogin() {
+    if (this.currentUser?.rol === 'ADMIN') return;
+    const dialog = document.getElementById('admin-login-dialog');
+    document.getElementById('admin-login-form').reset();
+    document.getElementById('admin-login-error').textContent = '';
+    dialog.showModal();
+    document.getElementById('admin-username').focus();
+  },
+
+  closeAdminLogin() {
+    document.getElementById('admin-login-form').reset();
+    document.getElementById('admin-login-dialog').close();
+    document.getElementById('admin-access-button').focus();
+  },
+
+  async submitAdminLogin(event) {
+    event.preventDefault();
+    const button = document.getElementById('admin-login-submit');
+    const errorEl = document.getElementById('admin-login-error');
+    button.disabled = true;
+    errorEl.textContent = '';
     try {
-      const res = await API.post('/api/auth/login', { email, password });
-      API.setToken(res.token);
-      this.currentUser = res.user;
+      const result = await API.post('/api/auth/login', {
+        username: document.getElementById('admin-username').value,
+        password: document.getElementById('admin-password').value
+      });
+      this.sessionVersion++;
+      this.currentUser = result.user;
+      this.closeAdminLogin();
       this.updateRoleUI();
-      return true;
+      this.navigate(this.activeTab);
+      this.showToast('Sesión de administrador iniciada.', 'success');
     } catch (err) {
-      this.showToast(err.message || 'Error de autenticación', 'error');
-      return false;
+      errorEl.textContent = err.message || 'No se logró iniciar sesión.';
+      document.getElementById('admin-password').value = '';
+      document.getElementById('admin-password').focus();
+    } finally {
+      button.disabled = false;
     }
   },
 
-  // Conmutador entre los 2 únicos roles del sistema: Administrador y Usuario
-  async switchRole(targetRole) {
-    const email = targetRole === 'ADMIN' ? 'admin@tec.ac.cr' : 'wgarita@itcr.ac.cr';
-    const roleName = targetRole === 'ADMIN' ? 'Administrador' : 'Usuario';
-    
-    this.showToast(`Cambiando a rol: ${roleName}...`, 'info');
-    const ok = await this.loginUser(email, 'TecQS2026!');
-    if (ok) {
-      this.showToast(`✅ Rol activo: ${roleName}`, 'success');
+  async restoreUserSession() {
+    if (this.restoringSession) return this.restoringSession;
+    this.restoringSession = (async () => {
+      this.sessionVersion++;
+      this.currentUser = null;
+      this.clearAdminViews();
       this.updateRoleUI();
-      // Si el rol es Usuario y está en una pantalla de solo admin, redirigir a registro
-      if (targetRole === 'USUARIO' && ['export', 'admin'].includes(this.activeTab)) {
-        this.navigate('register');
-      } else {
-        this.navigate(this.activeTab);
-      }
+      const result = await API.post('/api/auth/guest');
+      this.currentUser = result.user;
+      this.updateRoleUI();
+      this.navigate('register');
+    })();
+    try { await this.restoringSession; }
+    finally { this.restoringSession = null; }
+  },
+
+  clearAdminViews() {
+    for (const id of ['admin-view', 'export-view', 'directory-view', 'bulk-upload-view']) {
+      document.getElementById(id).replaceChildren();
+    }
+    AdminModule.stats = null;
+    AdminModule.driveStatus = null;
+  },
+
+  async handleLogout() {
+    const button = document.getElementById('admin-logout-button');
+    button.disabled = true;
+    try {
+      await API.post('/api/auth/logout');
+      await this.restoreUserSession();
+      this.showToast('Sesión administrativa cerrada. Modo usuario activo.', 'info');
+    } catch (_) {
+      this.showToast('No se logró cerrar la sesión. Intente nuevamente.', 'error');
+    } finally {
+      button.disabled = false;
     }
   },
 
-  handleLogout() {
-    API.setToken('');
-    this.currentUser = null;
-    this.showToast('Sesión cerrada. Reiniciando con rol de Usuario...', 'info');
-    this.loginUser('wgarita@itcr.ac.cr', 'TecQS2026!').then(() => {
-      this.navigate('register');
+  startSessionMonitor() {
+    const check = async () => {
+      if (document.hidden || this.checkingSession || this.restoringSession) return;
+      this.checkingSession = true;
+      try {
+        const result = await API.get('/api/auth/me');
+        if (result.user.rol !== this.currentUser?.rol || result.user.id !== this.currentUser?.id) {
+          this.sessionVersion++;
+          this.currentUser = result.user;
+          this.clearAdminViews();
+          this.updateRoleUI();
+          this.navigate('register');
+        }
+      } catch (err) {
+        if (err.status === 401) {
+          try {
+            await this.restoreUserSession();
+            this.showToast('La sesión venció. Modo usuario activo.', 'info');
+          } catch (_) { /* Mantener las funciones administrativas bloqueadas. */ }
+        }
+      } finally { this.checkingSession = false; }
+    };
+    setInterval(check, 30000);
+    window.addEventListener('focus', check);
+    window.addEventListener('pageshow', check);
+    document.addEventListener('visibilitychange', check);
+    document.getElementById('admin-login-dialog').addEventListener('close', () => {
+      document.getElementById('admin-login-form').reset();
     });
   },
 
   // Actualiza la interfaz del menú lateral según el rol activo (2 únicos roles: Administrador y Usuario)
   updateRoleUI() {
-    if (!this.currentUser) return;
-    const isAdmin = this.currentUser.rol === 'ADMIN';
+    const isAdmin = this.currentUser?.rol === 'ADMIN';
 
     // Actualizar datos del usuario en el menú lateral
     const userNameEl = document.getElementById('sidebar-user-name');
     const userDeptoEl = document.getElementById('sidebar-user-depto');
     const userInitialsEl = document.getElementById('sidebar-user-initials');
 
-    if (userNameEl) userNameEl.textContent = this.currentUser.nombre_completo || 'Wilson Garita Gómez';
-    if (userDeptoEl) userDeptoEl.textContent = this.currentUser.departamento_nombre || 'Planificación Institucional (OPI)';
-    if (userInitialsEl) {
-      const parts = (this.currentUser.nombre_completo || 'Wilson Garita').trim().split(/\s+/);
-      userInitialsEl.textContent = ((parts[0]?.[0] || 'W') + (parts[1]?.[0] || 'G')).toUpperCase();
-    }
+    if (userNameEl) userNameEl.textContent = isAdmin ? 'Administrador QS' : 'Usuario';
+    if (userDeptoEl) userDeptoEl.textContent = isAdmin ? 'Sesión administrativa activa' : 'Acceso de usuario';
+    if (userInitialsEl) userInitialsEl.textContent = isAdmin ? 'AD' : 'US';
 
-    // Actualizar badge y selector de rol en el menú lateral
     const roleBadge = document.getElementById('role-display-badge');
-    const roleSelector = document.getElementById('role-selector');
-
     if (roleBadge) {
       roleBadge.textContent = isAdmin ? 'ADMINISTRADOR' : 'USUARIO';
       roleBadge.className = `px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${isAdmin ? 'bg-amber-100 text-amber-900' : 'bg-slate-200 text-slate-800'}`;
     }
-
-    if (roleSelector) {
-      roleSelector.value = this.currentUser.rol;
-    }
+    document.getElementById('admin-access-button').hidden = isAdmin;
+    document.getElementById('admin-logout-button').hidden = !isAdmin;
 
     // Visibilidad de opciones en el menú lateral según los 2 roles
     const navBulk = document.getElementById('nav-item-bulk');
@@ -156,6 +227,7 @@ const App = {
   },
 
   navigate(tabName) {
+    if (['admin', 'export'].includes(tabName) && this.currentUser?.rol !== 'ADMIN') tabName = 'register';
     this.activeTab = tabName;
 
     // Actualizar estilos activos en el menú lateral izquierdo
@@ -234,7 +306,7 @@ const App = {
     const toast = document.createElement('div');
     toast.className = `alert alert-${type}`;
     toast.style.cssText = 'box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15); pointer-events: auto; min-width: 280px; max-width: 450px; margin-bottom: 0;';
-    toast.innerHTML = `<span>${message}</span>`;
+    toast.textContent = message;
 
     container.appendChild(toast);
 

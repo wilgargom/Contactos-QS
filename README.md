@@ -55,15 +55,26 @@ npm test
 
 ---
 
-## 👥 Credenciales de Demostración
+## Acceso y roles
 
-| Usuario | Correo | Contraseña | Rol | Procedencia Institucional |
-| :--- | :--- | :--- | :--- | :--- |
-| **Administrador General** | `admin@tec.ac.cr` | `TecQS2026!` | `ADMIN` | Dirección de Cooperación (Cartago) |
-| **Operador Computación** | `cbrenes@tec.ac.cr` | `TecQS2026!` | `USUARIO` | Ingeniería en Computación (Cartago) |
-| **Operador San José** | `evargas@tec.ac.cr` | `TecQS2026!` | `USUARIO` | Administración de Empresas (San José) |
+La aplicación crea automáticamente una sesión con rol Usuario, sin credenciales ni
+identidad de funcionario predeterminada. El botón **Acceso de administrador** solicita
+usuario y contraseña, que se validan exclusivamente en el servidor. La sesión dura
+12 horas, se mantiene al actualizar la página y se revoca al cerrar sesión, regresando
+al modo Usuario. Las cookies son HttpOnly y SameSite=Strict, con Secure bajo HTTPS
+en Azure. Los accesos de demostración anteriores quedan inactivos al actualizar.
 
-*(Puede conmutar de usuario directamente desde el selector de la barra superior para evaluar el comportamiento según rol).*
+La configuración administrativa se encuentra en `src/adminCredentials.js`, fuera de
+`public/`, y lee el hash scrypt con sal desde la configuración privada del servidor. No se incluyen contraseñas
+legibles en JavaScript público ni en esta documentación. Antes de activar el acceso en Azure, configure `QS_ADMIN_USERNAME` y
+`QS_ADMIN_PASSWORD_HASH` en las variables de entorno de App Service; el formato del hash es `scrypt:<sal hexadecimal de 16 bytes>:<hash de 64 bytes>`.
+Si no se configura un hash válido, el acceso administrativo queda deshabilitado y
+el modo Usuario continúa funcionando. Los cambios de credenciales invalidan las sesiones administrativas al reiniciar.
+
+El rol Usuario conserva registro individual, carga de contactos y directorio de los
+registros de su sesión. El tablero, Drive, la exportación oficial QS y la carga
+masiva del padrón requieren sesión administrativa. La selección del funcionario
+reportante en los formularios es independiente del rol de acceso.
 
 ---
 
@@ -82,7 +93,7 @@ tec-qs-contacts/
 │   │   ├── schema.sql       # Tablas normalizadas, claves foráneas e índices
 │   │   └── seed.js          # Catálogos de sedes, escuelas, usuarios y contactos
 │   ├── services/
-│   │   ├── authService.js   # Autenticación, hash PBKDF2 y sesiones
+│   │   ├── authService.js   # Autenticación, hash scrypt y sesiones HttpOnly
 │   │   ├── contactService.js# CRUD, filtros facetados y bitácora de auditoría
 │   │   ├── duplicateDetector.js # Motor de similitud Levenshtein y reglas anti-duplicados
 │   │   ├── excelService.js  # Lector y generador binario OpenXML (.xlsx y .csv)

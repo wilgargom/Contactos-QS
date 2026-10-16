@@ -19,15 +19,14 @@ const config = require('../config');
 
 // Middleware de autenticación y resolución de usuario
 function authenticate(req, res, next) {
-  const authHeader = req.headers['authorization'] || '';
-  const queryToken = (req.query && req.query.token) ? req.query.token : undefined;
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : queryToken;
+  const authService = require('../services/authService');
+  const token = authService.getRequestToken(req);
   
   if (!token) {
     return res.status(401).json({ success: false, message: 'Autenticación requerida.' });
   }
 
-  const user = require('../services/authService').getSessionUser(token);
+  const user = authService.getSessionUser(token);
   if (!user) {
     return res.status(401).json({ success: false, message: 'Sesión expirada o inválida.' });
   }
@@ -47,6 +46,24 @@ function requireAdmin(req, res, next) {
 // Enrutador de API modular
 function handleApi(req, res, pathname, query, body, user) {
   const method = req.method;
+
+  // Las funciones del tablero, Drive, exportación QS y padrón masivo son administrativas.
+  const adminOnly = pathname === '/api/stats' || pathname.startsWith('/api/drive/') ||
+    pathname.startsWith('/api/export/') || pathname === '/api/templates/FUNCIONARIOS' ||
+    (pathname.startsWith('/api/bulk/') && body.tipo_contacto === 'FUNCIONARIOS');
+  if (adminOnly && user.rol !== 'ADMIN') {
+    return res.status(403).json({ success: false, message: 'Se requiere una sesión de administrador.' });
+  }
+
+  // El rol de usuario conserva acceso a sus propios contactos.
+  const contactRoute = pathname.match(/^\/api\/contacts\/([^/]+)(?:\/resolve-duplicate)?$/);
+  const reserved = ['check-email', 'export-directory'];
+  if (contactRoute && !reserved.includes(contactRoute[1]) && user.rol !== 'ADMIN') {
+    const contact = getDb().prepare('SELECT created_by FROM contactos WHERE id = ?').get(contactRoute[1]);
+    if (contact && contact.created_by !== user.id) {
+      return res.status(403).json({ success: false, message: 'No tiene acceso a este contacto.' });
+    }
+  }
 
   // 1. Catálogos generales del sistema
   if (pathname === '/api/catalogs' && method === 'GET') {

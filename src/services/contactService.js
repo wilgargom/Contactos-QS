@@ -227,12 +227,12 @@ function listContacts(filters = {}, user = null) {
 
   // Requisito: El usuario estándar solo puede ver lo que ingresó por carga masiva o registro individual
   if (user && user.rol !== 'ADMIN') {
-    sql += ' AND (c.created_by = ? OR LOWER(c.recomienda_email) = LOWER(?))';
-    params.push(user.id, (user.email || '').trim());
+    sql += " AND (c.created_by = ? OR (? <> '' AND LOWER(c.recomienda_email) = LOWER(?)))";
+    params.push(user.id, (user.email || '').trim(), (user.email || '').trim());
   } else if ((filters.mis_registros_solamente === 'true' || filters.mis_registros_solamente === '1' || filters.mis_registros_solamente === true) && user) {
     // Si el usuario es administrador pero activó la opción "Solo mis registros"
-    sql += ' AND (c.created_by = ? OR LOWER(c.recomienda_email) = LOWER(?))';
-    params.push(user.id, (user.email || '').trim());
+    sql += " AND (c.created_by = ? OR (? <> '' AND LOWER(c.recomienda_email) = LOWER(?)))";
+    params.push(user.id, (user.email || '').trim(), (user.email || '').trim());
   }
 
   if (filters.tipo_contacto) {
@@ -439,4 +439,3 @@ module.exports = {
   resolveDuplicate,
   getStatistics
 };
-

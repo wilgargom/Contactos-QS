@@ -1,12 +1,5 @@
-const crypto = require('node:crypto');
 const { getDb, runTransaction } = require('./db');
-
-// Función segura de hash con PBKDF2 (sin dependencias externas)
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 10000, 64, 'sha512').toString('hex');
-  return { hash, salt };
-}
+const adminCredentials = require('../adminCredentials');
 
 function seedDatabase() {
   const db = getDb();
@@ -43,55 +36,26 @@ function seedDatabase() {
       stmtDepto.run(d.id, d.codigo, d.nombre, d.sede);
     }
 
-    // 3. Usuarios de prueba institucionales
-    const usersData = [
-      {
-        id: 'usr-admin-01',
-        nombre_completo: 'Wilson Garita Gómez',
-        email: 'wgarita@itcr.ac.cr',
-        password: 'TecQS2026!',
-        rol: 'ADMIN',
-        sede_id: 'sede-cartago',
-        departamento_id: 'dep-inter'
-      },
-      {
-        id: 'usr-admin-backup',
-        nombre_completo: 'Wilson Garita Gómez',
-        email: 'admin@tec.ac.cr',
-        password: 'TecQS2026!',
-        rol: 'ADMIN',
-        sede_id: 'sede-cartago',
-        departamento_id: 'dep-inter'
-      },
-      {
-        id: 'usr-user-01',
-        nombre_completo: 'Ing. Carlos Brenes (Computación)',
-        email: 'cbrenes@tec.ac.cr',
-        password: 'TecQS2026!',
-        rol: 'USUARIO',
-        sede_id: 'sede-cartago',
-        departamento_id: 'dep-comp'
-      },
-      {
-        id: 'usr-user-02',
-        nombre_completo: 'Dra. Elena Vargas (San José)',
-        email: 'evargas@tec.ac.cr',
-        password: 'TecQS2026!',
-        rol: 'USUARIO',
-        sede_id: 'sede-sanjose',
-        departamento_id: 'dep-admin'
-      }
-    ];
-
-    const stmtUser = trx.prepare(`
-      INSERT OR IGNORE INTO usuarios (id, nombre_completo, email, password_hash, salt, rol, sede_id, departamento_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const u of usersData) {
-      const { hash, salt } = hashPassword(u.password);
-      stmtUser.run(u.id, u.nombre_completo, u.email, hash, salt, u.rol, u.sede_id, u.departamento_id, new Date().toISOString());
+    // 3. Retirar los accesos de demostración sin borrar su historial.
+    const legacyIds = ['usr-admin-01', 'usr-admin-backup', 'usr-user-01', 'usr-user-02'];
+    for (const id of legacyIds) {
+      trx.prepare('DELETE FROM sesiones WHERE usuario_id = ?').run(id);
+      trx.prepare('UPDATE usuarios SET activo = 0 WHERE id = ?').run(id);
     }
+
+    // Una sola cuenta administrativa, validada exclusivamente en el servidor.
+    const configured = /^scrypt:[a-f0-9]{32}:[a-f0-9]{128}$/.test(adminCredentials.passwordHash);
+    const previousAdmin = trx.prepare('SELECT * FROM usuarios WHERE id = ?').get(adminCredentials.id);
+    if (previousAdmin && (previousAdmin.password_hash !== adminCredentials.passwordHash ||
+        previousAdmin.email !== adminCredentials.username || !configured)) {
+      trx.prepare('DELETE FROM sesiones WHERE usuario_id = ?').run(adminCredentials.id);
+    }
+    trx.prepare(`
+      INSERT INTO usuarios (id, nombre_completo, email, password_hash, salt, rol, created_at, activo)
+      VALUES (?, 'Administrador QS', ?, ?, '', 'ADMIN', ?, ?)
+      ON CONFLICT(id) DO UPDATE SET email = excluded.email, password_hash = excluded.password_hash,
+        salt = '', rol = 'ADMIN', activo = excluded.activo, sede_id = NULL, departamento_id = NULL
+    `).run(adminCredentials.id, adminCredentials.username, adminCredentials.passwordHash, new Date().toISOString(), configured ? 1 : 0);
 
     // 4. Contactos iniciales de prueba (para demostración inmediata de filtros, duplicados y exportación)
     const initialContacts = [
@@ -246,6 +210,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  seedDatabase,
-  hashPassword
+  seedDatabase
 };

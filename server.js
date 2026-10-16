@@ -86,6 +86,19 @@ const server = http.createServer((req, res) => {
 
   // Rutas de API
   if (pathname.startsWith('/api/')) {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      // Las cookies de sesión solo se utilizan en solicitudes del mismo sitio.
+      const origin = req.headers.origin;
+      if (origin) {
+        let sameOrigin = false;
+        try { sameOrigin = new URL(origin).host === req.headers.host; } catch (_) {}
+        if (!sameOrigin) return res.status(403).json({ success: false, message: 'Origen no autorizado.' });
+      }
+      if (!(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) {
+        return res.status(415).json({ success: false, message: 'Se requiere contenido JSON.' });
+      }
+    }
     let bodyData = '';
     req.on('data', chunk => {
       bodyData += chunk;
@@ -106,26 +119,25 @@ const server = http.createServer((req, res) => {
         }
       }
 
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({ success: false, message: 'Se requiere un objeto JSON.' });
+      }
+
       req.query = query;
       const routes = getRouteHandlers();
 
-      // Endpoint público de salud
-      if (pathname === '/api/health') {
-        return res.json({ success: true, status: 'UP', timestamp: new Date().toISOString() });
-      }
-
-      // Autenticación pública
-      if (pathname.startsWith('/api/auth/')) {
-        return routes.handleAuth(req, res, pathname, query, body);
-      }
-
-      // Descargas de plantillas públicas sin requerir login si se desea
-      if (pathname.startsWith('/api/templates/')) {
-        return routes.handleApi(req, res, pathname, query, body, { rol: 'ADMIN', id: 'system', nombre_completo: 'Sistema' });
-      }
-
-      // Rutas protegidas de API
       try {
+        // Endpoint público de salud
+        if (pathname === '/api/health') {
+          return res.json({ success: true, status: 'UP', timestamp: new Date().toISOString() });
+        }
+
+        // Autenticación pública
+        if (pathname.startsWith('/api/auth/')) {
+          return routes.handleAuth(req, res, pathname, query, body);
+        }
+
+        // Rutas protegidas de API
         routes.authenticate(req, res, () => {
           routes.handleApi(req, res, pathname, query, body, req.user);
         });

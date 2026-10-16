@@ -30,20 +30,22 @@ seedDatabase();
 // archivos en src/, permitiendo aplicar mejoras en tiempo real sin reiniciar.
 // =========================================================================
 const srcDir = path.join(__dirname, 'src');
-try {
-  fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
-    if (filename) {
-      Object.keys(require.cache).forEach(modulePath => {
-        // Preservar conexión de base de datos sqlite en memoria para estabilidad
-        if (modulePath.startsWith(srcDir) && !modulePath.includes('db.js')) {
-          delete require.cache[modulePath];
-        }
-      });
-      console.log(`[Hot-Reload] ⚡ Mejora detectada en ${filename}. Módulos actualizados en tiempo real.`);
-    }
-  });
-} catch (err) {
-  console.warn('[Hot-Reload] Monitor de archivos no disponible en esta plataforma:', err.message);
+if (config.HOT_RELOAD) {
+  try {
+    fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
+      if (filename) {
+        Object.keys(require.cache).forEach(modulePath => {
+          // Preservar conexión de base de datos sqlite en memoria para estabilidad
+          if (modulePath.startsWith(srcDir) && !modulePath.includes('db.js')) {
+            delete require.cache[modulePath];
+          }
+        });
+        console.log(`[Hot-Reload] ⚡ Mejora detectada en ${filename}. Módulos actualizados en tiempo real.`);
+      }
+    });
+  } catch (err) {
+    console.warn('[Hot-Reload] Monitor de archivos no disponible en esta plataforma:', err.message);
+  }
 }
 
 // Carga dinámica de rutas y autenticación
@@ -179,8 +181,26 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(config.PORT, config.HOST, () => {
-  const nets = os.networkInterfaces();
+// Windows/IISNode usa una named pipe; Linux y desarrollo utilizan TCP.
+const listenOptions = typeof config.PORT === 'number'
+  ? { port: config.PORT, host: config.HOST }
+  : { path: config.PORT };
+
+server.listen(listenOptions, () => {
+  if (config.IS_AZURE) {
+    console.log(`Contactos QS iniciado en Azure App Service (${process.version}).`);
+    console.log(`Frontend: ${config.PATHS.PUBLIC}`);
+    console.log(`Almacenamiento: ${config.PATHS.STORAGE}`);
+    console.log(`SQLite: ${config.SQLITE_JOURNAL_MODE}; hot-reload desactivado.`);
+    return;
+  }
+  let nets = {};
+  try {
+    nets = os.networkInterfaces();
+  } catch (err) {
+    // La enumeración de interfaces es informativa y no debe impedir el arranque.
+    console.warn('No se pudieron consultar las interfaces de red:', err.message);
+  }
   const netIps = [];
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
@@ -201,8 +221,8 @@ server.listen(config.PORT, config.HOST, () => {
     console.log(`🌐 Acceso en Red: http://${config.HOST}:${config.PORT}`);
   }
   console.log(`🏛️ Institución: ${config.SOURCE_NAME}`);
-  console.log(`🔒 Modo de Base de Datos: SQLite WAL (Transaccional ACID)`);
-  console.log(`⚡ Modo Hot-Reload: Activo (Mejoras aplicadas en tiempo real)`);
+  console.log(`🔒 Modo de Base de Datos: SQLite ${config.SQLITE_JOURNAL_MODE}`);
+  console.log(`⚡ Modo Hot-Reload: ${config.HOT_RELOAD ? 'Activo' : 'Desactivado'}`);
   console.log(`📁 Directorio de Staging Drive: ${config.PATHS.DRIVE_STAGING}`);
   console.log(`================================================================`);
 });

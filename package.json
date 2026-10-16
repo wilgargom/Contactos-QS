@@ -1,0 +1,20 @@
+{
+  "name": "tec-qs-contacts",
+  "version": "1.0.0",
+  "description": "Sistema Institucional de Gestión de Contactos Académicos y Empleadores para el Ranking QS - Tecnológico de Costa Rica (TEC)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node tests/test_suite.js"
+  },
+  "keywords": [
+    "tec",
+    "qs-ranking",
+    "contacts",
+    "academic-reputation",
+    "employer-reputation"
+  ],
+  "author": "Tecnológico de Costa Rica",
+  "license": "Proprietary"
+}

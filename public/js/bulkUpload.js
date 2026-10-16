@@ -1,0 +1,1214 @@
+// Módulo de Carga Masiva mediante Excel (Administrador y Usuario)
+const BulkUploadModule = {
+  selectedFile: null,
+  fileBase64: null,
+  analysisResult: null,
+  activeFilter: 'TODOS',
+  tipoContacto: 'ACADEMICO',
+  catalogs: null,
+  selectedSedeId: '',
+  selectedDeptoId: '',
+  recomiendaNombre: '',
+  recomiendaEmail: '',
+  funcionarioIdentificado: null,
+  recEmailCheckTimeout: null,
+  modalEmailTimeout: null,
+
+  init(catalogs) {
+    this.catalogs = catalogs || App.catalogs;
+    if (this.tipoContacto === 'FUNCIONARIOS' && App.currentUser?.rol !== 'ADMIN') {
+      this.tipoContacto = 'ACADEMICO';
+    }
+    // Iniciar con campos de correo y persona que registra vacíos
+    this.recomiendaNombre = '';
+    this.recomiendaEmail = '';
+    this.selectedSedeId = '';
+    this.selectedDeptoId = '';
+    this.funcionarioIdentificado = null;
+
+    if (this.catalogs?.sedes?.length > 0) {
+      this.selectedSedeId = this.catalogs.sedes[0].id;
+    }
+    if (this.catalogs?.departamentos?.length > 0) {
+      this.selectedDeptoId = this.catalogs.departamentos[0].id;
+    }
+
+    this.render();
+  },
+
+  getRecomiendaPrefix() {
+    if (!this.recomiendaEmail) return '';
+    return this.recomiendaEmail.split('@')[0];
+  },
+
+  getSelectedSedeNombre() {
+    if (this.funcionarioIdentificado?.sede) return this.funcionarioIdentificado.sede;
+    return this.catalogs?.sedes?.find(s => s.id === this.selectedSedeId)?.nombre || 'Campus Central Cartago';
+  },
+
+  getSelectedDeptoNombre() {
+    if (this.funcionarioIdentificado?.dependencia) return this.funcionarioIdentificado.dependencia;
+    return this.catalogs?.departamentos?.find(d => d.id === this.selectedDeptoId)?.nombre || 'Oficina o Departamento';
+  },
+
+  onRecomiendaEmailInput(val) {
+    let cleanUser = (val || '').trim().toLowerCase();
+    if (cleanUser.includes('@')) {
+      cleanUser = cleanUser.split('@')[0];
+      const inputEl = document.getElementById('bulk-recomienda-email');
+      if (inputEl) inputEl.value = cleanUser;
+    }
+
+    const fullEmail = cleanUser.length > 0 ? `${cleanUser}@itcr.ac.cr` : '';
+    this.recomiendaEmail = fullEmail;
+    if (fullEmail) {
+      localStorage.setItem('tec_qs_pref_recomienda_email', fullEmail);
+    } else {
+      localStorage.removeItem('tec_qs_pref_recomienda_email');
+    }
+
+    const errEl = document.getElementById('err-bulk-recomienda-email');
+    const inputEl = document.getElementById('bulk-recomienda-email');
+    const spinner = document.getElementById('bulk-rec-email-spinner');
+    const iconEl = document.getElementById('bulk-card-funcionario-icon');
+    const nombreEl = document.getElementById('bulk-card-display-nombre');
+    const deptoEl = document.getElementById('bulk-card-display-depto');
+    const sedeEl = document.getElementById('bulk-card-display-sede');
+
+    clearTimeout(this.recEmailCheckTimeout);
+
+    if (cleanUser.length === 0) {
+      this.funcionarioIdentificado = null;
+      this.recomiendaNombre = '';
+      if (errEl) errEl.textContent = '';
+      if (inputEl) inputEl.classList.remove('is-invalid', 'is-valid');
+      if (spinner) spinner.classList.add('hidden');
+      if (iconEl) {
+        iconEl.className = 'w-12 h-12 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
+        iconEl.innerHTML = '<i class="fa-solid fa-user"></i>';
+      }
+      if (nombreEl) nombreEl.textContent = 'Nombre de la persona funcionaria';
+      if (deptoEl) deptoEl.textContent = 'Oficina o Departamento';
+      if (sedeEl) sedeEl.textContent = 'Sede del TEC';
+      return;
+    }
+
+    if (/\s/.test(cleanUser)) {
+      if (errEl) errEl.innerHTML = `<span class="text-red-600 font-medium text-xs"><i class="fa-solid fa-circle-exclamation mr-1"></i> No incluya espacios en blanco.</span>`;
+      if (inputEl) inputEl.classList.add('is-invalid');
+      if (spinner) spinner.classList.add('hidden');
+      return;
+    }
+
+    if (errEl) errEl.textContent = '';
+    if (inputEl) inputEl.classList.remove('is-invalid');
+
+    if (spinner) spinner.classList.remove('hidden');
+    this.recEmailCheckTimeout = setTimeout(() => {
+      this.lookupFuncionario(fullEmail);
+    }, 250);
+  },
+
+  async lookupFuncionario(email) {
+    const spinner = document.getElementById('bulk-rec-email-spinner');
+    const inputEl = document.getElementById('bulk-recomienda-email');
+    const iconEl = document.getElementById('bulk-card-funcionario-icon');
+    const nombreEl = document.getElementById('bulk-card-display-nombre');
+    const deptoEl = document.getElementById('bulk-card-display-depto');
+    const sedeEl = document.getElementById('bulk-card-display-sede');
+    const errEl = document.getElementById('err-bulk-recomienda-email');
+
+    try {
+      const res = await API.get(`/api/funcionarios/by-email?email=${encodeURIComponent(email)}`);
+      if (spinner) spinner.classList.add('hidden');
+
+      if (res.exists && res.funcionario) {
+        const f = res.funcionario;
+        this.funcionarioIdentificado = f;
+        this.recomiendaNombre = f.nombre || '';
+        this.recomiendaEmail = f.email || email;
+
+        localStorage.setItem('tec_qs_pref_recomienda_email', this.recomiendaEmail);
+        localStorage.setItem('tec_qs_pref_recomienda_nombre', this.recomiendaNombre);
+
+        if (f.sede_id) {
+          this.selectedSedeId = f.sede_id;
+          localStorage.setItem('tec_qs_pref_sede', f.sede_id);
+        }
+        if (f.departamento_id) {
+          this.selectedDeptoId = f.departamento_id;
+          localStorage.setItem('tec_qs_pref_depto', f.departamento_id);
+        }
+
+        if (iconEl) {
+          iconEl.className = 'w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
+          iconEl.innerHTML = '<i class="fa-solid fa-user-check"></i>';
+        }
+        if (nombreEl) nombreEl.textContent = f.nombre;
+        if (deptoEl) deptoEl.textContent = f.dependencia || this.getSelectedDeptoNombre();
+        if (sedeEl) sedeEl.textContent = f.sede || this.getSelectedSedeNombre();
+
+        if (inputEl) {
+          inputEl.value = this.getRecomiendaPrefix();
+          inputEl.classList.remove('is-invalid');
+          inputEl.classList.add('is-valid');
+        }
+        if (errEl) errEl.textContent = '';
+      } else {
+        this.funcionarioIdentificado = null;
+        this.recomiendaNombre = '';
+
+        if (iconEl) {
+          iconEl.className = 'w-12 h-12 rounded-lg bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
+          iconEl.innerHTML = '<i class="fa-solid fa-user-xmark"></i>';
+        }
+        if (nombreEl) nombreEl.innerHTML = '<span class="text-amber-800 text-sm font-semibold">Funcionario no registrado en el padrón</span>';
+        if (deptoEl) deptoEl.innerHTML = '<span class="text-slate-500 text-xs">Verifique el correo institucional o <button type="button" class="text-blue-800 font-bold underline hover:text-blue-900" onclick="BulkUploadModule.openNuevoUsuarioModal()">inclúyalo en el padrón</button></span>';
+        if (sedeEl) sedeEl.textContent = '';
+
+        if (inputEl) {
+          inputEl.classList.add('is-invalid');
+          inputEl.classList.remove('is-valid');
+        }
+        if (errEl) {
+          errEl.innerHTML = '<span class="text-amber-700 text-xs font-medium"><i class="fa-solid fa-circle-info mr-1"></i> No se encontró este usuario en el padrón oficial del TEC.</span>';
+        }
+      }
+    } catch (err) {
+      if (spinner) spinner.classList.add('hidden');
+      console.warn('Error al consultar funcionario:', err);
+    }
+  },
+
+  openNuevoUsuarioModal() {
+    const modalContainer = document.getElementById('bulk-modal-container');
+    if (!modalContainer) return;
+
+    const sedesOpts = (this.catalogs?.sedes || []).map(s => `
+      <option value="${s.id}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${s.nombre}</option>
+    `).join('');
+
+    modalContainer.innerHTML = `
+      <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fadeIn">
+        <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto">
+          <div class="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+            <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+              <span class="w-8 h-8 rounded-lg bg-blue-50 text-blue-900 flex items-center justify-center text-sm border border-blue-200/60">
+                <i class="fa-solid fa-user-plus text-blue-900"></i>
+              </span>
+              Incluir Nuevo Usuario / Funcionario
+            </h3>
+            <button type="button" class="text-slate-400 hover:text-slate-600 text-lg" onclick="BulkUploadModule.closeNuevoUsuarioModal()">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+
+          <p class="text-xs text-slate-500 mb-4">
+            Registre al funcionario/a en el padrón institucional del TEC para asociarlo a los registros de carga masiva.
+          </p>
+
+          <form id="form-bulk-nuevo-funcionario" onsubmit="BulkUploadModule.saveNuevoUsuarioModal(event)" class="space-y-3.5">
+            <div class="form-group">
+              <label class="form-label text-xs font-bold text-slate-700">Correo institucional del TEC *</label>
+              <input type="text" 
+                     id="bulk-modal-func-email" 
+                     class="form-control text-sm" 
+                     placeholder="usuario@itcr.ac.cr" 
+                     required 
+                     maxlength="120"
+                     oninput="BulkUploadModule.onModalEmailInput(this.value)">
+              <div class="error-feedback" id="err-bulk-modal-func-email"></div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label text-xs font-bold text-slate-700">Nombre completo del funcionario/a *</label>
+              <input type="text" 
+                     id="bulk-modal-func-nombre" 
+                     class="form-control text-sm" 
+                     placeholder="Ej. Dr. Mario Fonseca Ruiz" 
+                     required 
+                     maxlength="100">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label text-xs font-bold text-slate-700">Sede del TEC *</label>
+              <select id="bulk-modal-func-sede" class="form-control text-sm" required>
+                ${sedesOpts}
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label text-xs font-bold text-slate-700">Carrera, Escuela, Departamento o Dependencia *</label>
+              <input type="text" 
+                     id="bulk-modal-func-dependencia" 
+                     class="form-control text-sm" 
+                     placeholder="Ej. Escuela de Ingeniería Forestal / Rectoría" 
+                     required 
+                     maxlength="120">
+            </div>
+
+            <div class="flex items-center justify-end gap-2.5 pt-4 border-t border-slate-100">
+              <button type="button" class="btn btn-outline btn-sm" onclick="BulkUploadModule.closeNuevoUsuarioModal()">
+                Cancelar
+              </button>
+              <button type="submit" class="btn btn-tec btn-sm" id="btn-save-bulk-modal-func">
+                <i class="fa-solid fa-save mr-1"></i>
+                Guardar en Padrón y Seleccionar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    const emailInput = document.getElementById('bulk-modal-func-email');
+    if (emailInput) {
+      emailInput.focus();
+      const currentEmail = this.recomiendaEmail || (document.getElementById('bulk-recomienda-email')?.value?.trim() ? `${document.getElementById('bulk-recomienda-email').value.trim()}@itcr.ac.cr` : '');
+      if (currentEmail) {
+        emailInput.value = currentEmail;
+        this.onModalEmailInput(currentEmail);
+      }
+    }
+  },
+
+  onModalEmailInput(val) {
+    let clean = (val || '').trim().toLowerCase();
+    if (clean && !clean.includes('@')) {
+      clean = `${clean}@itcr.ac.cr`;
+    }
+    const feedbackEl = document.getElementById('err-bulk-modal-func-email');
+    const btnSave = document.getElementById('btn-save-bulk-modal-func');
+    if (!feedbackEl) return;
+
+    clearTimeout(this.modalEmailTimeout);
+    if (!clean || clean.length < 5) {
+      feedbackEl.innerHTML = '';
+      if (btnSave) {
+        btnSave.innerHTML = '<i class="fa-solid fa-save mr-1"></i> Guardar en Padrón y Seleccionar';
+      }
+      return;
+    }
+
+    this.modalEmailTimeout = setTimeout(async () => {
+      try {
+        const res = await API.get(`/api/funcionarios/by-email?email=${encodeURIComponent(clean)}`);
+        if (res.exists && res.funcionario) {
+          const f = res.funcionario;
+          feedbackEl.innerHTML = `
+            <div class="p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-blue-900 text-xs mt-1.5 animate-fadeIn">
+              <div class="font-bold flex items-center gap-1.5 text-blue-800">
+                <i class="fa-solid fa-circle-check text-emerald-600"></i> Funcionario ya registrado en el padrón
+              </div>
+              <div class="mt-1 text-slate-700">
+                <strong>${f.nombre}</strong> (${f.dependencia || 'Dependencia no indicada'} · ${f.sede || 'Sede no indicada'}).
+              </div>
+              <div class="text-[11px] text-blue-700 mt-0.5">Sus datos se completaron automáticamente para seleccionarlo.</div>
+            </div>
+          `;
+          const nombreInput = document.getElementById('bulk-modal-func-nombre');
+          const sedeSelect = document.getElementById('bulk-modal-func-sede');
+          const deptoInput = document.getElementById('bulk-modal-func-dependencia');
+          if (nombreInput && f.nombre) nombreInput.value = f.nombre;
+          if (sedeSelect && f.sede_id) sedeSelect.value = f.sede_id;
+          if (deptoInput && f.dependencia) deptoInput.value = f.dependencia;
+          if (btnSave) {
+            btnSave.innerHTML = '<i class="fa-solid fa-user-check mr-1"></i> Seleccionar este Funcionario';
+          }
+        } else {
+          feedbackEl.innerHTML = `
+            <div class="text-[11px] text-emerald-700 mt-1 flex items-center gap-1">
+              <i class="fa-solid fa-circle-info text-emerald-600"></i> Correo nuevo · Complete los datos para agregarlo al padrón institucional.
+            </div>
+          `;
+          if (btnSave) {
+            btnSave.innerHTML = '<i class="fa-solid fa-save mr-1"></i> Guardar en Padrón y Seleccionar';
+          }
+        }
+      } catch (err) {
+        console.warn('Error verificando correo en modal:', err);
+      }
+    }, 250);
+  },
+
+  closeNuevoUsuarioModal() {
+    const modalContainer = document.getElementById('bulk-modal-container');
+    if (modalContainer) modalContainer.innerHTML = '';
+  },
+
+  async saveNuevoUsuarioModal(event) {
+    event.preventDefault();
+    let email = document.getElementById('bulk-modal-func-email')?.value?.trim().toLowerCase() || '';
+    if (email && !email.includes('@')) {
+      email = `${email}@itcr.ac.cr`;
+    }
+    const nombre = document.getElementById('bulk-modal-func-nombre')?.value?.trim();
+    const sedeId = document.getElementById('bulk-modal-func-sede')?.value;
+    const dependencia = document.getElementById('bulk-modal-func-dependencia')?.value?.trim();
+    const errEmail = document.getElementById('err-bulk-modal-func-email');
+
+    if (!email || (!email.endsWith('@itcr.ac.cr') && !email.endsWith('@tec.ac.cr'))) {
+      if (errEmail) errEmail.textContent = 'Debe indicar un correo institucional (@itcr.ac.cr o @tec.ac.cr).';
+      return;
+    }
+    if (!nombre || nombre.length < 3) {
+      App.showToast('El nombre debe tener al menos 3 caracteres.', 'warning');
+      return;
+    }
+    if (!dependencia || dependencia.length < 2) {
+      App.showToast('Debe indicar la dependencia o departamento.', 'warning');
+      return;
+    }
+
+    const sedeObj = (this.catalogs?.sedes || []).find(s => s.id === sedeId);
+    const sedeNombre = sedeObj ? sedeObj.nombre : 'Campus Central Cartago';
+    const saveBtn = document.getElementById('btn-save-bulk-modal-func');
+    if (saveBtn) saveBtn.disabled = true;
+
+    try {
+      const res = await API.post('/api/funcionarios', {
+        nombre,
+        email,
+        dependencia,
+        sede: sedeNombre,
+        sede_id: sedeId
+      });
+
+      if (res.success && res.funcionario) {
+        App.showToast('🎉 Funcionario incluido exitosamente en el padrón institucional.', 'success');
+        this.closeNuevoUsuarioModal();
+
+        this.recomiendaEmail = email;
+        this.recomiendaNombre = nombre;
+        this.selectedSedeId = sedeId;
+        this.selectedDeptoId = res.funcionario.departamento_id;
+        this.funcionarioIdentificado = res.funcionario;
+
+        localStorage.setItem('tec_qs_pref_recomienda_email', email);
+        localStorage.setItem('tec_qs_pref_recomienda_nombre', nombre);
+        localStorage.setItem('tec_qs_pref_sede', sedeId);
+        if (res.funcionario.departamento_id) {
+          localStorage.setItem('tec_qs_pref_depto', res.funcionario.departamento_id);
+        }
+
+        this.updateCardDisplay();
+      }
+    } catch (err) {
+      App.showToast(err.message || 'Error al guardar funcionario', 'error');
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  },
+
+  updateCardDisplay() {
+    const iconEl = document.getElementById('bulk-card-funcionario-icon');
+    const nombreEl = document.getElementById('bulk-card-display-nombre');
+    const sedeEl = document.getElementById('bulk-card-display-sede');
+    const deptoEl = document.getElementById('bulk-card-display-depto');
+    const inputEl = document.getElementById('bulk-recomienda-email');
+
+    const nombre = this.recomiendaNombre || App.currentUser?.nombre_completo || '';
+
+    if (inputEl) {
+      inputEl.value = this.getRecomiendaPrefix();
+      if (this.recomiendaEmail) {
+        inputEl.classList.add('is-valid');
+        inputEl.classList.remove('is-invalid');
+      }
+    }
+
+    if (nombre) {
+      if (iconEl) {
+        iconEl.className = 'w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
+        iconEl.innerHTML = '<i class="fa-solid fa-user-check"></i>';
+      }
+      if (nombreEl) nombreEl.textContent = nombre;
+      if (deptoEl) deptoEl.textContent = this.getSelectedDeptoNombre();
+      if (sedeEl) sedeEl.textContent = this.getSelectedSedeNombre();
+    } else {
+      if (iconEl) {
+        iconEl.className = 'w-12 h-12 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
+        iconEl.innerHTML = '<i class="fa-solid fa-user"></i>';
+      }
+      if (nombreEl) nombreEl.textContent = 'Nombre de la persona funcionaria';
+      if (deptoEl) deptoEl.textContent = 'Oficina o Departamento';
+      if (sedeEl) sedeEl.textContent = 'Sede del TEC';
+    }
+  },
+
+  render() {
+    const container = document.getElementById('bulk-upload-view');
+    if (!container) return;
+
+    if (!App.currentUser) {
+      container.innerHTML = `
+        <div class="bg-white rounded-2xl border border-slate-200/90 shadow-sm text-center p-10">
+          <i class="fa-solid fa-lock text-amber-500 text-4xl mb-3 block"></i>
+          <h3 class="text-lg font-bold text-slate-900">Inicio de Sesión Requerido</h3>
+          <p class="text-slate-500 text-sm max-w-md mx-auto mt-1">
+            Debe iniciar sesión para utilizar el módulo de carga masiva de contactos.
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    // Generar opciones de sedes
+    const sedesOptions = (this.catalogs?.sedes || []).map(s => `
+      <option value="${s.id}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${s.nombre}</option>
+    `).join('');
+
+    // Filtrar departamentos de la sede
+    const deptosParaSede = (this.catalogs?.departamentos || []).filter(d => !d.sede_id || d.sede_id === this.selectedSedeId);
+    const todosDeptos = (this.catalogs?.departamentos || []);
+    const listaDeptos = deptosParaSede.length > 0 ? deptosParaSede : todosDeptos;
+
+    const deptosOptions = listaDeptos.map(d => `
+      <option value="${d.id}" ${d.id === this.selectedDeptoId ? 'selected' : ''}>${d.nombre}</option>
+    `).join('');
+
+    const isAdmin = App.currentUser?.rol === 'ADMIN';
+    if (!isAdmin && this.tipoContacto === 'FUNCIONARIOS') {
+      this.tipoContacto = 'ACADEMICO';
+    }
+
+    container.innerHTML = `
+      <div class="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-8">
+        <div class="pb-6 border-b border-slate-100 mb-6 space-y-4">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 flex items-center gap-2.5">
+              <span class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-800 flex items-center justify-center text-sm border border-emerald-200/60 shadow-xs">
+                <i class="fa-solid fa-file-excel text-emerald-700"></i>
+              </span>
+              Plantillas para carga masiva de contactos
+            </h2>
+          </div>
+
+          <!-- Plantillas oficiales: una sobre la otra con su respectiva descripción -->
+          <div class="flex flex-col gap-3.5 pt-1">
+            <!-- Plantilla de académicos -->
+            <div class="bg-slate-50/70 border border-slate-200/90 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 shadow-2xs hover:border-blue-200 transition-colors">
+              <div class="flex-1 min-w-0 pr-2">
+                <div class="flex items-center gap-2 font-bold text-slate-900 text-sm">
+                  <span class="w-6 h-6 rounded-md bg-blue-100 text-blue-800 flex items-center justify-center text-xs">
+                    <i class="fa-solid fa-graduation-cap"></i>
+                  </span>
+                  <span>Plantilla de académicos</span>
+                </div>
+                <p class="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                  Esta plantilla debe utilizarse para registrar y completar la información de los contactos académicos, de acuerdo con los campos y datos solicitados.
+                </p>
+              </div>
+              <a href="/api/templates/ACADEMICO" download class="btn btn-outline btn-xs text-xs py-2 px-3.5 flex items-center gap-2 shadow-2xs bg-white hover:bg-blue-50 text-blue-900 border-slate-300 hover:border-blue-300 font-semibold transition-colors shrink-0">
+                <i class="fa-solid fa-download text-xs text-blue-800"></i>
+                <span>Descargar plantilla</span>
+              </a>
+            </div>
+
+            <!-- Plantilla de empleadores -->
+            <div class="bg-slate-50/70 border border-slate-200/90 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 shadow-2xs hover:border-emerald-200 transition-colors">
+              <div class="flex-1 min-w-0 pr-2">
+                <div class="flex items-center gap-2 font-bold text-slate-900 text-sm">
+                  <span class="w-6 h-6 rounded-md bg-emerald-100 text-emerald-800 flex items-center justify-center text-xs">
+                    <i class="fa-solid fa-briefcase"></i>
+                  </span>
+                  <span>Plantilla de empleadores</span>
+                </div>
+                <p class="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                  Esta plantilla debe utilizarse para registrar y completar la información de los contactos empleadores, de acuerdo con los campos y datos solicitados.
+                </p>
+              </div>
+              <a href="/api/templates/EMPLEADOR" download class="btn btn-outline btn-xs text-xs py-2 px-3.5 flex items-center gap-2 shadow-2xs bg-white hover:bg-emerald-50 text-emerald-900 border-slate-300 hover:border-emerald-300 font-semibold transition-colors shrink-0">
+                <i class="fa-solid fa-download text-xs text-emerald-700"></i>
+                <span>Descargar plantilla</span>
+              </a>
+            </div>
+
+            ${isAdmin ? `
+            <!-- Plantilla de funcionarios (Solo Administrador) -->
+            <div class="bg-blue-50/40 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 shadow-2xs">
+              <div class="flex-1 min-w-0 pr-2">
+                <div class="flex items-center gap-2 font-bold text-blue-950 text-sm">
+                  <span class="w-6 h-6 rounded-md bg-amber-100 text-amber-900 flex items-center justify-center text-xs">
+                    <i class="fa-solid fa-address-book"></i>
+                  </span>
+                  <span>Plantilla de funcionarios (Administrador)</span>
+                </div>
+                <p class="text-xs text-slate-600 mt-1.5 leading-relaxed">
+                  Esta plantilla debe utilizarse para la actualización del padrón institucional de funcionarios del TEC.
+                </p>
+              </div>
+              <a href="/api/templates/FUNCIONARIOS" download class="btn btn-outline btn-xs text-xs py-2 px-3.5 flex items-center gap-2 shadow-2xs bg-white hover:bg-blue-100 text-blue-950 border-blue-300 font-semibold transition-colors shrink-0">
+                <i class="fa-solid fa-download text-xs text-amber-600"></i>
+                <span>Descargar plantilla</span>
+              </a>
+            </div>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- 1. Bloque: Datos de la persona del TEC que reporta la carga (solo para contactos) -->
+        ${this.tipoContacto !== 'FUNCIONARIOS' ? `
+          <div class="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 mb-6 shadow-2xs">
+            <div class="mb-4 pb-2 border-b border-slate-100 flex items-center justify-between">
+              <h3 class="text-xs sm:text-sm font-bold text-blue-950 uppercase tracking-wider m-0 flex items-center gap-2">
+                <span class="w-6 h-6 rounded-md bg-blue-900 text-white flex items-center justify-center text-xs">
+                  <i class="fa-solid fa-id-card"></i>
+                </span>
+                Datos de la persona del TEC que reporta la carga
+              </h3>
+              <button type="button" 
+                      class="btn btn-outline btn-xs text-blue-900 border-blue-200 bg-white hover:bg-blue-50 py-1.5 px-3 text-xs font-semibold flex items-center gap-1.5 rounded-lg shadow-2xs transition-colors shrink-0"
+                      onclick="BulkUploadModule.openNuevoUsuarioModal()"
+                      title="Incluir a una nueva persona funcionaria en el padrón del TEC">
+                <i class="fa-solid fa-user-plus text-amber-600"></i>
+                <span>+ Nuevo funcionario</span>
+              </button>
+            </div>
+
+            <!-- Disposición simétrica: Izquierda (Input de correo acortado a 360px) y Derecha (Tarjeta de datos del funcionario) -->
+            <div class="grid grid-cols-1 md:grid-cols-[minmax(260px,360px)_1fr] gap-5 items-start">
+              <!-- COLUMNA IZQUIERDA: 1. Correo institucional (@itcr.ac.cr) * (Alto 76px, ancho 360px) -->
+              <div>
+                <label class="form-label text-xs sm:text-sm font-bold text-slate-800 mb-2 block" for="bulk-recomienda-email">
+                  1. Correo institucional (@itcr.ac.cr) <span class="req text-red-500 font-bold">*</span>
+                </label>
+                <div class="flex rounded-xl shadow-2xs overflow-hidden border border-slate-300 focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-100 bg-white transition-all h-[76px] w-full max-w-[360px]" id="bulk-rec-input-group">
+                  <input type="text" 
+                         id="bulk-recomienda-email" 
+                         class="flex-1 px-4 py-3 text-sm sm:text-base text-slate-900 placeholder:text-slate-400 placeholder:italic outline-none border-0 h-full"
+                         placeholder="Espacio para digitar el correo"
+                         value="${this.getRecomiendaPrefix()}" 
+                         oninput="BulkUploadModule.onRecomiendaEmailInput(this.value)"
+                         autocomplete="off"
+                         spellcheck="false">
+                  <div class="bg-slate-100 border-l border-slate-300 px-4 sm:px-5 flex items-center justify-center font-mono text-xs sm:text-sm text-slate-700 font-semibold select-none shrink-0 h-full">
+                    itcr.ac.cr
+                  </div>
+                </div>
+                <div class="error-feedback mt-1.5" id="err-bulk-recomienda-email"></div>
+                <div id="bulk-rec-email-spinner" class="hidden text-xs text-blue-800 font-medium mt-1.5 flex items-center gap-1.5">
+                  <i class="fa-solid fa-spinner fa-spin"></i>
+                  <span>Consultando padrón del TEC...</span>
+                </div>
+              </div>
+
+              <!-- COLUMNA DERECHA: Tarjeta con ícono verde y datos en 3 filas (Mismo alto 76px) -->
+              <div>
+                <div class="text-xs sm:text-sm font-bold text-slate-800 mb-2 invisible select-none">
+                  Detalle
+                </div>
+                <div id="bulk-card-funcionario-container" class="border border-slate-200 rounded-xl px-4 py-2.5 bg-slate-50/80 shadow-2xs flex items-center gap-3.5 h-[76px] transition-all">
+                  <!-- Ícono verde de usuario / check -->
+                  <div id="bulk-card-funcionario-icon" class="w-12 h-12 rounded-lg ${this.recomiendaNombre ? 'bg-emerald-50 text-emerald-600 border border-emerald-200' : 'bg-slate-100 text-slate-400 border border-slate-200'} flex items-center justify-center text-2xl shrink-0 shadow-2xs">
+                    <i class="fa-solid ${this.recomiendaNombre ? 'fa-user-check' : 'fa-user'}"></i>
+                  </div>
+
+                  <!-- 3 filas de información -->
+                  <div class="flex-1 min-w-0" id="bulk-card-funcionario-text">
+                    <div class="text-sm sm:text-base font-bold text-slate-900 truncate leading-tight" id="bulk-card-display-nombre">
+                      ${this.recomiendaNombre || 'Nombre de la persona funcionaria'}
+                    </div>
+                    <div class="text-xs sm:text-sm text-slate-600 truncate leading-tight mt-1" id="bulk-card-display-depto">
+                      ${this.getSelectedDeptoNombre() || 'Oficina o Departamento'}
+                    </div>
+                    <div class="text-[11px] sm:text-xs text-slate-500 truncate leading-tight mt-0.5" id="bulk-card-display-sede">
+                      ${this.getSelectedSedeNombre() || 'Sede del TEC'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- 2. Selección de Tipo de Contacto y Ubicación del Archivo -->
+        ${!this.analysisResult ? `
+          <div class="space-y-6">
+            <!-- Sección: Selectores de Tipo de Carga Apilados y Cuadro de Reglas Alineado -->
+            <div>
+              <label class="block text-sm font-bold text-slate-800 mb-2.5 flex items-center gap-2">
+                <i class="fa-solid fa-users-gear text-blue-900"></i>
+                Tipo de Carga Masiva y Reglas Mínimas *
+              </label>
+
+              <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
+                <!-- Columna Izquierda: Selectores apilados verticalmente (uno sobre otro) -->
+                <div class="lg:col-span-4 flex flex-col justify-between gap-2.5">
+                  <label class="flex-1 flex items-start gap-3 p-3.5 border-2 rounded-xl cursor-pointer transition-all ${this.tipoContacto === 'ACADEMICO' ? 'border-blue-900 bg-blue-50/70 shadow-xs' : 'border-slate-200 bg-white hover:border-slate-300'}">
+                    <input type="radio" name="bulk_tipo" value="ACADEMICO" ${this.tipoContacto === 'ACADEMICO' ? 'checked' : ''} onchange="BulkUploadModule.setTipoContacto('ACADEMICO')" class="accent-tec-primary w-4 h-4 mt-0.5">
+                    <div>
+                      <div class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                        <i class="fa-solid fa-graduation-cap text-blue-800"></i>
+                        Académico
+                      </div>
+                      <div class="text-xs text-slate-500 mt-0.5">Contactos para Academic Survey</div>
+                    </div>
+                  </label>
+
+                  <label class="flex-1 flex items-start gap-3 p-3.5 border-2 rounded-xl cursor-pointer transition-all ${this.tipoContacto === 'EMPLEADOR' ? 'border-blue-900 bg-blue-50/70 shadow-xs' : 'border-slate-200 bg-white hover:border-slate-300'}">
+                    <input type="radio" name="bulk_tipo" value="EMPLEADOR" ${this.tipoContacto === 'EMPLEADOR' ? 'checked' : ''} onchange="BulkUploadModule.setTipoContacto('EMPLEADOR')" class="accent-tec-primary w-4 h-4 mt-0.5">
+                    <div>
+                      <div class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                        <i class="fa-solid fa-briefcase text-blue-800"></i>
+                        Empleador
+                      </div>
+                      <div class="text-xs text-slate-500 mt-0.5">Contactos para Employer Survey</div>
+                    </div>
+                  </label>
+
+                  ${isAdmin ? `
+                    <label class="flex-1 flex items-start gap-3 p-3.5 border-2 rounded-xl cursor-pointer transition-all ${this.tipoContacto === 'FUNCIONARIOS' ? 'border-blue-900 bg-blue-50/70 shadow-xs' : 'border-slate-200 bg-white hover:border-slate-300'}">
+                      <input type="radio" name="bulk_tipo" value="FUNCIONARIOS" ${this.tipoContacto === 'FUNCIONARIOS' ? 'checked' : ''} onchange="BulkUploadModule.setTipoContacto('FUNCIONARIOS')" class="accent-tec-primary w-4 h-4 mt-0.5">
+                      <div>
+                        <div class="text-sm font-bold text-slate-900 flex items-center gap-1.5">
+                          <i class="fa-solid fa-address-book text-amber-600"></i>
+                          Funcionarios TEC
+                        </div>
+                        <div class="text-xs text-slate-500 mt-0.5">Padrón: Nombre, Correo, Dependencia, Sede</div>
+                      </div>
+                    </label>
+                  ` : ''}
+                </div>
+
+                <!-- Columna Derecha: Cuadro de Reglas Mínimas perfectamente alineado de primer a último selector -->
+                <div class="lg:col-span-8 flex flex-col">
+                  <div class="bg-amber-50/70 border border-amber-200/90 rounded-xl p-4 sm:p-5 text-xs shadow-2xs h-full flex flex-col justify-between">
+                    <div class="flex items-center justify-between pb-2 mb-2 border-b border-amber-200/60">
+                      <span class="font-bold text-amber-950 flex items-center gap-2 text-xs uppercase tracking-wider">
+                        <i class="fa-solid fa-clipboard-check text-amber-700"></i>
+                        Reglas Mínimas para Evitar Errores (${this.tipoContacto === 'ACADEMICO' ? 'Académicos' : this.tipoContacto === 'EMPLEADOR' ? 'Empleadores' : 'Funcionarios TEC'})
+                      </span>
+                      <span class="text-[11px] text-amber-800/80 font-medium hidden sm:inline">
+                        Pestaña "Reglas e Instrucciones" en el Excel descargado
+                      </span>
+                    </div>
+
+                    <div class="flex-1 flex flex-col justify-around py-0.5">
+                      ${this.tipoContacto === 'ACADEMICO' ? `
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-slate-700">
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-check text-emerald-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Campos Obligatorios:</strong> First Name, Last Name, Email, Title, Job Title, Department, Institution, Country, Subject.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-ban text-red-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Restricción Crítica QS:</strong> NO se permiten correos @itcr.ac.cr ni @tec.ac.cr (deben ser contactos externos).</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-graduation-cap text-blue-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Tratamientos Aceptados:</strong> Dr., Dra., Prof., Profra., Ing., Lic., Licda., MSc., PhD, Mr., Mrs., Ms., Miss.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-tags text-indigo-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Áreas Temáticas QS:</strong> Arte y Humanidades, Ingeniería y Tecnología, Ciencias de la Vida, Ciencias Naturales, Ciencias Sociales.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-earth-americas text-slate-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>País:</strong> Nombre oficial completo según catálogo internacional (ej. Costa Rica, España, Estados Unidos).</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-copy text-amber-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Sin Duplicados:</strong> No incluir correos repetidos en el archivo ni contactos ya registrados en el sistema.</span>
+                          </div>
+                        </div>
+                      ` : this.tipoContacto === 'EMPLEADOR' ? `
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-slate-700">
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-check text-emerald-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Campos Obligatorios:</strong> First Name, Last Name, Email, Title, Position, Industry, Company Name, Country.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-ban text-red-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Restricción Crítica QS:</strong> NO se permiten correos @itcr.ac.cr ni @tec.ac.cr (deben ser empleadores externos).</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-user-tie text-blue-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Tratamientos Aceptados:</strong> Dr., Dra., Ing., Lic., Licda., Mr., Mrs., Ms., Miss.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-building text-indigo-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Cargo y Empresa:</strong> Puesto de liderazgo/contratación y nombre legal o comercial de la empresa empleadora.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-earth-americas text-slate-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>País:</strong> Nombre oficial completo del país donde opera la empresa según catálogo internacional.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-copy text-amber-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Sin Duplicados:</strong> No incluir correos repetidos en el archivo ni contactos previamente reportados.</span>
+                          </div>
+                        </div>
+                      ` : `
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-slate-700">
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-check text-emerald-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Campos Obligatorios:</strong> Nombre de funcionario, Correo electrónico, Dependencia, Sede.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-at text-emerald-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Dominio Obligatorio TEC:</strong> El correo institucional DEBE terminar exclusivamente en @itcr.ac.cr o @tec.ac.cr.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-landmark text-blue-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Sedes Oficiales:</strong> Campus Central Cartago, San José, San Carlos, Centro Académico Alajuela o Limón.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-sitemap text-indigo-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Dependencia:</strong> Escuela académica, vicerrectoría o departamento administrativo oficial del TEC.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-user-check text-slate-600 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Nombre Completo:</strong> Mínimo 3 caracteres con título institucional de cortesía.</span>
+                          </div>
+                          <div class="flex items-start gap-2">
+                            <i class="fa-solid fa-copy text-amber-700 mt-0.5 shrink-0 text-[11px]"></i>
+                            <span><strong>Sin Duplicados:</strong> Un único registro por funcionario/correo institucional en el archivo.</span>
+                          </div>
+                        </div>
+                      `}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Selector de Ubicación del Archivo -->
+            <div>
+              <label class="block text-sm font-bold text-slate-800 mb-2 flex items-center gap-2" for="excel-file-display">
+                <i class="fa-solid fa-folder-open text-blue-900"></i>
+                Ubicación del Archivo *
+              </label>
+
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <div class="relative flex-1">
+                  <input type="text" 
+                         id="excel-file-display" 
+                         readonly 
+                         placeholder="Haga clic en 'Buscar archivo...' para seleccionar la ubicación (.xlsx, .csv)" 
+                         value="${this.selectedFile ? this.selectedFile.name : ''}"
+                         class="form-control text-sm bg-slate-50 text-slate-700 w-full cursor-pointer truncate pr-10"
+                         onclick="document.getElementById('excel-file-input').click()">
+                  <span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                    <i class="fa-solid fa-file-excel"></i>
+                  </span>
+                </div>
+
+                <input type="file" 
+                       id="excel-file-input" 
+                       accept=".xlsx, .xls, .csv" 
+                       class="hidden" 
+                       onchange="BulkUploadModule.handleFileSelect(event)">
+
+                <button type="button" 
+                        class="btn btn-tec whitespace-nowrap shadow-xs" 
+                        onclick="document.getElementById('excel-file-input').click()">
+                  <i class="fa-solid fa-folder-open"></i>
+                  Buscar archivo...
+                </button>
+              </div>
+
+              <p class="text-xs text-slate-500 mt-2">
+                Formatos permitidos: Hojas de cálculo Excel (.xlsx, .xls) o texto delimitado por comas (.csv).
+              </p>
+            </div>
+          </div>
+        ` : this.renderAnalysisView()}
+      </div>
+      <!-- Modal para incluir nuevo funcionario -->
+      <div id="bulk-modal-container"></div>
+    `;
+  },
+
+  setTipoContacto(tipo) {
+    if (tipo === 'FUNCIONARIOS' && App.currentUser?.rol !== 'ADMIN') {
+      App.showToast('La carga masiva del padrón de funcionarios está reservada para Administradores.', 'warning');
+      this.tipoContacto = 'ACADEMICO';
+      this.render();
+      return;
+    }
+    this.tipoContacto = tipo;
+    this.render();
+  },
+
+  handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    this.selectedFile = file;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const arrayBuf = e.target.result;
+      let binary = '';
+      const bytes = new Uint8Array(arrayBuf);
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      this.fileBase64 = btoa(binary);
+      this.analyzeFile();
+    };
+    reader.readAsArrayBuffer(file);
+  },
+
+  async analyzeFile() {
+    App.showToast('🔍 Analizando archivo y verificando duplicados...', 'info');
+
+    try {
+      const response = await API.post('/api/bulk/analyze', {
+        fileName: this.selectedFile.name,
+        tipo_contacto: this.tipoContacto,
+        fileBase64: this.fileBase64
+      });
+
+      this.analysisResult = response;
+      this.activeFilter = 'TODOS';
+      this.render();
+      App.showToast('✅ Análisis preliminar completado.', 'success');
+    } catch (err) {
+      App.showToast(err.message || 'Error al analizar el archivo Excel', 'error');
+      this.selectedFile = null;
+      this.fileBase64 = null;
+      this.analysisResult = null;
+      this.render();
+    }
+  },
+
+  renderAnalysisView() {
+    const { summary, errorDetails, analyzedRows } = this.analysisResult;
+    const isFuncionarios = this.tipoContacto === 'FUNCIONARIOS';
+
+    const filteredRows = analyzedRows.filter(r => {
+      if (this.activeFilter === 'CORRECTOS') return r.status === 'CORRECTO';
+      if (this.activeFilter === 'ERRORES') return r.status === 'ERROR';
+      if (this.activeFilter === 'POSIBLES') return r.status === 'POSIBLE_DUPLICADO';
+      if (this.activeFilter === 'DUPLICADOS') return r.status === 'DUPLICADO_EXACTO';
+      return true;
+    });
+
+    return `
+      <div>
+        <!-- Resumen de Identificación del Reporte / Carga -->
+        ${isFuncionarios ? `
+          <div class="bg-amber-50/90 border border-amber-200/90 rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div class="flex items-center gap-2.5">
+              <span class="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center text-sm shadow-xs">
+                <i class="fa-solid fa-address-book"></i>
+              </span>
+              <div>
+                <div class="font-bold text-slate-900 text-sm">
+                  Padrón Institucional de Funcionarios del TEC
+                </div>
+                <div class="text-slate-600">
+                  Archivo cargado: <span class="font-mono font-semibold">${this.selectedFile?.name || 'padron.xlsx'}</span>
+                </div>
+              </div>
+            </div>
+            <div class="text-left sm:text-right">
+              <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-900 border border-amber-200">
+                <i class="fa-solid fa-database text-amber-700"></i> Actualización de Catálogo Base
+              </span>
+            </div>
+          </div>
+        ` : `
+          <div class="bg-blue-50/80 border border-blue-200 rounded-xl p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div class="flex items-center gap-2.5">
+              <span class="w-8 h-8 rounded-lg bg-blue-900 text-white flex items-center justify-center text-sm shadow-xs">
+                <i class="fa-solid fa-user-check"></i>
+              </span>
+              <div>
+                <div class="font-bold text-blue-950 text-sm">
+                  ${this.recomiendaNombre || App.currentUser?.nombre_completo || 'Funcionario TEC'}
+                </div>
+                <div class="text-blue-800 font-mono">
+                  ${this.recomiendaEmail || App.currentUser?.email || '(Sin correo registrado)'}
+                </div>
+              </div>
+            </div>
+            <div class="text-left sm:text-right sm:border-l sm:border-blue-200 sm:pl-4">
+              <span class="text-slate-500 font-medium block">Procedencia Institucional:</span>
+              <strong class="text-slate-800">${this.getSelectedSedeNombre()} · ${this.getSelectedDeptoNombre()}</strong>
+            </div>
+          </div>
+        `}
+
+        <!-- Resumen de Métricas (Requisito 11) -->
+        <div class="kpi-grid mb-6">
+          <div class="kpi-card" style="border-top-color: var(--tec-primary);">
+            <div class="kpi-title">Registros Analizados</div>
+            <div class="kpi-value text-slate-900">${summary.totalAnalizados}</div>
+          </div>
+          <div class="kpi-card" style="border-top-color: var(--status-success);">
+            <div class="kpi-title">No existen en el sistema (Nuevos)</div>
+            <div class="kpi-value text-emerald-700">${summary.correctos}</div>
+          </div>
+          <div class="kpi-card" style="border-top-color: var(--status-purple);">
+            <div class="kpi-title">Ya existen en el sistema</div>
+            <div class="kpi-value text-purple-700">${summary.duplicadosExactos}</div>
+          </div>
+          <div class="kpi-card" style="border-top-color: var(--status-warning);">
+            <div class="kpi-title">Posibles Duplicados</div>
+            <div class="kpi-value text-amber-700">${summary.posiblesDuplicados}</div>
+          </div>
+          <div class="kpi-card" style="border-top-color: var(--status-error);">
+            <div class="kpi-title">Con Errores Críticos</div>
+            <div class="kpi-value text-red-700">${summary.conErrores}</div>
+          </div>
+        </div>
+
+        <!-- Filtros de Pestaña para la Auditoría -->
+        <div class="flex gap-2 mb-4 flex-wrap">
+          <button class="btn btn-sm ${this.activeFilter === 'TODOS' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('TODOS')">
+            Todos (${summary.totalAnalizados})
+          </button>
+          <button class="btn btn-sm ${this.activeFilter === 'CORRECTOS' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('CORRECTOS')">
+            Nuevos / No existen (${summary.correctos})
+          </button>
+          <button class="btn btn-sm ${this.activeFilter === 'DUPLICADOS' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('DUPLICADOS')">
+            Ya existen (${summary.duplicadosExactos})
+          </button>
+          <button class="btn btn-sm ${this.activeFilter === 'POSIBLES' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('POSIBLES')">
+            Posibles Duplicados (${summary.posiblesDuplicados})
+          </button>
+          <button class="btn btn-sm ${this.activeFilter === 'ERRORES' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('ERRORES')">
+            Con Errores (${summary.conErrores})
+          </button>
+        </div>
+
+        <!-- Tabla Detallada de Auditoría Previa (Requisito 11) -->
+        <div class="table-responsive max-h-96 overflow-y-auto mb-6">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Fila Excel</th>
+                <th>Estado</th>
+                ${isFuncionarios ? `
+                  <th>Nombre de Funcionario</th>
+                  <th>Correo Institucional</th>
+                  <th>Dependencia / Departamento</th>
+                  <th>Sede TEC</th>
+                  <th>Diagnóstico</th>
+                ` : `
+                  <th>Nombre Completo</th>
+                  <th>Correo Electrónico</th>
+                  <th>Institución / Empresa</th>
+                  <th>Diagnóstico / Problema</th>
+                  <th>Recomendación</th>
+                `}
+              </tr>
+            </thead>
+            <tbody>
+              ${filteredRows.map(r => {
+                const d = r.data;
+                const badgeClass =
+                  r.status === 'CORRECTO' ? 'badge-validado' :
+                  r.status === 'ERROR' ? 'badge-error' :
+                  r.status === 'POSIBLE_DUPLICADO' ? 'badge-posible' : 'badge-duplicado';
+
+                if (isFuncionarios) {
+                  const errorMsg = r.errors?.join('; ') || 'Datos conformes para padrón de funcionarios.';
+                  return `
+                    <tr>
+                      <td><strong>#${r.rowNum}</strong></td>
+                      <td><span class="badge ${badgeClass}">${r.status}</span></td>
+                      <td class="font-medium text-slate-900">${d.nombre || d['Nombre de funcionario'] || '-'}</td>
+                      <td><code class="text-blue-900 font-semibold">${d.email || d['Correo electrónico'] || '-'}</code></td>
+                      <td>${d.dependencia || d['Dependencia'] || '-'}</td>
+                      <td>${d.sede || d['Sede'] || '-'}</td>
+                      <td class="${r.status !== 'CORRECTO' ? 'text-red-600 font-medium' : 'text-slate-500'}">${errorMsg}</td>
+                    </tr>
+                  `;
+                }
+
+                const errorMsg = r.errors?.join('; ') || r.duplicateInfo?.explanation || 'Datos conformes a directriz QS.';
+                const reco = r.status === 'CORRECTO' ? 'Aprobado para importación' :
+                             r.status === 'ERROR' ? 'Corregir celda o excluir fila' :
+                             r.status === 'POSIBLE_DUPLICADO' ? 'Revisar homónimo en directorio' : 'Omitir; ya registrado';
+
+                return `
+                  <tr>
+                    <td><strong>#${r.rowNum}</strong></td>
+                    <td><span class="badge ${badgeClass}">${r.status}</span></td>
+                    <td>${d.first_name || d['First Name'] || '-'} ${d.last_name || d['Last Name'] || '-'}</td>
+                    <td><code>${d.email || d['Email'] || '-'}</code></td>
+                    <td>${d.institution || d.company_name || d['Institution'] || d['Company Name'] || '-'}</td>
+                    <td class="${r.status !== 'CORRECTO' ? 'text-red-600 font-medium' : 'text-slate-500'}">${errorMsg}</td>
+                    <td><small class="text-slate-500">${reco}</small></td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Mensaje Informativo para Subida Selectiva de Registros No Existentes -->
+        ${summary.correctos > 0 ? `
+          <div class="bg-emerald-50/80 border border-emerald-200/90 rounded-xl p-4 mb-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-2xs">
+            <div class="flex items-center gap-3">
+              <span class="w-8 h-8 rounded-lg bg-emerald-700 text-white flex items-center justify-center text-sm shadow-xs shrink-0">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+              </span>
+              <div>
+                <div class="font-bold text-emerald-950 text-sm">
+                  Subida selectiva disponible: ${summary.correctos} registros nuevos listos para incorporar
+                </div>
+                <p class="text-emerald-800 m-0 mt-0.5">
+                  ${summary.duplicadosExactos > 0 
+                    ? `Se omitirán automáticamente los <strong>${summary.duplicadosExactos} registros existentes</strong> para no duplicar datos y se subirán únicamente los registros que no existen en el sistema.` 
+                    : 'Todos los registros son nuevos y cumplen con los estándares institucionales requeridos.'}
+                </p>
+              </div>
+            </div>
+          </div>
+        ` : summary.duplicadosExactos > 0 ? `
+          <div class="bg-amber-50/80 border border-amber-200/90 rounded-xl p-4 mb-5 flex items-center gap-3 text-xs text-amber-950 shadow-2xs">
+            <span class="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center text-sm shadow-xs shrink-0">
+              <i class="fa-solid fa-circle-info"></i>
+            </span>
+            <div>
+              <strong class="text-sm block">Todos los registros del archivo ya existen en el sistema</strong>
+              <p class="text-amber-800 m-0 mt-0.5">
+                Los ${summary.duplicadosExactos} registros analizados ya constan previamente en la base de datos. No hay registros nuevos que subir.
+              </p>
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Acciones Finales -->
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-5 border-t border-slate-100">
+          <button class="btn btn-outline" onclick="BulkUploadModule.cancelAnalysis()">
+            <i class="fa-solid fa-arrow-left mr-1"></i> Cancelar y Subir Otro Archivo
+          </button>
+
+          <div class="flex flex-wrap items-center gap-3">
+            ${summary.correctos > 0 ? `
+              <button class="btn btn-tec py-2.5 px-4 font-semibold text-sm shadow-sm flex items-center gap-2" id="btn-import-valid" onclick="BulkUploadModule.confirmImport(false)">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                <span>Subir los registros que no existen (${summary.correctos})</span>
+              </button>
+            ` : ''}
+
+            ${summary.posiblesDuplicados > 0 ? `
+              <button class="btn btn-outline text-amber-800 border-amber-300 hover:bg-amber-50 py-2.5 px-4 text-xs font-semibold flex items-center gap-1.5" onclick="BulkUploadModule.confirmImport(true)">
+                <i class="fa-solid fa-user-plus text-amber-600"></i>
+                <span>Subir nuevos + Posibles duplicados (${summary.correctos + summary.posiblesDuplicados})</span>
+              </button>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  },
+
+  setFilter(filter) {
+    this.activeFilter = filter;
+    this.render();
+  },
+
+  cancelAnalysis() {
+    this.selectedFile = null;
+    this.fileBase64 = null;
+    this.analysisResult = null;
+    this.render();
+  },
+
+  async confirmImport(includePotentialDuplicates = false) {
+    // Si la carga es del padrón institucional de funcionarios
+    if (this.tipoContacto === 'FUNCIONARIOS') {
+      const rowsToImport = this.analysisResult.analyzedRows
+        .filter(r => r.status === 'CORRECTO' || (includePotentialDuplicates && r.status === 'POSIBLE_DUPLICADO'))
+        .map(r => ({
+          nombre: r.data.nombre || r.data['Nombre de funcionario'],
+          email: r.data.email || r.data['Correo electrónico'],
+          dependencia: r.data.dependencia || r.data['Dependencia'],
+          sede: r.data.sede || r.data['Sede'],
+          status: r.status
+        }));
+
+      if (rowsToImport.length === 0) {
+        App.showToast('No hay registros válidos de funcionarios para importar.', 'warning');
+        return;
+      }
+
+      const btn = document.getElementById('btn-import-valid');
+      if (btn) btn.disabled = true;
+
+      try {
+        const response = await API.post('/api/bulk/import', {
+          fileName: this.selectedFile.name,
+          tipo_contacto: 'FUNCIONARIOS',
+          rowsToImport,
+          fileBase64: this.fileBase64
+        });
+
+        App.showToast(`🎉 ${response.message}`, 'success');
+        this.cancelAnalysis();
+      } catch (err) {
+        App.showToast(err.message || 'Error en la importación de funcionarios', 'error');
+        if (btn) btn.disabled = false;
+      }
+      return;
+    }
+
+    // Para contactos QS (Académicos / Empleadores)
+    const recNombre = (this.recomiendaNombre || App.currentUser?.nombre_completo || '').trim();
+    let recEmail = (this.recomiendaEmail || '').trim().toLowerCase();
+    if (!recEmail) {
+      const recInputEl = document.getElementById('bulk-recomienda-email');
+      if (recInputEl && recInputEl.value.trim()) {
+        recEmail = `${recInputEl.value.trim().split('@')[0]}@itcr.ac.cr`;
+      } else if (App.currentUser?.email) {
+        recEmail = App.currentUser.email.trim().toLowerCase();
+      }
+    }
+    if (recEmail && !recEmail.includes('@')) {
+      recEmail = `${recEmail}@itcr.ac.cr`;
+    }
+
+    if (!recNombre || recNombre.length < 3) {
+      App.showToast('Debe indicar el nombre de quien reporta la carga masiva (mínimo 3 caracteres).', 'warning');
+      return;
+    }
+    if (!recEmail || (!recEmail.endsWith('@itcr.ac.cr') && !recEmail.endsWith('@tec.ac.cr'))) {
+      App.showToast('Debe indicar un correo institucional del TEC válido (@itcr.ac.cr o @tec.ac.cr).', 'warning');
+      return;
+    }
+
+    const rowsToImport = this.analysisResult.analyzedRows
+      .filter(r => r.status === 'CORRECTO' || (includePotentialDuplicates && r.status === 'POSIBLE_DUPLICADO'))
+      .map(r => ({
+        ...r.data,
+        status: r.status,
+        recomienda_nombre: recNombre,
+        recomienda_email: recEmail,
+        sede_id: this.selectedSedeId || null,
+        departamento_id: this.selectedDeptoId || null
+      }));
+
+    if (rowsToImport.length === 0) {
+      App.showToast('No hay registros aptos para importar.', 'warning');
+      return;
+    }
+
+    const btn = document.getElementById('btn-import-valid');
+    if (btn) btn.disabled = true;
+
+    try {
+      const response = await API.post('/api/bulk/import', {
+        fileName: this.selectedFile.name,
+        tipo_contacto: this.tipoContacto,
+        rowsToImport,
+        fileBase64: this.fileBase64,
+        recomienda_nombre: recNombre,
+        recomienda_email: recEmail,
+        sede_id: this.selectedSedeId || null,
+        departamento_id: this.selectedDeptoId || null
+      });
+
+      App.showToast(`🎉 ${response.message}`, 'success');
+      this.cancelAnalysis();
+      App.navigate('directory');
+    } catch (err) {
+      App.showToast(err.message || 'Error en la importación', 'error');
+      if (btn) btn.disabled = false;
+    }
+  }
+};

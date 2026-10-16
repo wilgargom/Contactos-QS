@@ -1,0 +1,39 @@
+# Dependencias
+node_modules/
+package-lock.json
+
+# Variables de entorno y credenciales
+.env
+.env.local
+.env.production
+service-account-key.json
+*.pem
+
+# Archivos de compilación y empaquetado
+dist/
+build/
+out/
+
+# Archivos temporales de oficina y datasets de prueba
+*.xlsx
+*.xls
+*.csv
+!templates/*.xlsx
+~$*.xlsx
+
+# Archivos de sistema y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs y bases de datos locales
+*.log
+npm-debug.log*
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+storage/uploads/
+storage/backups/
+storage/exports/

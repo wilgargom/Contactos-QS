@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sistema de Gestión de Contactos QS | Tecnológico de Costa Rica</title>
+  <link rel="icon" type="image/svg+xml" href="assets/logo_tec.svg">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Font Awesome 6 Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <!-- Estilos Personalizados e Institucionales -->
+  <link rel="stylesheet" href="css/styles.css">
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            tec: {
+              primary: '#002855',
+              dark: '#001A35',
+              light: '#0B4182',
+              accent: '#D97706',
+              surface: '#F8FAFC'
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased">
+
+  <!-- =========================================================================
+       A. ENCABEZADO SUPERIOR AZUL INSTITUCIONAL
+       Único contenido: Logo TEC a la izquierda, Título y Subtítulo Centrados
+       (Inmóvil, siempre visible, nunca tapado por ningún menú)
+       ========================================================================= -->
+  <header class="bg-tec-primary text-white shadow-md sticky top-0 z-50 border-b-4 border-amber-500 h-[64px]">
+    <div class="w-full h-full px-4 sm:px-6 lg:px-8 flex items-center justify-between relative">
+      
+      <!-- Lado Izquierdo: Botón móvil + Logotipo Oficial Institucional TEC -->
+      <div class="flex items-center gap-3 z-10">
+        <!-- Botón hamburguesa para móvil -->
+        <button id="mobile-sidebar-toggle" class="lg:hidden p-2 text-slate-300 hover:text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400" aria-label="Abrir menú">
+          <i class="fa-solid fa-bars text-xl"></i>
+        </button>
+
+        <!-- Logotipo Oficial TEC en blanco -->
+        <img src="assets/logo_tec_white.svg" alt="Logotipo Oficial Tecnológico de Costa Rica" class="h-8 sm:h-9 w-auto object-contain flex-shrink-0 drop-shadow-sm" title="Instituto Tecnológico de Costa Rica">
+      </div>
+
+      <!-- Centro Absoluto: Título y Subtítulo Oficiales del Sistema -->
+      <div class="absolute inset-0 flex flex-col items-center justify-center text-center px-4 pointer-events-none">
+        <h1 class="text-base sm:text-lg md:text-xl font-bold tracking-tight text-white leading-tight">
+          Sistema de Gestión de Contactos QS
+        </h1>
+        <p class="text-slate-300 font-light text-[11px] sm:text-xs mt-0.5">
+          Ranking Quacquarelli Symonds · Tecnológico de Costa Rica
+        </p>
+      </div>
+
+      <!-- Lado Derecho: Contrapeso vacío para garantizar simetría óptica -->
+      <div class="w-24 sm:w-36 hidden sm:block"></div>
+
+    </div>
+  </header>
+
+  <!-- Overlay para menú en pantallas móviles -->
+  <div id="sidebar-overlay" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-30 hidden lg:hidden transition-opacity"></div>
+
+  <!-- =========================================================================
+       CONTENEDOR PRINCIPAL: MENÚ LATERAL IZQUIERDO + CONTENIDO DE PANTALLA
+       ========================================================================= -->
+  <div class="flex-1 flex overflow-hidden">
+
+    <!-- =======================================================================
+         B. MENÚ LATERAL IZQUIERDO (SIDEBAR INMÓVIL)
+         Ubicado estrictamente debajo de la barra azul superior (sin taparla)
+         ======================================================================= -->
+    <aside id="sidebar" 
+           class="bg-white border-r border-slate-200 flex flex-col justify-between flex-shrink-0 shadow-lg lg:shadow-none"
+           aria-label="Menú de Navegación Principal">
+
+      <!-- Zona de Navegación del Menú -->
+      <div class="flex-1 flex flex-col overflow-y-auto">
+        
+        <!-- Encabezado del Menú con Botón de Colapso -->
+        <div class="h-12 px-4 border-b border-slate-100 flex items-center justify-between">
+          <span class="sidebar-header-title text-[11px] font-bold uppercase tracking-wider text-slate-400">
+            Navegación
+          </span>
+          <button id="sidebar-toggle-btn" 
+                  class="hidden lg:flex items-center justify-center w-7 h-7 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                  title="Expandir / Contraer menú lateral">
+            <i class="fa-solid fa-chevron-left text-xs"></i>
+          </button>
+        </div>
+
+        <!-- Lista de Opciones del Menú de Navegación -->
+        <nav class="p-3 space-y-1">
+
+          <!-- 1. REGISTRO INDIVIDUAL -->
+          <div class="sidebar-item" data-tooltip="Registro Individual">
+            <button onclick="App.navigate('register')" id="nav-btn-register"
+                    class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-colors bg-blue-50 text-blue-900 border border-blue-200/80 shadow-sm">
+              <i class="fa-solid fa-user-plus w-5 text-center text-blue-800 text-base"></i>
+              <span class="sidebar-text truncate">Registro Individual</span>
+            </button>
+          </div>
+
+          <!-- 2. CARGA MASIVA (Administrador y Usuario) -->
+          <div class="sidebar-item" data-tooltip="Carga Masiva" id="nav-item-bulk">
+            <button onclick="App.navigate('bulk')" id="nav-btn-bulk"
+                    class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors group">
+              <i class="fa-solid fa-file-excel w-5 text-center text-slate-400 group-hover:text-blue-800 text-base"></i>
+              <span class="sidebar-text truncate">Carga Masiva</span>
+            </button>
+          </div>
+
+          <!-- 3. DIRECTORIO Y CONSULTA -->
+          <div class="sidebar-item" data-tooltip="Directorio de Contactos">
+            <button onclick="App.navigate('directory')" id="nav-btn-directory"
+                    class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors group">
+              <i class="fa-solid fa-address-book w-5 text-center text-slate-400 group-hover:text-blue-800 text-base"></i>
+              <span class="sidebar-text truncate">Directorio Contactos</span>
+            </button>
+          </div>
+
+          <!-- 4. EXPORTACIÓN QS - Solo Administrador -->
+          <div class="sidebar-item" data-tooltip="Exportación Oficial QS" id="nav-item-export">
+            <button onclick="App.navigate('export')" id="nav-btn-export"
+                    class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors group">
+              <i class="fa-solid fa-file-export w-5 text-center text-slate-400 group-hover:text-blue-800 text-base"></i>
+              <span class="sidebar-text truncate">Exportación QS</span>
+            </button>
+          </div>
+
+          <!-- 5. TABLERO Y ADMINISTRACIÓN - Solo Administrador -->
+          <div class="sidebar-item" data-tooltip="Tablero y Métricas" id="nav-item-admin">
+            <button onclick="App.navigate('admin')" id="nav-btn-admin"
+                    class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors group">
+              <i class="fa-solid fa-chart-pie w-5 text-center text-slate-400 group-hover:text-blue-800 text-base"></i>
+              <span class="sidebar-text truncate">Tablero / Drive</span>
+            </button>
+          </div>
+
+        </nav>
+      </div>
+
+      <!-- Pie del Menú Lateral: Datos del Usuario, Selector de Rol y Cerrar Sesión -->
+      <div class="border-t border-slate-100">
+        <!-- Tarjeta de Identificación de Usuario -->
+        <div class="p-3 border-b border-slate-100 sidebar-text bg-blue-50/40">
+          <div class="flex items-center gap-2.5">
+            <div id="sidebar-user-initials" class="w-8 h-8 rounded-full bg-blue-900 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+              WG
+            </div>
+            <div class="min-w-0 flex-1">
+              <div id="sidebar-user-name" class="text-xs font-bold text-slate-900 truncate">
+                Wilson Garita Gómez
+              </div>
+              <div id="sidebar-user-depto" class="text-[10px] text-slate-600 truncate font-medium">
+                Planificación Institucional (OPI)
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Selector exclusivo de 2 Roles de Usuario -->
+        <div class="p-3 border-b border-slate-100 sidebar-text bg-slate-50/60">
+          <label class="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1 flex items-center justify-between">
+            <span>Rol Activo:</span>
+            <span id="role-display-badge" class="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-100 text-amber-900">ADMINISTRADOR</span>
+          </label>
+          <select id="role-selector" class="w-full bg-white text-slate-800 text-xs rounded-lg px-2.5 py-1.5 border border-slate-200 outline-none cursor-pointer hover:border-slate-300 transition-colors shadow-xs" onchange="App.switchRole(this.value)">
+            <option value="ADMIN">Administrador</option>
+            <option value="USUARIO">Usuario</option>
+          </select>
+        </div>
+
+        <!-- Botón de Cerrar Sesión -->
+        <div class="p-3">
+          <div class="sidebar-item" data-tooltip="Cerrar sesión">
+            <button onclick="App.handleLogout()" 
+                    class="sidebar-link w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 transition-colors group">
+              <i class="fa-solid fa-right-from-bracket w-5 text-center text-red-500 group-hover:text-red-700 text-sm"></i>
+              <span class="sidebar-text truncate">Cerrar Sesión</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </aside>
+
+    <!-- =======================================================================
+         C. CONTENIDO PRINCIPAL DE PANTALLA (A la derecha del sidebar inmóvil)
+         ======================================================================= -->
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8" style="height: calc(100vh - 64px);">
+      <div class="max-w-7xl mx-auto space-y-6">
+        
+        <!-- Vistas Modulares -->
+        <section id="register-view"></section>
+        <section id="bulk-upload-view" style="display: none;"></section>
+        <section id="directory-view" style="display: none;"></section>
+        <section id="export-view" style="display: none;"></section>
+        <section id="admin-view" style="display: none;"></section>
+
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Contenedor Global para Modales -->
+  <div id="app-modal-area"></div>
+
+  <!-- Scripts de la Aplicación -->
+  <script src="js/api.js"></script>
+  <script src="js/register.js"></script>
+  <script src="js/bulkUpload.js"></script>
+  <script src="js/directory.js"></script>
+  <script src="js/exportView.js"></script>
+  <script src="js/adminView.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

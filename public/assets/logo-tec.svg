@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 80" width="360" height="80">
+  <defs>
+    <!-- Colores oficiales TEC -->
+    <linearGradient id="tecBlueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#002855"/>
+      <stop offset="100%" stop-color="#001833"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Símbolo Institucional: Engranaje Tecnológico y Antorcha / Átomo -->
+  <g transform="translate(10, 10)">
+    <!-- Engranaje exterior -->
+    <path d="M 30,5 A 25,25 0 1,0 30,55 A 25,25 0 1,0 30,5 Z" fill="none" stroke="#002855" stroke-width="4"/>
+    <!-- Dientes de engranaje -->
+    <path d="M 28,1 L 32,1 L 32,6 L 28,6 Z
+             M 28,54 L 32,54 L 32,59 L 28,59 Z
+             M 1,28 L 1,32 L 6,32 L 6,28 Z
+             M 54,28 L 54,32 L 59,32 L 59,28 Z
+             M 9,9 L 13,12 L 10,16 L 6,13 Z
+             M 47,47 L 51,50 L 48,54 L 44,51 Z
+             M 9,51 L 13,48 L 10,44 L 6,47 Z
+             M 47,13 L 51,10 L 48,6 L 44,9 Z" fill="#002855"/>
+    
+    <!-- Órbitas / Núcleo de Ciencia -->
+    <ellipse cx="30" cy="30" rx="16" ry="6" fill="none" stroke="#002855" stroke-width="2.2" transform="rotate(30 30 30)"/>
+    <ellipse cx="30" cy="30" rx="16" ry="6" fill="none" stroke="#002855" stroke-width="2.2" transform="rotate(-30 30 30)"/>
+    
+    <!-- Centro Institucional -->
+    <circle cx="30" cy="30" r="4.5" fill="#002855"/>
+  </g>
+
+  <!-- Tipografía Oficial TEC -->
+  <g fill="#002855">
+    <!-- Siglas TEC -->
+    <text x="82" y="38" font-family="'Inter', 'Arial Black', sans-serif" font-size="28" font-weight="900" letter-spacing="1.5">TEC</text>
+    
+    <!-- Barra vertical divisoria -->
+    <rect x="150" y="14" width="2" height="34" fill="#002855" opacity="0.3"/>
+
+    <!-- Nombre Institucional Completo -->
+    <text x="162" y="27" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="12" font-weight="800" letter-spacing="0.8">TECNOLÓGICO</text>
+    <text x="162" y="42" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="500" letter-spacing="0.5">DE COSTA RICA</text>
+  </g>
+
+  <!-- Tagline Ranking QS -->
+  <g fill="#53565A">
+    <rect x="82" y="52" width="265" height="1" fill="#002855" opacity="0.15"/>
+    <text x="82" y="65" font-family="'Inter', Arial, sans-serif" font-size="9.5" font-weight="600" letter-spacing="0.6" fill="#002855">GESTIÓN DE CONTACTOS · RANKING QS</text>
+  </g>
+</svg>

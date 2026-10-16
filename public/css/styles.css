@@ -1,0 +1,617 @@
+/* ==========================================================================
+   ESTILOS INSTITUCIONALES - TECNOLÓGICO DE COSTA RICA (TEC)
+   Sistema de Gestión de Contactos QS (Reputación Académica y Empleadores)
+   ========================================================================== */
+
+:root {
+  --tec-primary: #002855;
+  --tec-primary-dark: #001A35;
+  --tec-primary-light: #0B4182;
+  --tec-accent: #D97706;
+  --tec-accent-light: #F59E0B;
+  --tec-bg: #F8FAFC;
+  --tec-header-height: 64px;
+  --tec-sidebar-width: 260px;
+  --tec-sidebar-collapsed-width: 76px;
+
+  /* Colores de Estados y Semáforos QS */
+  --status-success: #15803d;
+  --status-success-bg: #f0fdf4;
+  --status-error: #b91c1c;
+  --status-error-bg: #fef2f2;
+  --status-warning: #b45309;
+  --status-warning-bg: #fffbeb;
+  --status-info: #0369a1;
+  --status-info-bg: #f0f9ff;
+  --status-purple: #6b21a8;
+  --status-purple-bg: #faf5ff;
+}
+
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+  background-color: var(--tec-bg);
+  color: #1E293B;
+  overflow-x: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   Encabezado Superior Azul Fijo (Inamovible, nunca tapado)
+   -------------------------------------------------------------------------- */
+header.bg-tec-primary {
+  height: var(--tec-header-height);
+  position: sticky;
+  top: 0;
+  z-index: 50; /* Capa superior máxima */
+}
+
+/* --------------------------------------------------------------------------
+   Menú Lateral Izquierdo (Inmóvil, ubicado debajo de la barra azul)
+   -------------------------------------------------------------------------- */
+#sidebar {
+  width: var(--tec-sidebar-width);
+  height: calc(100vh - var(--tec-header-height));
+  position: sticky;
+  top: var(--tec-header-height);
+  z-index: 30; /* Debajo de la cabecera */
+  flex-shrink: 0;
+  overflow-y: auto;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (max-width: 1023px) {
+  #sidebar {
+    position: fixed;
+    top: var(--tec-header-height);
+    left: 0;
+    bottom: 0;
+    height: calc(100vh - var(--tec-header-height));
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease, width 0.25s ease;
+  }
+  #sidebar.open {
+    transform: translateX(0);
+  }
+}
+
+#sidebar.collapsed {
+  width: var(--tec-sidebar-collapsed-width);
+}
+
+/* Sincronización de la zona del logo en cabecera con el menú lateral */
+#header-sidebar-zone {
+  width: 100%;
+}
+
+@media (min-width: 1024px) {
+  #header-sidebar-zone {
+    width: var(--tec-sidebar-width);
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  #header-sidebar-zone.collapsed {
+    width: var(--tec-sidebar-collapsed-width);
+  }
+}
+
+#sidebar.collapsed .sidebar-text,
+#sidebar.collapsed .sidebar-badge {
+  display: none;
+  opacity: 0;
+}
+
+#sidebar.collapsed .sidebar-link {
+  justify-content: center;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
+#sidebar.collapsed .sidebar-link i,
+#sidebar.collapsed .sidebar-link svg {
+  font-size: 1.25rem;
+  margin-right: 0;
+}
+
+#sidebar.collapsed .sidebar-header-title {
+  display: none;
+}
+
+/* Tooltip para modo colapsado */
+#sidebar.collapsed .sidebar-item {
+  position: relative;
+}
+
+#sidebar.collapsed .sidebar-item:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background-color: #0F172A;
+  color: #FFFFFF;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+  z-index: 50;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  animation: fadeIn 0.15s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-50%) translateX(-4px); }
+  to { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+
+/* --------------------------------------------------------------------------
+   Tarjetas de Selección de Tipo de Contacto (Dentro del Registro Individual)
+   -------------------------------------------------------------------------- */
+.contact-type-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.type-option-card {
+  border: 2px solid #E2E8F0;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  background-color: #FFFFFF;
+}
+
+.type-option-card:hover {
+  border-color: #0B4182;
+  background-color: #F8FAFC;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 40, 85, 0.05);
+}
+
+.type-option-card.selected {
+  border-color: var(--tec-primary);
+  background-color: #EFF6FF;
+  box-shadow: 0 0 0 2px var(--tec-primary);
+}
+
+.type-option-card input[type="radio"] {
+  width: 1.2rem;
+  height: 1.2rem;
+  accent-color: var(--tec-primary);
+  margin-top: 0.25rem;
+}
+
+.type-info h4 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--tec-primary);
+}
+
+.type-info p {
+  font-size: 0.85rem;
+  color: #64748B;
+  margin-top: 0.25rem;
+  line-height: 1.4;
+}
+
+/* --------------------------------------------------------------------------
+   Formularios y Controles de Entrada (Validación Reactiva)
+   -------------------------------------------------------------------------- */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.form-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #1E293B;
+  margin-bottom: 0.35rem;
+}
+
+.form-label .req {
+  color: var(--status-error);
+  margin-left: 2px;
+}
+
+.form-control {
+  padding: 0.65rem 0.85rem;
+  font-size: 0.92rem;
+  border: 1px solid #CBD5E1;
+  border-radius: 8px;
+  background-color: #FFFFFF;
+  color: #0F172A;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  outline: none;
+}
+
+.form-control:focus {
+  border-color: var(--tec-primary-light);
+  box-shadow: 0 0 0 3px rgba(11, 65, 130, 0.15);
+}
+
+/* Placeholders tenues efímeros que no se guardan (Requisito 5 y 6) */
+.form-control::placeholder {
+  color: #94A3B8;
+  opacity: 0.65;
+  font-style: italic;
+  font-weight: 400;
+}
+
+.form-control.is-invalid {
+  border-color: var(--status-error) !important;
+  background-color: #FFF5F5;
+}
+
+.form-control.is-valid {
+  border-color: var(--status-success);
+}
+
+.error-feedback {
+  font-size: 0.8rem;
+  color: var(--status-error);
+  margin-top: 0.35rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.hint-text {
+  font-size: 0.78rem;
+  color: #64748B;
+  margin-top: 0.25rem;
+}
+
+/* --------------------------------------------------------------------------
+   Botones Institucionales
+   -------------------------------------------------------------------------- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.25rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.btn-tec {
+  background-color: var(--tec-primary);
+  color: #FFFFFF;
+}
+
+.btn-tec:hover:not(:disabled) {
+  background-color: var(--tec-primary-dark);
+}
+
+.btn-tec:disabled {
+  background-color: #94A3B8;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.btn-outline {
+  background-color: transparent;
+  border-color: #CBD5E1;
+  color: #475569;
+}
+
+.btn-outline:hover {
+  background-color: #F1F5F9;
+  color: #0F172A;
+}
+
+.btn-sm {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+/* --------------------------------------------------------------------------
+   Alertas y Banners
+   -------------------------------------------------------------------------- */
+.alert {
+  padding: 0.9rem 1.2rem;
+  border-radius: 8px;
+  margin-bottom: 1.25rem;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.alert-success { background-color: var(--status-success-bg); border: 1px solid #BBF7D0; color: var(--status-success); }
+.alert-warning { background-color: var(--status-warning-bg); border: 1px solid #FDE68A; color: var(--status-warning); }
+.alert-error   { background-color: var(--status-error-bg);   border: 1px solid #FECACA; color: var(--status-error); }
+.alert-info    { background-color: var(--status-info-bg);    border: 1px solid #BAE6FD; color: var(--status-info); }
+
+/* --------------------------------------------------------------------------
+   Badges de Estado
+   -------------------------------------------------------------------------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.55rem;
+  border-radius: 9999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.badge-validado { background-color: #DCFCE7; color: #166534; }
+.badge-nuevo     { background-color: #E0F2FE; color: #075985; }
+.badge-posible   { background-color: #FEF3C7; color: #92400E; }
+.badge-duplicado { background-color: #F3E8FF; color: #6B21A8; }
+.badge-corregido { background-color: #FFEDD5; color: #9A3412; }
+.badge-exportado { background-color: #E2E8F0; color: #334155; }
+.badge-error     { background-color: #FEE2E2; color: #991B1B; }
+
+/* --------------------------------------------------------------------------
+   Tablas de Datos Modernas
+   -------------------------------------------------------------------------- */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  text-align: left;
+}
+
+.data-table th {
+  background-color: #F8FAFC;
+  color: var(--tec-primary);
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  border-bottom: 2px solid #CBD5E1;
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #E2E8F0;
+  color: #475569;
+}
+
+.data-table tbody tr:hover {
+  background-color: #F8FAFC;
+}
+
+/* Tabla compacta y ajustada al 100% sin barra de desplazamiento horizontal */
+.table-responsive-fit {
+  width: 100%;
+  border: 1px solid #E2E8F0;
+  border-radius: 12px;
+  overflow: hidden;
+  background-color: #FFFFFF;
+}
+
+@media (max-width: 768px) {
+  .table-responsive-fit {
+    overflow-x: auto;
+  }
+}
+
+.data-table-fit {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  text-align: left;
+  table-layout: fixed;
+}
+
+.data-table-fit th {
+  background-color: #F8FAFC;
+  color: var(--tec-primary);
+  font-weight: 700;
+  padding: 0.65rem 0.75rem;
+  border-bottom: 2px solid #CBD5E1;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: normal;
+  vertical-align: middle;
+}
+
+.data-table-fit td {
+  padding: 0.7rem 0.75rem;
+  border-bottom: 1px solid #E2E8F0;
+  color: #334155;
+  vertical-align: middle;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.data-table-fit tbody tr:hover {
+  background-color: #F8FAFC;
+}
+
+
+/* --------------------------------------------------------------------------
+   Modales y Ventanas Emergentes
+   -------------------------------------------------------------------------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 40, 85, 0.45);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1.5rem;
+}
+
+.modal-content {
+  background: #FFFFFF;
+  border-radius: 12px;
+  max-width: 680px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  padding: 1.75rem;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #E2E8F0;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.modal-title {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--tec-primary);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: #64748B;
+}
+
+/* Comparador Side-by-Side para Duplicados */
+.diff-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  background: #F8FAFC;
+  border: 1px solid #CBD5E1;
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.diff-col h5 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  color: var(--tec-primary);
+  border-bottom: 1px solid #CBD5E1;
+  padding-bottom: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.diff-item {
+  font-size: 0.83rem;
+  margin-bottom: 0.4rem;
+}
+
+.diff-item strong {
+  color: #0F172A;
+}
+
+/* --------------------------------------------------------------------------
+   Tarjetas de Indicadores KPI
+   -------------------------------------------------------------------------- */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.kpi-card {
+  background: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  padding: 1.2rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  border-top: 4px solid var(--tec-primary);
+  transition: all 0.2s ease;
+}
+
+.kpi-card:hover {
+  border-color: #94A3B8;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+}
+
+.kpi-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #64748B;
+  letter-spacing: 0.5px;
+}
+
+.kpi-value {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--tec-primary);
+  margin-top: 0.25rem;
+}
+
+/* --------------------------------------------------------------------------
+   Área de Dropzone (Carga Masiva Excel)
+   -------------------------------------------------------------------------- */
+.dropzone {
+  border: 2px dashed #CBD5E1;
+  border-radius: 12px;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+  background-color: #F8FAFC;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.dropzone:hover {
+  border-color: var(--tec-primary);
+  background-color: #EFF6FF;
+}
+
+/* --------------------------------------------------------------------------
+   Scrollbars
+   -------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .contact-type-selector {
+    grid-template-columns: 1fr;
+  }
+  .diff-comparison {
+    grid-template-columns: 1fr;
+  }
+}

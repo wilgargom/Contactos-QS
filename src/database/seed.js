@@ -52,7 +52,7 @@ function seedDatabase() {
         password: 'TecQS2026!',
         rol: 'ADMIN',
         sede_id: 'sede-cartago',
-        departamento_id: 'dep-562edd1e'
+        departamento_id: 'dep-inter'
       },
       {
         id: 'usr-admin-backup',
@@ -61,7 +61,7 @@ function seedDatabase() {
         password: 'TecQS2026!',
         rol: 'ADMIN',
         sede_id: 'sede-cartago',
-        departamento_id: 'dep-562edd1e'
+        departamento_id: 'dep-inter'
       },
       {
         id: 'usr-user-01',

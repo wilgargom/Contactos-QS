@@ -2,7 +2,16 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
-const STORAGE_DIR = path.join(ROOT_DIR, 'storage');
+const IS_AZURE = Boolean(process.env.WEBSITE_SITE_NAME);
+// Los datos quedan fuera del paquete de código y sobreviven a nuevos despliegues.
+const STORAGE_DIR = path.resolve(process.env.STORAGE_DIR || (
+  IS_AZURE && process.env.HOME
+    ? path.join(process.env.HOME, 'data', 'tec-qs-contacts')
+    : path.join(ROOT_DIR, 'storage')
+));
+const portValue = process.env.PORT || '3000';
+// IISNode entrega una named pipe en PORT; no convertirla a número.
+const PORT = /^\d+$/.test(portValue) ? Number(portValue) : portValue;
 const UPLOADS_DIR = path.join(STORAGE_DIR, 'uploads');
 const EXPORTS_DIR = path.join(STORAGE_DIR, 'exports');
 const BACKUPS_DIR = path.join(STORAGE_DIR, 'backups');
@@ -16,7 +25,10 @@ for (const dir of [STORAGE_DIR, UPLOADS_DIR, EXPORTS_DIR, BACKUPS_DIR, DRIVE_STA
 }
 
 module.exports = {
-  PORT: process.env.PORT || 3000,
+  PORT,
+  IS_AZURE,
+  HOT_RELOAD: !IS_AZURE && process.env.NODE_ENV !== 'production',
+  SQLITE_JOURNAL_MODE: IS_AZURE ? 'DELETE' : 'WAL',
   HOST: process.env.HOST || '0.0.0.0',
   DB_PATH: path.join(STORAGE_DIR, 'tec_qs.sqlite'),
   SOURCE_NAME: 'Instituto Tecnológico de Costa Rica',

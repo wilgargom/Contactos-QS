@@ -1,5 +1,5 @@
 -- Esquema SQLite para Gestión de Contactos QS - Tecnológico de Costa Rica
-PRAGMA journal_mode = WAL;
+-- journal_mode se configura en db.js según el entorno de ejecución
 PRAGMA foreign_keys = ON;
 
 -- 1. Catálogo de Sedes del TEC

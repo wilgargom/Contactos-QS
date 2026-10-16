@@ -9,8 +9,9 @@ function getDb() {
   if (!dbInstance) {
     dbInstance = new DatabaseSync(config.DB_PATH);
     
-    // Activar modo WAL para concurrencia multi-hilo / multi-usuario y llaves foráneas
-    dbInstance.exec('PRAGMA journal_mode = WAL;');
+    // HOME de App Service es un recurso compartido; WAL requiere disco local.
+    dbInstance.exec(`PRAGMA journal_mode = ${config.SQLITE_JOURNAL_MODE};`);
+    dbInstance.exec('PRAGMA busy_timeout = 5000;');
     dbInstance.exec('PRAGMA foreign_keys = ON;');
     dbInstance.exec('PRAGMA synchronous = NORMAL;');
     

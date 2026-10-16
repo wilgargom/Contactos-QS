@@ -2,6 +2,13 @@
 
 Aplicación web institucional desarrollada para recopilar, validar, auditar, deduplicar y consolidar los contactos de **Pares Académicos** (*Academic Reputation*) y **Empleadores** (*Employer Reputation*) para la participación institucional del TEC en el **Ranking QS (Quacquarelli Symonds)**.
 
+## Despliegue en Azure App Service
+
+Consulte la [guía de configuración de Azure Portal](docs/AZURE.md). La raíz en
+Windows es `site\wwwroot`, donde `web.config` inicia `server.js`; el servidor
+entrega `public/index.html` y atiende las API. La carpeta `wwwroot` la administra
+Azure y no se crea dentro del repositorio.
+
 ---
 
 ## 🏛️ Identidad y Características Principales
@@ -28,7 +35,7 @@ Aplicación web institucional desarrollada para recopilar, validar, auditar, ded
 ## 🚀 Puesta en Marcha
 
 ### Requisitos
-* Node.js v18+ (o Node v24).
+* Node.js 24 LTS (incluye el módulo `node:sqlite` utilizado por la aplicación).
 * No requiere dependencias externas de npm (motor OpenXML y SQLite integrados nativamente).
 
 ### Ejecución
@@ -40,9 +47,10 @@ El servidor quedará disponible en:
 **URL:** [http://127.0.0.1:3000](http://127.0.0.1:3000)
 
 ### Pruebas Automatizadas
-Para ejecutar la suite de 19 pruebas de validación, deduplicación, casos de borde y exportación:
+Para verificar el arranque con una base vacía, frontend, autenticación,
+persistencia tras reiniciar y compatibilidad de puerto con Azure:
 ```bash
-node tests/test_suite.js
+npm test
 ```
 
 ---
@@ -98,5 +106,5 @@ tec-qs-contacts/
 │       ├── exportView.js    # Módulo de exportación con descarga directa XLSX
 │       └── adminView.js     # Tablero de métricas y respaldos
 └── tests/
-    └── test_suite.js        # Suite de pruebas automatizadas (19 tests)
+    └── test_suite.js        # Pruebas de integración de arranque y despliegue
 ```

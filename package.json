@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node tests/test_suite.js"
+    "test": "node --test tests/test_suite.js",
+    "package:azure": "node scripts/package-azure.js"
   },
   "keywords": [
     "tec",
@@ -16,5 +17,8 @@
     "employer-reputation"
   ],
   "author": "Tecnológico de Costa Rica",
-  "license": "Proprietary"
+  "license": "Proprietary",
+  "engines": {
+    "node": "24.x"
+  }
 }

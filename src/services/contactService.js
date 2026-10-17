@@ -3,6 +3,10 @@ const { getDb, runTransaction } = require('../database/db');
 const { validateContact, normalizeEmail } = require('../utils/validator');
 const { checkDuplicate } = require('./duplicateDetector');
 
+function canManage(contact, user) {
+  return Boolean(user && (user.rol === 'ADMIN' || contact.created_by === user.id));
+}
+
 function logAudit(trx, contactoId, usuario, accion, detalles) {
   const auditId = crypto.randomUUID();
   const stmt = trx.prepare(`
@@ -21,111 +25,113 @@ function logAudit(trx, contactoId, usuario, accion, detalles) {
 }
 
 function createContact(rawData, user, options = {}) {
-  const { allowDuplicateOverride = false, metodoIngreso = 'INDIVIDUAL', loteId = null } = options;
+  return runTransaction(trx => {
+    const { allowDuplicateOverride = false, metodoIngreso = 'INDIVIDUAL', loteId = null } = options;
   
-  // 1. Validar reglas de formato y campos requeridos
-  const validation = validateContact(rawData, rawData.tipo_contacto);
-  if (!validation.isValid) {
-    return {
-      success: false,
-      validationErrors: validation.errors,
-      warnings: validation.warnings,
-      message: 'El registro contiene errores de validación.'
-    };
-  }
+    // 1. Validar reglas de formato y campos requeridos
+    const validation = validateContact(rawData, rawData.tipo_contacto);
+    if (!validation.isValid) {
+      return {
+        success: false,
+        validationErrors: validation.errors,
+        warnings: validation.warnings,
+        message: 'El registro contiene errores de validación.'
+      };
+    }
 
-  const s = validation.sanitized;
+    const s = validation.sanitized;
 
-  // 2. Detección de duplicados
-  const dupCheck = checkDuplicate(s);
-  if (dupCheck.status === 'EXACT_MATCH') {
-    return {
-      success: false,
-      duplicateStatus: 'EXACT_MATCH',
-      duplicateDetails: dupCheck,
-      message: `Coincidencia exacta detectada: ${dupCheck.explanation}`
-    };
-  }
+    // 2. Detección de duplicados
+    const dupCheck = checkDuplicate(s);
+    if (dupCheck.status === 'EXACT_MATCH') {
+      return {
+        success: false,
+        duplicateStatus: 'EXACT_MATCH',
+        duplicateDetails: dupCheck,
+        message: `Coincidencia exacta detectada: ${dupCheck.explanation}`
+      };
+    }
 
-  if (dupCheck.status === 'POTENTIAL_DUPLICATE' && !allowDuplicateOverride) {
-    return {
-      success: false,
-      duplicateStatus: 'POTENTIAL_DUPLICATE',
-      duplicateDetails: dupCheck,
-      message: `Posible duplicado detectado: ${dupCheck.explanation}`
-    };
-  }
+    if (dupCheck.status === 'POTENTIAL_DUPLICATE' && !allowDuplicateOverride) {
+      return {
+        success: false,
+        duplicateStatus: 'POTENTIAL_DUPLICATE',
+        duplicateDetails: dupCheck,
+        message: `Posible duplicado detectado: ${dupCheck.explanation}`
+      };
+    }
 
-  // 3. Determinar estado inicial
-  let estado = 'VALIDADO';
-  if (dupCheck.status === 'POTENTIAL_DUPLICATE') {
-    estado = 'POSIBLE_DUPLICADO';
-  }
+    // 3. Determinar estado inicial
+    let estado = 'VALIDADO';
+    if (dupCheck.status === 'POTENTIAL_DUPLICATE') {
+      estado = 'POSIBLE_DUPLICADO';
+    }
 
-  // 4. Inserción en base de datos con transacción atómica
-  const contactId = crypto.randomUUID();
-  const now = new Date().toISOString();
+    // 4. Inserción en base de datos con transacción atómica
+    const contactId = crypto.randomUUID();
+    const now = new Date().toISOString();
 
-  // Preservar sede y departamento del usuario si no fueron especificados
-  const sedeId = s.sede_id || user.sede_id || null;
-  const deptoId = s.departamento_id || user.departamento_id || null;
-  const recomiendaNombre = (rawData.recomienda_nombre || user.nombre_completo || '').trim();
-  const recomiendaEmail = (rawData.recomienda_email || user.email || '').trim().toLowerCase();
+    // Preservar sede y departamento del usuario si no fueron especificados
+    const sedeId = s.sede_id || user.sede_id || null;
+    const deptoId = s.departamento_id || user.departamento_id || null;
+    const recomiendaNombre = (rawData.recomienda_nombre || user.nombre_completo || '').trim();
+    const recomiendaEmail = (rawData.recomienda_email || user.email || '').trim().toLowerCase();
 
-  return runTransaction((trx) => {
-    const stmt = trx.prepare(`
-      INSERT INTO contactos (
-        id, tipo_contacto, source, title, first_name, last_name, email, email_normalized, phone,
-        country_name, sede_id, departamento_id, job_title, department_unit, institution, subject_area,
-        position, industry, company_name, estado, metodo_ingreso, lote_id,
-        recomienda_nombre, recomienda_email,
-        created_by, created_by_name, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    {
+      const stmt = trx.prepare(`
+        INSERT INTO contactos (
+          id, tipo_contacto, source, title, first_name, last_name, email, email_normalized, phone,
+          country_name, sede_id, departamento_id, job_title, department_unit, institution, subject_area,
+          position, industry, company_name, estado, metodo_ingreso, lote_id,
+          recomienda_nombre, recomienda_email,
+          created_by, created_by_name, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
 
-    stmt.run(
-      contactId,
-      s.tipo_contacto,
-      s.source,
-      s.title,
-      s.first_name,
-      s.last_name,
-      s.email,
-      s.email_normalized,
-      s.phone,
-      s.country_name,
-      sedeId,
-      deptoId,
-      s.job_title || null,
-      s.department_unit || null,
-      s.institution || null,
-      s.subject_area || null,
-      s.position || null,
-      s.industry || null,
-      s.company_name || null,
-      estado,
-      metodoIngreso,
-      loteId,
-      recomiendaNombre,
-      recomiendaEmail,
-      user.id,
-      user.nombre_completo,
-      now
-    );
+      stmt.run(
+        contactId,
+        s.tipo_contacto,
+        s.source,
+        s.title,
+        s.first_name,
+        s.last_name,
+        s.email,
+        s.email_normalized,
+        s.phone,
+        s.country_name,
+        sedeId,
+        deptoId,
+        s.job_title || null,
+        s.department_unit || null,
+        s.institution || null,
+        s.subject_area || null,
+        s.position || null,
+        s.industry || null,
+        s.company_name || null,
+        estado,
+        metodoIngreso,
+        loteId,
+        recomiendaNombre,
+        recomiendaEmail,
+        user.id,
+        user.nombre_completo,
+        now
+      );
 
-    logAudit(trx, contactId, user, 'CREACION', {
-      metodo: metodoIngreso,
-      estado,
-      datos: s
-    });
+      logAudit(trx, contactId, user, 'CREACION', {
+        metodo: metodoIngreso,
+        estado,
+        datos: s
+      });
 
-    const created = trx.prepare('SELECT * FROM contactos WHERE id = ?').get(contactId);
-    return {
-      success: true,
-      contact: created,
-      warnings: validation.warnings,
-      duplicateStatus: dupCheck.status
-    };
+      const created = trx.prepare('SELECT * FROM contactos WHERE id = ?').get(contactId);
+      return {
+        success: true,
+        contact: created,
+        warnings: validation.warnings,
+        duplicateStatus: dupCheck.status
+      };
+    }
   });
 }
 
@@ -136,7 +142,13 @@ function updateContact(id, rawData, user) {
     return { success: false, message: 'Contacto no encontrado.' };
   }
 
-  const validation = validateContact(rawData, rawData.tipo_contacto || existing.tipo_contacto);
+  if (!canManage(existing, user)) return { success: false, statusCode: 403, message: 'No tiene acceso a este contacto.' };
+  if (!Number.isInteger(rawData.version)) return { success: false, statusCode: 428, message: 'Actualice el contacto antes de editarlo.' };
+  if (rawData.version !== existing.version) return { success: false, statusCode: 409, message: 'Otra persona modificó este contacto. Vuelva a abrirlo antes de guardar.' };
+  if (!existing.es_consolidado && rawData.recomienda_email !== undefined && rawData.recomienda_email !== (existing.recomienda_email || '')) {
+    return { success: false, statusCode: 422, message: 'La persona reportante se conserva al editar el contacto.' };
+  }
+  const validation = validateContact({ ...existing, ...rawData, tipo_contacto: existing.tipo_contacto }, existing.tipo_contacto);
   if (!validation.isValid) {
     return { success: false, validationErrors: validation.errors, warnings: validation.warnings };
   }
@@ -155,8 +167,8 @@ function updateContact(id, rawData, user) {
 
   const now = new Date().toISOString();
 
-  const recNombre = existing.es_consolidado ? 'Administrador' : (rawData.recomienda_nombre !== undefined ? (rawData.recomienda_nombre || '').trim() : existing.recomienda_nombre);
-  const recEmail = existing.es_consolidado ? '' : (rawData.recomienda_email !== undefined ? (rawData.recomienda_email || '').trim().toLowerCase() : existing.recomienda_email);
+  const recNombre = existing.es_consolidado ? 'Administrador' : existing.recomienda_nombre;
+  const recEmail = existing.es_consolidado ? '' : existing.recomienda_email;
 
   return runTransaction((trx) => {
     const stmt = trx.prepare(`
@@ -167,16 +179,17 @@ function updateContact(id, rawData, user) {
         recomienda_nombre = ?, recomienda_email = ?,
         estado = 'CORREGIDO', updated_by = ?,
         updated_by_name = ?, updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND version = ?
     `);
 
-    stmt.run(
+    const change = stmt.run(
       s.title, s.first_name, s.last_name, s.email, s.email_normalized, s.phone,
       s.country_name, s.job_title || null, s.department_unit || null, s.institution || null,
       s.subject_area || null, s.position || null, s.industry || null, s.company_name || null,
       recNombre, recEmail,
-      user.id, user.nombre_completo, now, id
+      user.id, user.nombre_completo, now, id, rawData.version
     );
+    if (!change.changes) return { success: false, statusCode: 409, message: 'El contacto cambió; vuelva a abrirlo antes de guardar.' };
 
     logAudit(trx, id, user, 'MODIFICACION', {
       valores_anteriores: existing,
@@ -188,7 +201,7 @@ function updateContact(id, rawData, user) {
   });
 }
 
-function listContacts(filters = {}, user = null) {
+function listContacts(filters = {}, user = null, paginate = false) {
   const db = getDb();
   let sql = `
     SELECT c.*, s.nombre as sede_nombre, d.nombre as departamento_nombre
@@ -269,12 +282,19 @@ function listContacts(filters = {}, user = null) {
     params.push(term, term, term, term, term, term, term);
   }
 
-  sql += ' ORDER BY c.created_at DESC';
-
+  if (paginate) {
+    const total = db.prepare(`SELECT COUNT(*) AS total FROM (${sql})`).get(...params).total;
+    const pageSize = Math.min(100, Math.max(1, parseInt(filters.page_size, 10) || 50));
+    const pages = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(pages, Math.max(1, parseInt(filters.page, 10) || 1));
+    const contacts = db.prepare(sql + ' ORDER BY c.created_at DESC, c.id LIMIT ? OFFSET ?').all(...params, pageSize, (page - 1) * pageSize);
+    return { contacts, total, page, pageSize, pages };
+  }
+  sql += ' ORDER BY c.created_at DESC, c.id';
   return db.prepare(sql).all(...params);
 }
 
-function getContactById(id) {
+function getContactById(id, user) {
   const db = getDb();
   const contact = db.prepare(`
     SELECT c.*, s.nombre as sede_nombre, d.nombre as departamento_nombre
@@ -284,7 +304,7 @@ function getContactById(id) {
     WHERE c.id = ?
   `).get(id);
 
-  if (!contact) return null;
+  if (!contact || !canManage(contact, user)) return null;
 
   const auditHistory = db.prepare(`
     SELECT * FROM auditoria WHERE contacto_id = ? ORDER BY created_at DESC
@@ -298,6 +318,12 @@ function resolveDuplicate(id, action, targetContactId, user) {
   const contact = db.prepare('SELECT * FROM contactos WHERE id = ?').get(id);
   if (!contact) return { success: false, message: 'Contacto no encontrado.' };
 
+  if (!canManage(contact, user)) return { success: false, statusCode: 403, message: 'No tiene acceso a este contacto.' };
+  if (!['DISCARD', 'CONFIRM_VALID'].includes(action)) return { success: false, statusCode: 400, message: 'Acción inválida.' };
+  if (action === 'CONFIRM_VALID') {
+    const validation = validateContact(contact, contact.tipo_contacto);
+    if (!validation.isValid) return { success: false, statusCode: 422, validationErrors: validation.errors, message: 'Complete los campos requeridos antes de validar.' };
+  }
   const now = new Date().toISOString();
 
   return runTransaction((trx) => {
@@ -442,5 +468,6 @@ module.exports = {
   listContacts,
   getContactById,
   resolveDuplicate,
-  getStatistics
+  getStatistics,
+  logAudit
 };

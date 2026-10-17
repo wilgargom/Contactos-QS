@@ -106,7 +106,7 @@ const BulkUploadModule = {
       } else {
         this.reporterValidationError = res.exists
           ? 'El funcionario tiene datos institucionales incompletos. Revise su registro en el padrón.'
-          : 'Correo no encontrado en el padrón del TEC. Verifíquelo o registre al funcionario.';
+          : 'Correo no encontrado en el padrón del TEC. Solicite al administrador su incorporación o corrección.';
       }
     } catch (_) {
       if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
@@ -125,11 +125,15 @@ const BulkUploadModule = {
   },
 
   openNuevoUsuarioModal() {
+    if (App.currentUser?.rol !== 'ADMIN') {
+      App.showToast('Solicite al administrador la incorporación o corrección del funcionario en el padrón.', 'info');
+      return;
+    }
     const modalContainer = document.getElementById('bulk-modal-container');
     if (!modalContainer) return;
 
     const sedesOpts = (this.catalogs?.sedes || []).map(s => `
-      <option value="${s.id}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${s.nombre}</option>
+      <option value="${this.escapeReporterText(s.id)}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${this.escapeReporterText(s.nombre)}</option>
     `).join('');
 
     modalContainer.innerHTML = `
@@ -245,7 +249,7 @@ const BulkUploadModule = {
                 <i class="fa-solid fa-circle-check text-emerald-600"></i> Funcionario ya registrado en el padrón
               </div>
               <div class="mt-1 text-slate-700">
-                <strong>${f.nombre}</strong> (${f.dependencia || 'Dependencia no indicada'} · ${f.sede || 'Sede no indicada'}).
+                <strong>${this.escapeReporterText(f.nombre)}</strong> (${this.escapeReporterText(f.dependencia || 'Dependencia no indicada')} · ${this.escapeReporterText(f.sede || 'Sede no indicada')}).
               </div>
               <div class="text-[11px] text-blue-700 mt-0.5">Sus datos se completaron automáticamente para seleccionarlo.</div>
             </div>
@@ -384,7 +388,7 @@ const BulkUploadModule = {
 
     // Generar opciones de sedes
     const sedesOptions = (this.catalogs?.sedes || []).map(s => `
-      <option value="${s.id}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${s.nombre}</option>
+      <option value="${this.escapeReporterText(s.id)}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${this.escapeReporterText(s.nombre)}</option>
     `).join('');
 
     // Filtrar departamentos de la sede
@@ -393,7 +397,7 @@ const BulkUploadModule = {
     const listaDeptos = deptosParaSede.length > 0 ? deptosParaSede : todosDeptos;
 
     const deptosOptions = listaDeptos.map(d => `
-      <option value="${d.id}" ${d.id === this.selectedDeptoId ? 'selected' : ''}>${d.nombre}</option>
+      <option value="${this.escapeReporterText(d.id)}" ${d.id === this.selectedDeptoId ? 'selected' : ''}>${this.escapeReporterText(d.nombre)}</option>
     `).join('');
 
     const isAdmin = App.currentUser?.rol === 'ADMIN';
@@ -488,7 +492,7 @@ const BulkUploadModule = {
               </h3>
               <button type="button" 
                       class="btn btn-outline btn-xs text-blue-900 border-blue-200 bg-white hover:bg-blue-50 py-1.5 px-3 text-xs font-semibold flex items-center gap-1.5 rounded-lg shadow-2xs transition-colors shrink-0"
-                      onclick="BulkUploadModule.openNuevoUsuarioModal()"
+                      ${App.currentUser?.rol !== 'ADMIN' ? 'hidden' : ''} onclick="BulkUploadModule.openNuevoUsuarioModal()"
                       title="Incluir a una nueva persona funcionaria en el padrón del TEC">
                 <i class="fa-solid fa-user-plus text-amber-600"></i>
                 <span>+ Nuevo funcionario</span>
@@ -721,7 +725,7 @@ const BulkUploadModule = {
                          id="excel-file-display" 
                          readonly 
                          placeholder="Haga clic en 'Buscar archivo...' para seleccionar la ubicación (.xlsx, .csv)" 
-                         value="${this.selectedFile ? this.selectedFile.name : ''}"
+                         value="${this.escapeReporterText(this.selectedFile ? this.selectedFile.name : '')}"
                          class="form-control text-sm bg-slate-50 text-slate-700 w-full cursor-pointer truncate pr-10"
                          onclick="if (['FUNCIONARIOS', 'CONSOLIDADO'].includes(BulkUploadModule.tipoContacto) || BulkUploadModule.isReporterVerified()) document.getElementById('excel-file-input').click()">
                   <span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
@@ -834,17 +838,17 @@ const BulkUploadModule = {
     return `<div class="space-y-4">
       <h3 class="text-lg font-bold text-slate-900">Vista previa del consolidado institucional</h3>
       <p>Procedencia TEC: <strong>Administrador</strong>, agrupación por <strong>Escuela Proponente</strong>.</p>
-      <p>${summary.nuevos} nuevos, ${summary.actualizaciones} procedencias por actualizar, ${summary.pendientesRevision} nuevos pendientes de revisión, ${summary.conErrores} filas con errores y ${summary.duplicadosExactos} repetidas u omitidas.</p>
+      <p>${this.escapeReporterText(summary.nuevos)} nuevos, ${this.escapeReporterText(summary.actualizaciones)} procedencias por actualizar, ${this.escapeReporterText(summary.pendientesRevision)} nuevos pendientes de revisión, ${this.escapeReporterText(summary.conErrores)} filas con errores y ${this.escapeReporterText(summary.duplicadosExactos)} repetidas u omitidas.</p>
       <p class="text-sm text-amber-800">Los registros incompletos se guardan como NUEVO y quedan fuera de la exportación QS, las actualizaciones de procedencia conservan los datos del contacto y su historial.</p>
       <div class="table-responsive max-h-96 overflow-y-auto"><table class="data-table"><thead><tr>
         <th>Hoja / fila</th><th>Tipo / Contacto</th><th>Escuela Proponente</th><th>Acción</th><th>Detalle</th>
       </tr></thead><tbody>${analyzedRows.map(r => `<tr>
-        <td>${esc(r.sheet)} · ${r.rowNum}</td><td>${r.data.tipo_contacto === 'ACADEMICO' ? 'Académico' : 'Empleador'}<br>${esc(r.data.first_name)} ${esc(r.data.last_name)}<br>${esc(r.data.email)}</td>
+        <td>${esc(r.sheet)} · ${this.escapeReporterText(r.rowNum)}</td><td>${r.data.tipo_contacto === 'ACADEMICO' ? 'Académico' : 'Empleador'}<br>${esc(r.data.first_name)} ${esc(r.data.last_name)}<br>${esc(r.data.email)}</td>
         <td>${esc(r.escuela || 'Sin Escuela Proponente')}</td><td>${esc(labels[r.status] || r.status)}</td><td>${esc(r.errors.join('; ') || 'Datos completos')}</td>
       </tr>`).join('')}</tbody></table></div>
       <div class="flex flex-wrap gap-3">
         <button class="btn btn-outline" onclick="BulkUploadModule.cancelAnalysis()">Cancelar y volver</button>
-        <button class="btn btn-tec" id="btn-import-valid" ${summary.correctos ? '' : 'disabled'} onclick="BulkUploadModule.confirmConsolidatedImport()">Importar nuevos y actualizar procedencias (${summary.correctos})</button>
+        <button class="btn btn-tec" id="btn-import-valid" ${summary.correctos ? '' : 'disabled'} onclick="BulkUploadModule.confirmConsolidatedImport()">Importar nuevos y actualizar procedencias (${this.escapeReporterText(summary.correctos)})</button>
       </div></div>`;
   },
 
@@ -895,7 +899,7 @@ const BulkUploadModule = {
                   Padrón Institucional de Funcionarios del TEC
                 </div>
                 <div class="text-slate-600">
-                  Archivo cargado: <span class="font-mono font-semibold">${this.selectedFile?.name || 'padron.xlsx'}</span>
+                  Archivo cargado: <span class="font-mono font-semibold">${this.escapeReporterText(this.selectedFile?.name || 'padron.xlsx')}</span>
                 </div>
               </div>
             </div>
@@ -922,7 +926,7 @@ const BulkUploadModule = {
             </div>
             <div class="text-left sm:text-right sm:border-l sm:border-blue-200 sm:pl-4">
               <span class="text-slate-500 font-medium block">Procedencia Institucional:</span>
-              <strong class="text-slate-800">${this.getSelectedSedeNombre()} · ${this.getSelectedDeptoNombre()}</strong>
+              <strong class="text-slate-800">${this.escapeReporterText(this.getSelectedSedeNombre())} · ${this.escapeReporterText(this.getSelectedDeptoNombre())}</strong>
             </div>
           </div>
         `}
@@ -931,42 +935,42 @@ const BulkUploadModule = {
         <div class="kpi-grid mb-6">
           <div class="kpi-card" style="border-top-color: var(--tec-primary);">
             <div class="kpi-title">Registros Analizados</div>
-            <div class="kpi-value text-slate-900">${summary.totalAnalizados}</div>
+            <div class="kpi-value text-slate-900">${this.escapeReporterText(summary.totalAnalizados)}</div>
           </div>
           <div class="kpi-card" style="border-top-color: var(--status-success);">
             <div class="kpi-title">No existen en el sistema (Nuevos)</div>
-            <div class="kpi-value text-emerald-700">${summary.correctos}</div>
+            <div class="kpi-value text-emerald-700">${this.escapeReporterText(summary.correctos)}</div>
           </div>
           <div class="kpi-card" style="border-top-color: var(--status-purple);">
             <div class="kpi-title">Ya existen en el sistema</div>
-            <div class="kpi-value text-purple-700">${summary.duplicadosExactos}</div>
+            <div class="kpi-value text-purple-700">${this.escapeReporterText(summary.duplicadosExactos)}</div>
           </div>
           <div class="kpi-card" style="border-top-color: var(--status-warning);">
             <div class="kpi-title">Posibles Duplicados</div>
-            <div class="kpi-value text-amber-700">${summary.posiblesDuplicados}</div>
+            <div class="kpi-value text-amber-700">${this.escapeReporterText(summary.posiblesDuplicados)}</div>
           </div>
           <div class="kpi-card" style="border-top-color: var(--status-error);">
             <div class="kpi-title">Con Errores Críticos</div>
-            <div class="kpi-value text-red-700">${summary.conErrores}</div>
+            <div class="kpi-value text-red-700">${this.escapeReporterText(summary.conErrores)}</div>
           </div>
         </div>
 
         <!-- Filtros de Pestaña para la Auditoría -->
         <div class="flex gap-2 mb-4 flex-wrap">
           <button class="btn btn-sm ${this.activeFilter === 'TODOS' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('TODOS')">
-            Todos (${summary.totalAnalizados})
+            Todos (${this.escapeReporterText(summary.totalAnalizados)})
           </button>
           <button class="btn btn-sm ${this.activeFilter === 'CORRECTOS' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('CORRECTOS')">
-            Nuevos / No existen (${summary.correctos})
+            Nuevos / No existen (${this.escapeReporterText(summary.correctos)})
           </button>
           <button class="btn btn-sm ${this.activeFilter === 'DUPLICADOS' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('DUPLICADOS')">
-            Ya existen (${summary.duplicadosExactos})
+            Ya existen (${this.escapeReporterText(summary.duplicadosExactos)})
           </button>
           <button class="btn btn-sm ${this.activeFilter === 'POSIBLES' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('POSIBLES')">
-            Posibles Duplicados (${summary.posiblesDuplicados})
+            Posibles Duplicados (${this.escapeReporterText(summary.posiblesDuplicados)})
           </button>
           <button class="btn btn-sm ${this.activeFilter === 'ERRORES' ? 'btn-tec' : 'btn-outline'}" onclick="BulkUploadModule.setFilter('ERRORES')">
-            Con Errores (${summary.conErrores})
+            Con Errores (${this.escapeReporterText(summary.conErrores)})
           </button>
         </div>
 
@@ -1004,13 +1008,13 @@ const BulkUploadModule = {
                   const errorMsg = r.errors?.join('; ') || 'Datos conformes para padrón de funcionarios.';
                   return `
                     <tr>
-                      <td><strong>#${r.rowNum}</strong></td>
-                      <td><span class="badge ${badgeClass}">${r.status}</span></td>
-                      <td class="font-medium text-slate-900">${d.nombre || d['Nombre de funcionario'] || '-'}</td>
-                      <td><code class="text-blue-900 font-semibold">${d.email || d['Correo electrónico'] || '-'}</code></td>
-                      <td>${d.dependencia || d['Dependencia'] || '-'}</td>
-                      <td>${d.sede || d['Sede'] || '-'}</td>
-                      <td class="${r.status !== 'CORRECTO' ? 'text-red-600 font-medium' : 'text-slate-500'}">${errorMsg}</td>
+                      <td><strong>#${this.escapeReporterText(r.rowNum)}</strong></td>
+                      <td><span class="badge ${badgeClass}">${this.escapeReporterText(r.status)}</span></td>
+                      <td class="font-medium text-slate-900">${this.escapeReporterText(d.nombre || d['Nombre de funcionario'] || '-')}</td>
+                      <td><code class="text-blue-900 font-semibold">${this.escapeReporterText(d.email || d['Correo electrónico'] || '-')}</code></td>
+                      <td>${this.escapeReporterText(d.dependencia || d['Dependencia'] || '-')}</td>
+                      <td>${this.escapeReporterText(d.sede || d['Sede'] || '-')}</td>
+                      <td class="${r.status !== 'CORRECTO' ? 'text-red-600 font-medium' : 'text-slate-500'}">${this.escapeReporterText(errorMsg)}</td>
                     </tr>
                   `;
                 }
@@ -1022,13 +1026,13 @@ const BulkUploadModule = {
 
                 return `
                   <tr>
-                    <td><strong>#${r.rowNum}</strong></td>
-                    <td><span class="badge ${badgeClass}">${r.status}</span></td>
-                    <td>${d.first_name || d['First Name'] || '-'} ${d.last_name || d['Last Name'] || '-'}</td>
-                    <td><code>${d.email || d['Email'] || '-'}</code></td>
-                    <td>${d.institution || d.company_name || d['Institution'] || d['Company Name'] || '-'}</td>
-                    <td class="${r.status !== 'CORRECTO' ? 'text-red-600 font-medium' : 'text-slate-500'}">${errorMsg}</td>
-                    <td><small class="text-slate-500">${reco}</small></td>
+                    <td><strong>#${this.escapeReporterText(r.rowNum)}</strong></td>
+                    <td><span class="badge ${badgeClass}">${this.escapeReporterText(r.status)}</span></td>
+                    <td>${this.escapeReporterText(d.first_name || d['First Name'] || '-')} ${this.escapeReporterText(d.last_name || d['Last Name'] || '-')}</td>
+                    <td><code>${this.escapeReporterText(d.email || d['Email'] || '-')}</code></td>
+                    <td>${this.escapeReporterText(d.institution || d.company_name || d['Institution'] || d['Company Name'] || '-')}</td>
+                    <td class="${r.status !== 'CORRECTO' ? 'text-red-600 font-medium' : 'text-slate-500'}">${this.escapeReporterText(errorMsg)}</td>
+                    <td><small class="text-slate-500">${this.escapeReporterText(reco)}</small></td>
                   </tr>
                 `;
               }).join('')}
@@ -1045,11 +1049,11 @@ const BulkUploadModule = {
               </span>
               <div>
                 <div class="font-bold text-emerald-950 text-sm">
-                  Subida selectiva disponible: ${summary.correctos} registros nuevos listos para incorporar
+                  Subida selectiva disponible: ${this.escapeReporterText(summary.correctos)} registros nuevos listos para incorporar
                 </div>
                 <p class="text-emerald-800 m-0 mt-0.5">
                   ${summary.duplicadosExactos > 0 
-                    ? `Se omitirán automáticamente los <strong>${summary.duplicadosExactos} registros existentes</strong> para no duplicar datos y se subirán únicamente los registros que no existen en el sistema.` 
+                    ? `Se omitirán automáticamente los <strong>${this.escapeReporterText(summary.duplicadosExactos)} registros existentes</strong> para no duplicar datos y se subirán únicamente los registros que no existen en el sistema.`
                     : 'Todos los registros son nuevos y cumplen con los estándares institucionales requeridos.'}
                 </p>
               </div>
@@ -1063,7 +1067,7 @@ const BulkUploadModule = {
             <div>
               <strong class="text-sm block">Todos los registros del archivo ya existen en el sistema</strong>
               <p class="text-amber-800 m-0 mt-0.5">
-                Los ${summary.duplicadosExactos} registros analizados ya constan previamente en la base de datos. No hay registros nuevos que subir.
+                Los ${this.escapeReporterText(summary.duplicadosExactos)} registros analizados ya constan previamente en la base de datos. No hay registros nuevos que subir.
               </p>
             </div>
           </div>
@@ -1079,7 +1083,7 @@ const BulkUploadModule = {
             ${summary.correctos > 0 ? `
               <button class="btn btn-tec py-2.5 px-4 font-semibold text-sm shadow-sm flex items-center gap-2" id="btn-import-valid" onclick="BulkUploadModule.confirmImport(false)">
                 <i class="fa-solid fa-cloud-arrow-up"></i>
-                <span>Subir los registros que no existen (${summary.correctos})</span>
+                <span>Subir los registros que no existen (${this.escapeReporterText(summary.correctos)})</span>
               </button>
             ` : ''}
 

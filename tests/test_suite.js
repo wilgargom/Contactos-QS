@@ -26,8 +26,9 @@ async function startServer(storage, port = '0', azure = true, overrides = {}) {
   `], {
     cwd: appRoot,
     env: { ...process.env, PORT: port, HOST: '127.0.0.1', STORAGE_DIR: storage,
-      WEBSITE_SITE_NAME: azure ? 'test-contactos-qs' : '', NODE_ENV: 'production',
-      QS_ADMIN_USERNAME: testUsername, QS_ADMIN_PASSWORD_HASH: testPasswordHash, ...overrides },
+      WEBSITE_SITE_NAME: azure ? 'test-contactos-qs' : '',
+      QS_ADMIN_USERNAME: testUsername, QS_ADMIN_PASSWORD_HASH: testPasswordHash,
+      NODE_ENV: 'test', QS_SEED_DEMO: '1', ...overrides },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc']
   });
   let logs = '';
@@ -320,7 +321,7 @@ test('ambas cargas exigen correo en padrón y guardan los datos oficiales del re
   assert.equal(individual.json().contact.departamento_id, 'dep-comp');
   const imported = await request(server, '/api/bulk/import', 'POST', {
     tipo_contacto: 'ACADEMICO', recomienda_email: 'psolis@itcr.ac.cr', recomienda_nombre: 'Nombre anterior',
-    rowsToImport: [{ ...contact, email: 'masivo@universidad.example', recomienda_nombre: 'Nombre manipulado',
+    rowsToImport: [{ ...contact, first_name: 'Esteban', last_name: 'Mora', institution: 'Otra Universidad', email: 'masivo@universidad.example', recomienda_nombre: 'Nombre manipulado',
       recomienda_email: 'otro@itcr.ac.cr', sede_id: 'sede-sanjose', departamento_id: 'dep-admin' }]
   }, admin.cookies);
   assert.equal(imported.status, 200, imported.text);
@@ -663,4 +664,292 @@ test('directorio: selección visible, contador, cancelar y confirmar una sola so
   assert.equal(dir.selectedIds.size, 0);
   assert.doesNotMatch(node('directory-view').innerHTML, /Eliminar seleccionados/);
   assert.doesNotMatch(node('dir-table-area').innerHTML, /data-contact-select/);
+});
+
+test('recargar el documento revoca administración en servidor y conserva la sesión de usuario', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-reload-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  for (const route of ['/', '/index.html', '/ruta-spa']) {
+    const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+    const both = `${guest.cookies}; ${admin.cookies}`;
+    assert.equal((await request(server, '/api/stats', 'GET', undefined, both)).status, 200);
+    // Los recursos JS no cierran la sesión; el documento sí.
+    await request(server, '/js/app.js', 'GET', undefined, both);
+    assert.equal((await request(server, '/api/stats', 'GET', undefined, both)).status, 200);
+    const page = await request(server, route, 'GET', undefined, both);
+    assert.equal(page.status, 200);
+    assert.ok(page.headers['set-cookie'].some(c => c.startsWith('tec_qs_admin=;') && c.includes('Max-Age=0')));
+    assert.equal((await request(server, '/api/stats', 'GET', undefined, admin.cookies)).status, 401);
+    const resumed = await request(server, '/api/auth/guest', 'POST', {}, guest.cookies);
+    assert.equal(resumed.json().user.id, guest.json().user.id);
+  }
+});
+
+test('permisos: rechaza rutas alternativas y evita modificar o revelar contactos ajenos y el padrón', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-permissions-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  for (const route of ['/api/other/cnt-acad-01/resolve-duplicate', '/api/contacts/cnt-acad-01/resolve-duplicate/extra']) {
+    assert.equal((await request(server, route, 'POST', { action: 'DISCARD' }, guest.cookies)).status, 404);
+  }
+  assert.equal((await request(server, '/api/contacts/cnt-acad-01/resolve-duplicate', 'POST', { action: 'DISCARD' }, guest.cookies)).status, 403);
+  const before = (await request(server, '/api/funcionarios/by-email?email=cbrenes@itcr.ac.cr', 'GET', undefined, guest.cookies)).json().funcionario;
+  const edited = await request(server, '/api/funcionarios', 'POST', { ...before, nombre: 'Nombre alterado' }, guest.cookies);
+  assert.equal(edited.status, 403);
+  const after = (await request(server, '/api/funcionarios/by-email?email=cbrenes@itcr.ac.cr', 'GET', undefined, guest.cookies)).json().funcionario;
+  assert.deepEqual(after, before);
+  const lookup = (await request(server, '/api/contacts/check-email?email=pattrsn@berkeley.edu', 'GET', undefined, guest.cookies)).json();
+  assert.equal(lookup.exists, true);
+  assert.equal(lookup.contact, null);
+  const detail = (await request(server, '/api/contacts/cnt-acad-01', 'GET', undefined, admin.cookies)).json().contact;
+  assert.equal(detail.estado, 'VALIDADO');
+  const duplicate = await request(server, '/api/contacts', 'POST', { ...detail, recomienda_email: before.email }, guest.cookies);
+  assert.equal(duplicate.status, 409);
+  assert.doesNotMatch(duplicate.text, /David|Patterson|berkeley|pattrsn/);
+});
+
+test('edición conserva disciplina e industria y rechaza versiones antiguas o ausentes', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-edit-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  for (const [id, field] of [['cnt-acad-01', 'subject_area'], ['cnt-emp-01', 'industry']]) {
+    const original = (await request(server, `/api/contacts/${id}`, 'GET', undefined, admin.cookies)).json().contact;
+    const edited = await request(server, `/api/contacts/${id}`, 'PUT', { version: original.version, phone: '+506 22223333' }, admin.cookies);
+    assert.equal(edited.status, 200, edited.text);
+    assert.equal(edited.json().contact[field], original[field]);
+    assert.equal(edited.json().contact.version, original.version + 1);
+    assert.equal((await request(server, `/api/contacts/${id}`, 'PUT', { version: original.version, phone: '+506 99998888' }, admin.cookies)).status, 409);
+    assert.equal((await request(server, `/api/contacts/${id}`, 'PUT', { phone: '+506 99998888' }, admin.cookies)).status, 428);
+    const fresh = (await request(server, `/api/contacts/${id}`, 'GET', undefined, admin.cookies)).json();
+    assert.equal(fresh.contact.phone, '+506 22223333');
+    assert.equal(fresh.auditHistory.filter(a => a.accion === 'MODIFICACION').length, 1);
+    const invalid = await request(server, `/api/contacts/${id}`, 'PUT', { version: fresh.contact.version, [field]: '' }, admin.cookies);
+    assert.equal(invalid.status, 400);
+    assert.ok(invalid.json().validationErrors[field === 'subject_area' ? 'subject' : 'industry']);
+  }
+});
+
+test('importación revalida, revierte el lote inválido, detecta repetidos y audita cada contacto', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-import-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const row = { tipo_contacto: 'EMPLEADOR', title: 'Mr', first_name: 'Andrea', last_name: 'Guzman', email: 'andrea@empresa.example',
+    country_name: 'Costa Rica', position: 'Gerente', industry: 'Servicios', company_name: 'Empresa distinta' };
+  const load = rowsToImport => request(server, '/api/bulk/import', 'POST', {
+    tipo_contacto: 'EMPLEADOR', recomienda_email: 'cbrenes@itcr.ac.cr', rowsToImport
+  }, guest.cookies);
+  assert.equal((await load([{ ...row, email: 'correo-invalido', status: 'CORRECTO' }])).status, 422);
+  // La primera fila se inserta, pero la segunda provoca rollback del contacto, lote y auditoría.
+  assert.equal((await load([row, { ...row, email: 'correo-invalido' }])).status, 422);
+  assert.equal((await load([row, row])).status, 409);
+  assert.equal((await load([row, { ...row, email: 'otro@empresa.example' }])).status, 409);
+  assert.equal((await load([null])).status, 422);
+  assert.equal((await load([{ ...row, industry: {} }])).status, 422);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, guest.cookies)).json().count, 0);
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM lotes_carga').get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auditoria').get().n, 0);
+  db.close();
+  const success = await load([row]);
+  assert.equal(success.status, 200, success.text);
+  assert.equal(success.json().importedCount, 1);
+  assert.equal((await load([row])).status, 409); // Otro análisis previo tampoco evita la detección al confirmar.
+  const contact = (await request(server, '/api/contacts', 'GET', undefined, guest.cookies)).json().contacts[0];
+  assert.equal(contact.estado, 'VALIDADO');
+  assert.equal(contact.departamento_id, 'dep-comp');
+  const audit = (await request(server, `/api/contacts/${contact.id}`, 'GET', undefined, admin.cookies)).json().auditHistory;
+  assert.equal(audit.length, 1);
+  assert.equal(JSON.parse(audit[0].detalles).metodo, 'CARGA_MASIVA');
+});
+
+test('paginación acota cada respuesta y la exportación conserva todos los resultados filtrados', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-pages-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  for (let i = 0; i < 125; i++) db.prepare(`INSERT INTO contactos (id,tipo_contacto,title,first_name,last_name,email,email_normalized,country_name,estado,metodo_ingreso,created_by,created_at)
+    VALUES (?, 'EMPLEADOR', 'Mr', 'Prueba', 'Pagina', ?, ?, 'Costa Rica', 'NUEVO', 'INDIVIDUAL', 'test', ?)`)
+    .run(`page-${i}`, `page${i}@example.com`, `page${i}@example.com`, new Date().toISOString());
+  db.close();
+  const first = (await request(server, '/api/contacts?page_size=50', 'GET', undefined, admin.cookies)).json();
+  const second = (await request(server, '/api/contacts?page=2&page_size=50', 'GET', undefined, admin.cookies)).json();
+  assert.equal(first.count, 127);
+  assert.equal(first.contacts.length, 50);
+  assert.equal(second.contacts.length, 50);
+  assert.equal(first.pages, 3);
+  assert.ok(first.contacts.every(c => !second.contacts.some(d => c.id === d.id)));
+  const bounded = (await request(server, '/api/contacts?page_size=999999', 'GET', undefined, admin.cookies)).json();
+  assert.equal(bounded.contacts.length, 100);
+  const negative = (await request(server, '/api/contacts?page=-3&page_size=-1', 'GET', undefined, admin.cookies)).json();
+  assert.equal(negative.page, 1);
+  assert.equal(negative.pageSize, 1);
+  // El servicio usado por exportación no limita los resultados aunque se envíe page_size.
+  const result = await request(server, '/api/contacts/export-directory?page_size=1', 'GET', undefined, admin.cookies);
+  assert.equal(result.status, 200);
+  assert.match(result.headers['content-type'], /spreadsheetml/);
+});
+
+test('respaldo SQLite recupera transacciones WAL confirmadas y Drive informa almacenamiento local', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-backup-'));
+  const server = await startServer(storage, '0', false);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  db.exec('PRAGMA wal_autocheckpoint=0');
+  db.prepare("UPDATE contactos SET phone = '88889999' WHERE id = 'cnt-acad-01'").run();
+  assert.ok(fs.statSync(path.join(storage, 'tec_qs.sqlite-wal')).size > 0);
+  const backup = await request(server, '/api/drive/backup', 'POST', {}, admin.cookies);
+  assert.equal(backup.status, 200, backup.text);
+  assert.equal(backup.json().verified, true);
+  const copy = new DatabaseSync(backup.json().backupPath, { readOnly: true });
+  try {
+    assert.equal(copy.prepare("SELECT phone FROM contactos WHERE id='cnt-acad-01'").get().phone, '88889999');
+    assert.equal(copy.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+  } finally { copy.close(); db.close(); }
+  const drive = (await request(server, '/api/drive/status', 'GET', undefined, admin.cookies)).json().drive;
+  assert.equal(drive.isDriveApiConnected, false);
+  assert.equal(drive.mode, 'LOCAL_STAGING');
+});
+
+test('arranque institucional no agrega ejemplos, aun con bandera de demostración', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-production-'));
+  let server = await startServer(storage, '0', true, { NODE_ENV: 'production', QS_SEED_DEMO: '1' });
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, 0);
+  assert.equal((await request(server, '/api/funcionarios', 'GET', undefined, admin.cookies)).json().funcionarios.length, 0);
+  assert.ok((await request(server, '/api/catalogs', 'GET', undefined, admin.cookies)).json().sedes.length > 0);
+  await server.stop();
+  server = await startServer(storage, '0', true, { NODE_ENV: 'production', QS_SEED_DEMO: '0' });
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, 0);
+});
+
+test('vistas de directorio escapan HTML almacenado, preservan catálogos externos y envían la versión', async () => {
+  const vm = require('node:vm');
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { value: '', innerHTML: '', textContent: '', disabled: false, after() {}, addEventListener() {} });
+    return nodes.get(id);
+  };
+  const attack = '<img src=x onerror="alert(1)">';
+  const contact = { id: 'contact-safe', version: 7, title: 'Tratamiento propio', first_name: 'Ana', last_name: "O'Connor", email: 'ana@example.com',
+    tipo_contacto: 'ACADEMICO', institution: attack, job_title: attack, subject_area: attack, country_name: 'País propio',
+    recomienda_nombre: attack, recomienda_email: 'ana@itcr.ac.cr', departamento_nombre: attack, estado: 'VALIDADO' };
+  let sent;
+  const context = vm.createContext({ console, URLSearchParams, setTimeout, clearTimeout,
+    App: { currentUser: { rol: 'ADMIN' }, showToast() {} },
+    document: { getElementById: node, querySelectorAll: () => [], createElement: () => ({ dataset: {} }) },
+    API: { get: async () => ({ contact, auditHistory: [{ detalles: attack, usuario_nombre: attack }] }),
+      put: async (url, data) => { sent = { url, data }; return { success: true }; } } });
+  vm.runInContext(fs.readFileSync(path.join(appRoot, 'public/js/directory.js'), 'utf8') + '\nglobalThis.dir = DirectoryModule;', context);
+  const dir = context.dir;
+  dir.catalogs = { paises: ['Costa Rica'], titulos: ['Dr'] };
+  dir.contacts = [contact];
+  dir.renderTable();
+  assert.doesNotMatch(node('dir-table-area').innerHTML, /<img/);
+  assert.match(node('dir-table-area').innerHTML, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+  assert.match(node('dir-table-area').innerHTML, /O%27Connor/);
+  await dir.viewDetails(contact.id);
+  assert.doesNotMatch(node('dir-modal-container').innerHTML, /<img/);
+  await dir.editContact(contact.id);
+  const edit = node('dir-modal-container').innerHTML;
+  assert.doesNotMatch(edit, /<img/);
+  assert.match(edit, /value="Tratamiento propio" selected/);
+  assert.match(edit, /value="País propio" selected/);
+  assert.match(edit, /id="edit-subject_area"/);
+  for (const [key, value] of Object.entries(contact)) node(`edit-${key}`).value = value;
+  dir.loadContacts = () => {};
+  await dir.saveEdit(contact.id);
+  assert.equal(sent.data.version, 7);
+  assert.equal(sent.data.subject_area, attack);
+  dir.confirmDelete(contact.id, encodeURIComponent(attack));
+  assert.doesNotMatch(node('dir-modal-container').innerHTML, /<img/);
+});
+
+test('borrador conserva datos del contacto durante la sesión y exige identificar nuevamente al reportante', () => {
+  const vm = require('node:vm');
+  const nodes = new Map(); const saved = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', innerHTML: '', disabled: false,
+      style: {}, classList: { add() {}, remove() {}, toggle() {} }, querySelectorAll: () => [], addEventListener() {} });
+    return nodes.get(id);
+  };
+  const fields = ['first_name', 'email', 'subject_area'].map(key => { const input = node(`field-${key}`); input.id = `field-${key}`; return input; });
+  node('contact-form').querySelectorAll = () => fields;
+  const context = vm.createContext({ console, setTimeout, clearTimeout,
+    sessionStorage: { setItem: (key, value) => saved.set(key, value), getItem: key => saved.get(key), removeItem: key => saved.delete(key) },
+    localStorage: { removeItem() {} }, document: { getElementById: node },
+    window: { confirm: () => false }, App: { currentUser: { id: 'guest-draft', rol: 'USUARIO' }, showToast() {} } });
+  vm.runInContext(fs.readFileSync(path.join(appRoot, 'public/js/register.js'), 'utf8') + '\nglobalThis.mod = RegisterModule;', context);
+  const mod = context.mod;
+  mod.currentType = 'ACADEMICO';
+  fields[0].value = 'Nombre sin guardar'; fields[1].value = 'draft@example.com'; fields[2].value = 'Disciplina propia';
+  mod.recomiendaNombre = 'Persona anterior'; mod.recomiendaEmail = 'persona@itcr.ac.cr';
+  mod.captureDraft();
+  const stored = [...saved.values()][0];
+  assert.doesNotMatch(stored, /persona@itcr|Persona anterior|recomienda/);
+  fields.forEach(input => { input.value = ''; });
+  mod.render = () => mod.restoreDraft();
+  mod.init({});
+  assert.equal(fields[0].value, 'Nombre sin guardar');
+  assert.equal(fields[2].value, 'Disciplina propia');
+  assert.equal(mod.recomiendaEmail, '');
+  assert.equal(mod.funcionarioIdentificado, null);
+  assert.equal(mod.isReporterVerified(), false);
+  mod.selectType('EMPLEADOR'); // Cancelar el cambio conserva el borrador.
+  assert.equal(mod.currentType, 'ACADEMICO');
+  mod.clearDraft();
+  assert.equal(saved.size, 0);
+});
+
+test('confirmaciones simultáneas importan una sola vez y el padrón inválido se revierte completo', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-concurrent-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const other = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const payload = { tipo_contacto: 'EMPLEADOR', recomienda_email: 'cbrenes@itcr.ac.cr', rowsToImport: [{
+    title: 'Mr', first_name: 'Concurrencia', last_name: 'Prueba', email: 'concurrente@empresa.example',
+    position: 'Gerente', industry: 'Servicios', company_name: 'Empresa concurrente', country_name: 'Costa Rica' }] };
+  const results = await Promise.all([guest, other].map(user => request(server, '/api/bulk/import', 'POST', payload, user.cookies)));
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  assert.equal((await request(server, '/api/contacts?q=concurrente', 'GET', undefined, admin.cookies)).json().count, 1);
+  const official = { nombre: 'Funcionario Prueba', email: 'prueba@itcr.ac.cr', dependencia: 'Escuela de Ingeniería en Computación', sede: 'Campus Central Cartago' };
+  const invalid = await request(server, '/api/bulk/import', 'POST', { tipo_contacto: 'FUNCIONARIOS', rowsToImport: [official, { ...official, email: 'correo-invalido' }] }, admin.cookies);
+  assert.equal(invalid.status, 422);
+  assert.equal((await request(server, '/api/funcionarios/by-email?email=prueba@itcr.ac.cr', 'GET', undefined, admin.cookies)).json().exists, false);
+  assert.equal((await request(server, '/api/funcionarios', 'POST', official, admin.cookies)).status, 200);
+  assert.equal((await request(server, '/api/funcionarios/by-email?email=prueba@itcr.ac.cr', 'GET', undefined, admin.cookies)).json().exists, true);
+});
+
+test('evidencia local no informa sincronización por la sola presencia de credenciales y acota la ruta', () => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-drive-local-'));
+  try {
+    const result = spawnSync(process.execPath, ['-e', `
+      const drive = require('./src/services/driveService');
+      drive.isDriveConfigured = true;
+      drive.saveDocumentArchive('../../evidencia.xlsx', Buffer.from('evidencia')).then(result => {
+        process.stdout.write(JSON.stringify({ result, drive: drive.getStatus() }));
+      });
+    `], { cwd: appRoot, env: { ...process.env, STORAGE_DIR: storage }, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const data = JSON.parse(result.stdout);
+    assert.equal(data.result.status, 'STAGED_LOCAL_PENDING_DRIVE_SYNC');
+    assert.equal(data.drive.credentialsPresent, true);
+    assert.equal(data.drive.isDriveApiConnected, false);
+    assert.equal(path.dirname(data.result.localPath), path.join(storage, 'drive_staging'));
+    assert.equal(fs.readFileSync(data.result.localPath, 'utf8'), 'evidencia');
+  } finally { fs.rmSync(storage, { recursive: true, force: true }); }
 });

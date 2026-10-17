@@ -22,6 +22,16 @@ function getDb() {
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN es_consolidado INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN escuela_proponente TEXT;'); } catch (_) {}
 
+    const columns = dbInstance.prepare('PRAGMA table_info(contactos)').all();
+    if (!columns.some(c => c.name === 'version')) {
+      dbInstance.exec('ALTER TABLE contactos ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
+    }
+    // Cualquier modificación, también exportaciones y consolidaciones, cambia la versión.
+    dbInstance.exec(`CREATE TRIGGER IF NOT EXISTS contactos_version AFTER UPDATE ON contactos
+      WHEN NEW.version = OLD.version BEGIN
+        UPDATE contactos SET version = OLD.version + 1 WHERE id = NEW.id;
+      END;`);
+
     // Auto-migraciones para columnas de trazabilidad institucional
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN recomienda_nombre TEXT;'); } catch (_) {}
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN recomienda_email TEXT;'); } catch (_) {}
@@ -52,7 +62,7 @@ function getDb() {
  */
 function runTransaction(fn) {
   const db = getDb();
-  db.exec('BEGIN TRANSACTION;');
+  db.exec('BEGIN IMMEDIATE TRANSACTION;');
   try {
     const result = fn(db);
     db.exec('COMMIT;');

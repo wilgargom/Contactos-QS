@@ -1,6 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const config = require('../config');
+const { backup, DatabaseSync } = require('node:sqlite');
+const { getDb } = require('../database/db');
+const crypto = require('node:crypto');
 
 /**
  * Servicio de Almacenamiento y Sincronización Institucional (Google Drive / Staging Local)
@@ -22,29 +25,18 @@ class DriveService {
    */
   async saveDocumentArchive(fileName, buffer, category = 'CARGA_EXCEL') {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const safeName = `${category}_${timestamp}_${fileName}`;
+    const safeName = `${category.replace(/[^A-Z0-9_]/gi, '_')}_${timestamp}_${crypto.randomUUID()}_${path.basename(String(fileName)).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
     const targetPath = path.join(this.stagingDir, safeName);
 
     fs.writeFileSync(targetPath, buffer);
 
-    if (this.isDriveConfigured) {
-      // Si la cuenta de servicio del TEC está provista, se conectaría con la API oficial v3 de Google Drive
-      return {
-        success: true,
-        status: 'SYNCED_TO_GOOGLE_DRIVE',
-        localPath: targetPath,
-        driveFolderId: config.DRIVE_CONFIG.FOLDER_ID,
-        message: 'Archivo sincronizado exitosamente con la carpeta compartida de Google Drive institucional.'
-      };
-    } else {
-      // Almacenamiento seguro en staging local con trazabilidad para posterior sincronización
-      return {
-        success: true,
-        status: 'STAGED_LOCAL_PENDING_DRIVE_SYNC',
-        localPath: targetPath,
-        message: 'Archivo archivado en el área de staging local. Para habilitar sincronización directa en la nube de Google Drive, coloque la clave de cuenta de servicio en service-account-key.json.'
-      };
-    }
+    return {
+      success: true,
+      status: 'STAGED_LOCAL_PENDING_DRIVE_SYNC',
+      localPath: targetPath,
+      message: 'Archivo guardado localmente. La sincronización con Google Drive no está implementada.'
+    };
+
   }
 
   /**
@@ -52,13 +44,26 @@ class DriveService {
    */
   async createDatabaseBackup() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupFileName = `tec_qs_backup_${timestamp}.sqlite`;
+    const backupFileName = `tec_qs_backup_${timestamp}_${crypto.randomUUID()}.sqlite`;
     const backupPath = path.join(this.backupDir, backupFileName);
 
     if (fs.existsSync(config.DB_PATH)) {
-      fs.copyFileSync(config.DB_PATH, backupPath);
+      await backup(getDb(), backupPath);
+      let restored;
+      try {
+        restored = new DatabaseSync(backupPath, { readOnly: true });
+        const integrity = restored.prepare('PRAGMA integrity_check').get().integrity_check;
+        if (integrity !== 'ok') throw new Error('El respaldo no superó la verificación de integridad.');
+        if (restored.prepare('PRAGMA foreign_key_check').all().length) throw new Error('El respaldo contiene relaciones inválidas.');
+        restored.prepare('SELECT COUNT(*) FROM contactos').get();
+      } catch (err) {
+        if (restored) { restored.close(); restored = null; }
+        fs.rmSync(backupPath, { force: true });
+        throw err;
+      } finally { if (restored) restored.close(); }
       return {
         success: true,
+        verified: true,
         backupPath,
         backupFileName,
         createdAt: new Date().toISOString(),
@@ -74,12 +79,13 @@ class DriveService {
     const backupFiles = fs.readdirSync(this.backupDir).length;
 
     return {
-      isDriveApiConnected: this.isDriveConfigured,
-      mode: this.isDriveConfigured ? 'GOOGLE_DRIVE_API_V3' : 'LOCAL_STAGING_HYBRID',
+      isDriveApiConnected: false,
+      credentialsPresent: this.isDriveConfigured,
+      mode: 'LOCAL_STAGING',
       targetSharedDrive: config.DRIVE_CONFIG.FOLDER_ID,
       stagedArchivesCount: stagedFiles,
       backupsCount: backupFiles,
-      architectureNote: 'Google Drive se utiliza como repositorio inmutable de evidencias y respaldos. Los registros operacionales multiusuario residen en el motor relacional SQLite con WAL.'
+      architectureNote: 'Evidencias y respaldos guardados localmente. La integración con Google Drive está pendiente; SQLite conserva los registros operacionales.'
     };
   }
 }

@@ -58,33 +58,6 @@ function getFuncionarioByEmail(email) {
 
   if (!f) return null;
 
-  // Si sede_id o departamento_id no estaban asignados, resolverlos y persistirlos
-  let needsUpdate = false;
-  let finalSedeId = f.sede_id;
-  let finalDeptoId = f.departamento_id;
-
-  if (!finalSedeId && f.sede) {
-    finalSedeId = resolveSedeId(f.sede);
-    needsUpdate = true;
-  }
-  if (!finalDeptoId && f.dependencia) {
-    finalDeptoId = resolveOrRegisterDepartamento(db, f.dependencia, finalSedeId);
-    needsUpdate = true;
-  }
-
-  if (needsUpdate) {
-    db.prepare('UPDATE funcionarios SET sede_id = ?, departamento_id = ? WHERE id = ?')
-      .run(finalSedeId, finalDeptoId, f.id);
-    
-    f = db.prepare(`
-      SELECT f.*, s.nombre as sede_nombre, d.nombre as departamento_nombre
-      FROM funcionarios f
-      LEFT JOIN sedes s ON f.sede_id = s.id
-      LEFT JOIN departamentos d ON f.departamento_id = d.id
-      WHERE f.id = ?
-    `).get(f.id);
-  }
-
   return f;
 }
 
@@ -110,15 +83,22 @@ function searchFuncionarios(term = '', limit = 10) {
  * Inserta o actualiza un funcionario en el padrón del TEC
  */
 function upsertFuncionario({ nombre, email, dependencia, sede, sede_id, departamento_id }) {
-  if (!nombre || !email) {
+  if (typeof nombre !== 'string' || typeof email !== 'string' || !nombre.trim() || !email.trim()) {
     throw new Error('El nombre y correo del funcionario son obligatorios.');
   }
 
+  if ([nombre, email, dependencia, sede].some(value => typeof value !== 'string' || !value.trim())) {
+    throw new Error('Indique nombre, correo, dependencia y sede oficiales.');
+  }
+  if (nombre.trim().length < 3 || dependencia.trim().length < 2 || sede.trim().length < 2 ||
+      nombre.length > 200 || dependencia.length > 200 || sede.length > 200) {
+    throw new Error('Revise la longitud de los datos del funcionario.');
+  }
   const cleanNombre = normalizeText(nombre);
   const cleanEmail = email.trim().toLowerCase();
   const emailNorm = normalizeEmail(cleanEmail);
 
-  if (!emailNorm.endsWith('@itcr.ac.cr') && !emailNorm.endsWith('@tec.ac.cr')) {
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(emailNorm)) {
     throw new Error('El correo del funcionario debe pertenecer al dominio institucional del TEC (@itcr.ac.cr o @tec.ac.cr).');
   }
 
@@ -175,53 +155,29 @@ function bulkImportFuncionarios(rows) {
     return { success: false, message: 'No se encontraron filas para importar.' };
   }
 
-  let imported = 0;
-  let updated = 0;
-
-  return runTransaction((trx) => {
+  if (rows.length > 10000) throw new Error('El padrón admite hasta 10000 filas por carga.');
+  return runTransaction(() => {
+    let imported = 0;
+    let updated = 0;
+    const seen = new Set();
     for (const row of rows) {
-      const nombre = row.nombre || row['Nombre de funcionario'] || row['Nombre'] || row['Funcionario'];
-      const email = row.email || row['Correo electrónico'] || row['Correo'] || row['Email'];
-      const dependencia = row.dependencia || row['Dependencia'] || row['Departamento'] || row['Escuela'] || 'Dependencia no especificada';
-      const sede = row.sede || row['Sede'] || row['Campus'] || 'Campus Central Cartago';
-
-      if (!nombre || !email) continue;
-      const emailNorm = normalizeEmail(email);
-      if (!emailNorm || (!emailNorm.endsWith('@itcr.ac.cr') && !emailNorm.endsWith('@tec.ac.cr'))) continue;
-
-      const finalSedeId = row.sede_id || resolveSedeId(sede);
-      const finalDeptoId = row.departamento_id || resolveOrRegisterDepartamento(trx, dependencia, finalSedeId);
-
-      const existing = trx.prepare('SELECT id FROM funcionarios WHERE email_normalized = ?').get(emailNorm);
-      const now = new Date().toISOString();
-
-      if (existing) {
-        trx.prepare(`
-          UPDATE funcionarios
-          SET nombre = ?, email = ?, dependencia = ?, sede = ?, sede_id = ?, departamento_id = ?, updated_at = ?
-          WHERE id = ?
-        `).run(nombre.trim(), email.trim().toLowerCase(), dependencia.trim(), sede.trim(), finalSedeId, finalDeptoId, now, existing.id);
-        updated++;
-      } else {
-        const id = crypto.randomUUID();
-        trx.prepare(`
-          INSERT INTO funcionarios (
-            id, nombre, email, email_normalized, dependencia, sede, sede_id, departamento_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(id, nombre.trim(), email.trim().toLowerCase(), emailNorm, dependencia.trim(), sede.trim(), finalSedeId, finalDeptoId, now, now);
-        imported++;
-      }
+      if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('El padrón contiene una fila inválida.');
+      const data = {
+        nombre: row.nombre || row['Nombre de funcionario'] || row['Nombre'] || row['Funcionario'],
+        email: row.email || row['Correo electrónico'] || row['Correo'] || row['Email'],
+        dependencia: row.dependencia || row['Dependencia'] || row['Departamento'] || row['Escuela'],
+        sede: row.sede || row['Sede'] || row['Campus']
+      };
+      const email = normalizeEmail(data.email);
+      if (seen.has(email)) throw new Error('El padrón contiene correos repetidos. No se guardó ninguna fila.');
+      seen.add(email);
+      const result = upsertFuncionario(data);
+      if (result.isNew) imported++;
+      else updated++;
     }
-
-    return {
-      success: true,
-      total: imported + updated,
-      imported,
-      updated,
-      nuevos: imported,
-      actualizados: updated,
-      message: `Se procesaron exitosamente ${imported + updated} funcionarios (${imported} nuevos, ${updated} actualizados).`
-    };
+    return { success: true, total: imported + updated, imported, updated,
+      nuevos: imported, actualizados: updated,
+      message: `Se procesaron ${imported + updated} funcionarios (${imported} nuevos, ${updated} actualizados).` };
   });
 }
 

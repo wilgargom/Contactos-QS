@@ -13,7 +13,7 @@ const App = {
     // Retirar tokens antiguos; los permisos ahora se resuelven desde cookies HttpOnly.
     localStorage.removeItem('tec_qs_token');
     try {
-      const result = await API.get('/api/auth/me');
+      const result = await API.post('/api/auth/guest');
       this.currentUser = result.user;
     } catch (err) {
       if (err.status !== 401) {
@@ -28,6 +28,11 @@ const App = {
       }
     }
     this.startSessionMonitor();
+    window.addEventListener('beforeunload', event => {
+      if (this.activeTab === 'register' && RegisterModule.draft) {
+        event.preventDefault(); event.returnValue = '';
+      }
+    });
 
     // 2. Cargar catálogos
     try {
@@ -187,7 +192,10 @@ const App = {
     };
     setInterval(check, 30000);
     window.addEventListener('focus', check);
-    window.addEventListener('pageshow', check);
+    window.addEventListener('pageshow', event => {
+      if (event.persisted) this.restoreUserSession();
+      else check();
+    });
     document.addEventListener('visibilitychange', check);
     document.getElementById('admin-login-dialog').addEventListener('close', () => {
       document.getElementById('admin-login-form').reset();

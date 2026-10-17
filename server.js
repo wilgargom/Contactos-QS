@@ -152,6 +152,16 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Cada documento nuevo revoca la administración, incluso antes de ejecutar JavaScript.
+  const resetAdminForDocument = () => {
+    const auth = require('./src/services/authService');
+    const token = auth.readCookie(req, auth.COOKIE_NAMES.admin);
+    if (token) {
+      auth.logout(token);
+      auth.setSessionCookie(req, res, 'admin', '');
+    }
+  };
+
   // Servir archivos estáticos del frontend con prevención de caché antigua
   let filePath = path.join(config.PATHS.PUBLIC, pathname === '/' ? 'index.html' : pathname);
   const ext = path.extname(filePath).toLowerCase();
@@ -165,6 +175,7 @@ const server = http.createServer((req, res) => {
   fs.stat(filePath, (err, stats) => {
     if (err || !stats.isFile()) {
       // Fallback a index.html para Single Page Application
+      resetAdminForDocument();
       const indexPath = path.join(config.PATHS.PUBLIC, 'index.html');
       fs.readFile(indexPath, (readErr, content) => {
         if (readErr) {
@@ -182,6 +193,7 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (ext === '.html') resetAdminForDocument();
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
     res.writeHead(200, {
       'Content-Type': contentType,

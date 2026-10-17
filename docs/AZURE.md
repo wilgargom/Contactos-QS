@@ -132,3 +132,38 @@ un volumen persistente para `STORAGE_DIR`.
 - [Configuración de Node.js en App Service](https://learn.microsoft.com/es-es/azure/app-service/configure-language-nodejs)
 - [Sistema de archivos y HOME en App Service](https://learn.microsoft.com/en-us/azure/app-service/operating-system-functionality)
 - [Restricciones de SQLite WAL](https://sqlite.org/wal.html)
+
+## Controles de registros y sesiones
+
+Al cargar o actualizar la página se revoca la sesión administrativa anterior,
+se conserva el acceso de usuario y cualquier operación administrativa requiere
+iniciar sesión nuevamente, la revocación también se realiza en el servidor
+antes de entregar el documento HTML.
+
+La edición conserva los campos omitidos y exige la versión recibida al abrir
+el contacto, si otra operación lo modifica, la aplicación rechaza el guardado
+con HTTP 409 y solicita abrirlo otra vez, una versión ausente devuelve HTTP 428.
+El directorio consulta páginas de 50 contactos, con un máximo de 100 por
+solicitud, mientras que la exportación incluye todos los resultados filtrados.
+
+La confirmación de carga masiva ordinaria verifica nuevamente cada fila y los
+duplicados dentro de una transacción con auditoría individual, cualquier fila
+inválida o repetida revierte el lote completo, los posibles duplicados permanecen
+en revisión, el padrón institucional admite cambios únicamente del administrador.
+
+Los datos de ejemplo no se insertan en producción, las pruebas aisladas los
+habilitan exclusivamente con `NODE_ENV=test` y `QS_SEED_DEMO=1`, los catálogos y
+la cuenta administrativa configurada se inicializan sin agregar contactos ni
+funcionarios ficticios, esta modificación no elimina registros existentes.
+
+El formulario mantiene un borrador de los datos del contacto en la sesión del
+navegador y advierte antes de descartarlo, la persona reportante se identifica
+nuevamente al entrar al módulo, sus datos y las credenciales administrativas no
+se guardan en el borrador.
+
+Los respaldos utilizan la API de SQLite y abren la copia para comprobar su
+integridad y sus relaciones, el estado de Drive informa almacenamiento local,
+la presencia de credenciales no equivale a una subida, la integración real con
+Drive, las pruebas de capacidad en Azure y una estrategia indexada para la
+comparación aproximada de duplicados siguen pendientes, la comparación actual
+recorre los registros sin cargar toda la tabla en memoria.

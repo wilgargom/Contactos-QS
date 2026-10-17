@@ -19,165 +19,109 @@ const BulkUploadModule = {
     if (this.tipoContacto === 'FUNCIONARIOS' && App.currentUser?.rol !== 'ADMIN') {
       this.tipoContacto = 'ACADEMICO';
     }
-    // Iniciar con campos de correo y persona que registra vacíos
-    this.recomiendaNombre = '';
-    this.recomiendaEmail = '';
-    this.selectedSedeId = '';
-    this.selectedDeptoId = '';
-    this.funcionarioIdentificado = null;
-
-    if (this.catalogs?.sedes?.length > 0) {
-      this.selectedSedeId = this.catalogs.sedes[0].id;
-    }
-    if (this.catalogs?.departamentos?.length > 0) {
-      this.selectedDeptoId = this.catalogs.departamentos[0].id;
-    }
-
+    this.resetReporter();
+    this.selectedFile = null;
+    this.fileBase64 = null;
+    this.analysisResult = null;
     this.render();
   },
 
+  escapeReporterText(value) {
+    return String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  },
+
   getRecomiendaPrefix() {
-    if (!this.recomiendaEmail) return '';
-    return this.recomiendaEmail.split('@')[0];
+    return this.recomiendaEmail.includes('@') && this.isInstitutionalEmail(this.recomiendaEmail)
+      ? this.recomiendaEmail.split('@')[0] : this.recomiendaEmail;
   },
 
   getSelectedSedeNombre() {
-    if (this.funcionarioIdentificado?.sede) return this.funcionarioIdentificado.sede;
-    return this.catalogs?.sedes?.find(s => s.id === this.selectedSedeId)?.nombre || 'Campus Central Cartago';
+    return this.isReporterVerified() ? this.funcionarioIdentificado.sede : 'Sede del TEC';
   },
 
   getSelectedDeptoNombre() {
-    if (this.funcionarioIdentificado?.dependencia) return this.funcionarioIdentificado.dependencia;
-    return this.catalogs?.departamentos?.find(d => d.id === this.selectedDeptoId)?.nombre || 'Oficina o Departamento';
+    return this.isReporterVerified() ? this.funcionarioIdentificado.dependencia : 'Oficina o Departamento';
   },
 
-  onRecomiendaEmailInput(val) {
-    let cleanUser = (val || '').trim().toLowerCase();
-    if (cleanUser.includes('@')) {
-      cleanUser = cleanUser.split('@')[0];
-      const inputEl = document.getElementById('bulk-recomienda-email');
-      if (inputEl) inputEl.value = cleanUser;
-    }
+  isInstitutionalEmail(email) {
+    return typeof email === 'string' && /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(email);
+  },
 
-    const fullEmail = cleanUser.length > 0 ? `${cleanUser}@itcr.ac.cr` : '';
-    this.recomiendaEmail = fullEmail;
-    if (fullEmail) {
-      localStorage.setItem('tec_qs_pref_recomienda_email', fullEmail);
-    } else {
-      localStorage.removeItem('tec_qs_pref_recomienda_email');
-    }
+  isReporterVerified() {
+    const f = this.funcionarioIdentificado;
+    return Boolean(f && !this.reporterLookupPending && this.isInstitutionalEmail(this.recomiendaEmail) &&
+      f.email?.trim().toLowerCase() === this.recomiendaEmail && f.nombre?.trim() &&
+      f.sede_id && f.departamento_id && this.recomiendaNombre === f.nombre);
+  },
 
-    const errEl = document.getElementById('err-bulk-recomienda-email');
-    const inputEl = document.getElementById('bulk-recomienda-email');
-    const spinner = document.getElementById('bulk-rec-email-spinner');
-    const iconEl = document.getElementById('bulk-card-funcionario-icon');
-    const nombreEl = document.getElementById('bulk-card-display-nombre');
-    const deptoEl = document.getElementById('bulk-card-display-depto');
-    const sedeEl = document.getElementById('bulk-card-display-sede');
-
+  resetReporter(email = '') {
     clearTimeout(this.recEmailCheckTimeout);
+    this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
+    this.reporterLookupPending = false;
+    this.reporterValidationError = '';
+    this.recomiendaEmail = email;
+    this.recomiendaNombre = '';
+    this.selectedSedeId = '';
+    this.selectedDeptoId = '';
+    this.selectedDeptoNombre = '';
+    this.funcionarioIdentificado = null;
+    for (const key of ['tec_qs_pref_recomienda_email', 'tec_qs_pref_recomienda_nombre',
+        'tec_qs_pref_sede', 'tec_qs_pref_depto']) localStorage.removeItem(key);
+  },
 
-    if (cleanUser.length === 0) {
-      this.funcionarioIdentificado = null;
-      this.recomiendaNombre = '';
-      if (errEl) errEl.textContent = '';
-      if (inputEl) inputEl.classList.remove('is-invalid', 'is-valid');
-      if (spinner) spinner.classList.add('hidden');
-      if (iconEl) {
-        iconEl.className = 'w-12 h-12 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-        iconEl.innerHTML = '<i class="fa-solid fa-user"></i>';
-      }
-      if (nombreEl) nombreEl.textContent = 'Nombre de la persona funcionaria';
-      if (deptoEl) deptoEl.textContent = 'Oficina o Departamento';
-      if (sedeEl) sedeEl.textContent = 'Sede del TEC';
-      return;
+  onRecomiendaEmailInput(value) {
+    const clean = String(value || '').trim().toLowerCase();
+    const email = clean ? (clean.includes('@') ? clean : `${clean}@itcr.ac.cr`) : '';
+    this.resetReporter(email);
+    if (email && !this.isInstitutionalEmail(email)) {
+      this.reporterValidationError = 'Ingrese un correo institucional válido (@itcr.ac.cr o @tec.ac.cr).';
+    } else if (email) {
+      this.reporterLookupPending = true;
+      this.recEmailCheckTimeout = setTimeout(() => this.lookupFuncionario(email), 250);
     }
-
-    if (/\s/.test(cleanUser)) {
-      if (errEl) errEl.innerHTML = `<span class="text-red-600 font-medium text-xs"><i class="fa-solid fa-circle-exclamation mr-1"></i> No incluya espacios en blanco.</span>`;
-      if (inputEl) inputEl.classList.add('is-invalid');
-      if (spinner) spinner.classList.add('hidden');
-      return;
-    }
-
-    if (errEl) errEl.textContent = '';
-    if (inputEl) inputEl.classList.remove('is-invalid');
-
-    if (spinner) spinner.classList.remove('hidden');
-    this.recEmailCheckTimeout = setTimeout(() => {
-      this.lookupFuncionario(fullEmail);
-    }, 250);
+    this.updateCardDisplay();
   },
 
   async lookupFuncionario(email) {
-    const spinner = document.getElementById('bulk-rec-email-spinner');
-    const inputEl = document.getElementById('bulk-recomienda-email');
-    const iconEl = document.getElementById('bulk-card-funcionario-icon');
-    const nombreEl = document.getElementById('bulk-card-display-nombre');
-    const deptoEl = document.getElementById('bulk-card-display-depto');
-    const sedeEl = document.getElementById('bulk-card-display-sede');
-    const errEl = document.getElementById('err-bulk-recomienda-email');
-
+    clearTimeout(this.recEmailCheckTimeout);
+    if (email !== this.recomiendaEmail || !this.isInstitutionalEmail(email)) return;
+    const version = this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
+    this.funcionarioIdentificado = null;
+    this.recomiendaNombre = '';
+    this.selectedSedeId = '';
+    this.selectedDeptoId = '';
+    this.reporterLookupPending = true;
+    this.reporterValidationError = '';
+    this.updateCardDisplay();
     try {
-      const res = await API.get(`/api/funcionarios/by-email?email=${encodeURIComponent(email)}`);
-      if (spinner) spinner.classList.add('hidden');
-
-      if (res.exists && res.funcionario) {
-        const f = res.funcionario;
+      const res = await API.get('/api/funcionarios/by-email', { email });
+      if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
+      const f = res.funcionario;
+      if (res.exists && f?.email?.trim().toLowerCase() === email && f.nombre?.trim() &&
+          f.sede_id && f.departamento_id) {
         this.funcionarioIdentificado = f;
-        this.recomiendaNombre = f.nombre || '';
-        this.recomiendaEmail = f.email || email;
-
-        localStorage.setItem('tec_qs_pref_recomienda_email', this.recomiendaEmail);
-        localStorage.setItem('tec_qs_pref_recomienda_nombre', this.recomiendaNombre);
-
-        if (f.sede_id) {
-          this.selectedSedeId = f.sede_id;
-          localStorage.setItem('tec_qs_pref_sede', f.sede_id);
-        }
-        if (f.departamento_id) {
-          this.selectedDeptoId = f.departamento_id;
-          localStorage.setItem('tec_qs_pref_depto', f.departamento_id);
-        }
-
-        if (iconEl) {
-          iconEl.className = 'w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-          iconEl.innerHTML = '<i class="fa-solid fa-user-check"></i>';
-        }
-        if (nombreEl) nombreEl.textContent = f.nombre;
-        if (deptoEl) deptoEl.textContent = f.dependencia || this.getSelectedDeptoNombre();
-        if (sedeEl) sedeEl.textContent = f.sede || this.getSelectedSedeNombre();
-
-        if (inputEl) {
-          inputEl.value = this.getRecomiendaPrefix();
-          inputEl.classList.remove('is-invalid');
-          inputEl.classList.add('is-valid');
-        }
-        if (errEl) errEl.textContent = '';
+        this.recomiendaNombre = f.nombre;
+        this.selectedSedeId = f.sede_id;
+        this.selectedDeptoId = f.departamento_id;
       } else {
-        this.funcionarioIdentificado = null;
-        this.recomiendaNombre = '';
-
-        if (iconEl) {
-          iconEl.className = 'w-12 h-12 rounded-lg bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-          iconEl.innerHTML = '<i class="fa-solid fa-user-xmark"></i>';
-        }
-        if (nombreEl) nombreEl.innerHTML = '<span class="text-amber-800 text-sm font-semibold">Funcionario no registrado en el padrón</span>';
-        if (deptoEl) deptoEl.innerHTML = '<span class="text-slate-500 text-xs">Verifique el correo institucional o <button type="button" class="text-blue-800 font-bold underline hover:text-blue-900" onclick="BulkUploadModule.openNuevoUsuarioModal()">inclúyalo en el padrón</button></span>';
-        if (sedeEl) sedeEl.textContent = '';
-
-        if (inputEl) {
-          inputEl.classList.add('is-invalid');
-          inputEl.classList.remove('is-valid');
-        }
-        if (errEl) {
-          errEl.innerHTML = '<span class="text-amber-700 text-xs font-medium"><i class="fa-solid fa-circle-info mr-1"></i> No se encontró este usuario en el padrón oficial del TEC.</span>';
-        }
+        this.reporterValidationError = res.exists
+          ? 'El funcionario tiene datos institucionales incompletos. Revise su registro en el padrón.'
+          : 'Correo no encontrado en el padrón del TEC. Verifíquelo o registre al funcionario.';
       }
-    } catch (err) {
-      if (spinner) spinner.classList.add('hidden');
-      console.warn('Error al consultar funcionario:', err);
+    } catch (_) {
+      if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
+      this.reporterValidationError = 'No se logró verificar el correo. Intente nuevamente.';
+    } finally {
+      if (version === this.reporterLookupVersion && email === this.recomiendaEmail) {
+        this.reporterLookupPending = false;
+        this.updateCardDisplay();
+      }
     }
+  },
+
+  limpiarFuncionario() {
+    this.resetReporter();
+    this.updateCardDisplay();
   },
 
   openNuevoUsuarioModal() {
@@ -378,20 +322,8 @@ const BulkUploadModule = {
         App.showToast('🎉 Funcionario incluido exitosamente en el padrón institucional.', 'success');
         this.closeNuevoUsuarioModal();
 
-        this.recomiendaEmail = email;
-        this.recomiendaNombre = nombre;
-        this.selectedSedeId = sedeId;
-        this.selectedDeptoId = res.funcionario.departamento_id;
-        this.funcionarioIdentificado = res.funcionario;
-
-        localStorage.setItem('tec_qs_pref_recomienda_email', email);
-        localStorage.setItem('tec_qs_pref_recomienda_nombre', nombre);
-        localStorage.setItem('tec_qs_pref_sede', sedeId);
-        if (res.funcionario.departamento_id) {
-          localStorage.setItem('tec_qs_pref_depto', res.funcionario.departamento_id);
-        }
-
-        this.updateCardDisplay();
+        this.onRecomiendaEmailInput(res.funcionario.email);
+        await this.lookupFuncionario(this.recomiendaEmail);
       }
     } catch (err) {
       App.showToast(err.message || 'Error al guardar funcionario', 'error');
@@ -400,38 +332,36 @@ const BulkUploadModule = {
   },
 
   updateCardDisplay() {
-    const iconEl = document.getElementById('bulk-card-funcionario-icon');
-    const nombreEl = document.getElementById('bulk-card-display-nombre');
-    const sedeEl = document.getElementById('bulk-card-display-sede');
-    const deptoEl = document.getElementById('bulk-card-display-depto');
-    const inputEl = document.getElementById('bulk-recomienda-email');
-
-    const nombre = this.recomiendaNombre || App.currentUser?.nombre_completo || '';
-
-    if (inputEl) {
-      inputEl.value = this.getRecomiendaPrefix();
-      if (this.recomiendaEmail) {
-        inputEl.classList.add('is-valid');
-        inputEl.classList.remove('is-invalid');
-      }
+    const verified = this.isReporterVerified();
+    const input = document.getElementById('bulk-recomienda-email');
+    if (input) {
+      input.value = this.getRecomiendaPrefix();
+      input.classList.toggle('is-valid', verified);
+      input.classList.toggle('is-invalid', Boolean(this.reporterValidationError));
     }
-
-    if (nombre) {
-      if (iconEl) {
-        iconEl.className = 'w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-        iconEl.innerHTML = '<i class="fa-solid fa-user-check"></i>';
-      }
-      if (nombreEl) nombreEl.textContent = nombre;
-      if (deptoEl) deptoEl.textContent = this.getSelectedDeptoNombre();
-      if (sedeEl) sedeEl.textContent = this.getSelectedSedeNombre();
-    } else {
-      if (iconEl) {
-        iconEl.className = 'w-12 h-12 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-        iconEl.innerHTML = '<i class="fa-solid fa-user"></i>';
-      }
-      if (nombreEl) nombreEl.textContent = 'Nombre de la persona funcionaria';
-      if (deptoEl) deptoEl.textContent = 'Oficina o Departamento';
-      if (sedeEl) sedeEl.textContent = 'Sede del TEC';
+    const domain = document.getElementById('bulk-recomienda-domain');
+    if (domain) domain.textContent = this.isInstitutionalEmail(this.recomiendaEmail)
+      ? '@' + this.recomiendaEmail.split('@')[1] : '@itcr.ac.cr';
+    const icon = document.getElementById('bulk-card-funcionario-icon');
+    if (icon) {
+      icon.className = `w-12 h-12 rounded-lg flex items-center justify-center text-2xl shrink-0 border ${verified ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-100 text-slate-400 border-slate-200'}`;
+      icon.innerHTML = `<i class="fa-solid ${verified ? 'fa-user-check' : 'fa-user'}"></i>`;
+    }
+    const values = {
+      'bulk-card-display-nombre': verified ? this.funcionarioIdentificado.nombre : 'Nombre de la persona funcionaria',
+      'bulk-card-display-depto': this.getSelectedDeptoNombre(),
+      'bulk-card-display-sede': this.getSelectedSedeNombre(),
+      'err-bulk-recomienda-email': this.reporterValidationError || ''
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    }
+    document.getElementById('bulk-rec-email-spinner')?.classList.toggle('hidden', !this.reporterLookupPending);
+    const blocked = this.tipoContacto !== 'FUNCIONARIOS' && !verified;
+    for (const id of ['excel-file-input', 'bulk-file-select', 'btn-import-valid', 'btn-import-potential']) {
+      const el = document.getElementById(id);
+      if (el) el.disabled = blocked;
     }
   },
 
@@ -567,21 +497,21 @@ const BulkUploadModule = {
 
             <!-- Disposición simétrica: Izquierda (Input de correo acortado a 360px) y Derecha (Tarjeta de datos del funcionario) -->
             <div class="grid grid-cols-1 md:grid-cols-[minmax(260px,360px)_1fr] gap-5 items-start">
-              <!-- COLUMNA IZQUIERDA: 1. Correo institucional (@itcr.ac.cr) * (Alto 76px, ancho 360px) -->
+              <!-- COLUMNA IZQUIERDA: 1. Correo institucional del TEC * (Alto 76px, ancho 360px) -->
               <div>
                 <label class="form-label text-xs sm:text-sm font-bold text-slate-800 mb-2 block" for="bulk-recomienda-email">
-                  1. Correo institucional (@itcr.ac.cr) <span class="req text-red-500 font-bold">*</span>
+                  1. Correo institucional del TEC <span class="req text-red-500 font-bold">*</span>
                 </label>
                 <div class="flex rounded-xl shadow-2xs overflow-hidden border border-slate-300 focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-100 bg-white transition-all h-[76px] w-full max-w-[360px]" id="bulk-rec-input-group">
                   <input type="text" 
                          id="bulk-recomienda-email" 
                          class="flex-1 px-4 py-3 text-sm sm:text-base text-slate-900 placeholder:text-slate-400 placeholder:italic outline-none border-0 h-full"
                          placeholder="Espacio para digitar el correo"
-                         value="${this.getRecomiendaPrefix()}" 
+                         value="${this.escapeReporterText(this.getRecomiendaPrefix())}"
                          oninput="BulkUploadModule.onRecomiendaEmailInput(this.value)"
                          autocomplete="off"
                          spellcheck="false">
-                  <div class="bg-slate-100 border-l border-slate-300 px-4 sm:px-5 flex items-center justify-center font-mono text-xs sm:text-sm text-slate-700 font-semibold select-none shrink-0 h-full">
+                  <div id="bulk-recomienda-domain" class="bg-slate-100 border-l border-slate-300 px-4 sm:px-5 flex items-center justify-center font-mono text-xs sm:text-sm text-slate-700 font-semibold select-none shrink-0 h-full">
                     itcr.ac.cr
                   </div>
                 </div>
@@ -606,13 +536,13 @@ const BulkUploadModule = {
                   <!-- 3 filas de información -->
                   <div class="flex-1 min-w-0" id="bulk-card-funcionario-text">
                     <div class="text-sm sm:text-base font-bold text-slate-900 truncate leading-tight" id="bulk-card-display-nombre">
-                      ${this.recomiendaNombre || 'Nombre de la persona funcionaria'}
+                      ${this.escapeReporterText(this.isReporterVerified() ? this.recomiendaNombre : 'Nombre de la persona funcionaria')}
                     </div>
                     <div class="text-xs sm:text-sm text-slate-600 truncate leading-tight mt-1" id="bulk-card-display-depto">
-                      ${this.getSelectedDeptoNombre() || 'Oficina o Departamento'}
+                      ${this.escapeReporterText(this.getSelectedDeptoNombre())}
                     </div>
                     <div class="text-[11px] sm:text-xs text-slate-500 truncate leading-tight mt-0.5" id="bulk-card-display-sede">
-                      ${this.getSelectedSedeNombre() || 'Sede del TEC'}
+                      ${this.escapeReporterText(this.getSelectedSedeNombre())}
                     </div>
                   </div>
                 </div>
@@ -787,7 +717,7 @@ const BulkUploadModule = {
                          placeholder="Haga clic en 'Buscar archivo...' para seleccionar la ubicación (.xlsx, .csv)" 
                          value="${this.selectedFile ? this.selectedFile.name : ''}"
                          class="form-control text-sm bg-slate-50 text-slate-700 w-full cursor-pointer truncate pr-10"
-                         onclick="document.getElementById('excel-file-input').click()">
+                         onclick="if (BulkUploadModule.tipoContacto === 'FUNCIONARIOS' || BulkUploadModule.isReporterVerified()) document.getElementById('excel-file-input').click()">
                   <span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                     <i class="fa-solid fa-file-excel"></i>
                   </span>
@@ -800,8 +730,8 @@ const BulkUploadModule = {
                        onchange="BulkUploadModule.handleFileSelect(event)">
 
                 <button type="button" 
-                        class="btn btn-tec whitespace-nowrap shadow-xs" 
-                        onclick="document.getElementById('excel-file-input').click()">
+                        id="bulk-file-select" class="btn btn-tec whitespace-nowrap shadow-xs"
+                        onclick="if (BulkUploadModule.tipoContacto === 'FUNCIONARIOS' || BulkUploadModule.isReporterVerified()) document.getElementById('excel-file-input').click()">
                   <i class="fa-solid fa-folder-open"></i>
                   Buscar archivo...
                 </button>
@@ -817,6 +747,7 @@ const BulkUploadModule = {
       <!-- Modal para incluir nuevo funcionario -->
       <div id="bulk-modal-container"></div>
     `;
+    this.updateCardDisplay();
   },
 
   setTipoContacto(tipo) {
@@ -831,6 +762,11 @@ const BulkUploadModule = {
   },
 
   handleFileSelect(event) {
+    if (this.tipoContacto !== 'FUNCIONARIOS' && !this.isReporterVerified()) {
+      App.showToast('Verifique el correo del funcionario en el padrón antes de cargar el archivo.', 'warning');
+      event.target.value = '';
+      return;
+    }
     const file = event.target.files[0];
     if (!file) return;
 
@@ -850,15 +786,22 @@ const BulkUploadModule = {
   },
 
   async analyzeFile() {
+    if (this.tipoContacto !== 'FUNCIONARIOS' && !this.isReporterVerified()) {
+      App.showToast('Verifique el correo del funcionario antes de analizar el archivo.', 'warning');
+      return;
+    }
+    const reporterVersion = this.reporterLookupVersion;
     App.showToast('🔍 Analizando archivo y verificando duplicados...', 'info');
 
     try {
       const response = await API.post('/api/bulk/analyze', {
         fileName: this.selectedFile.name,
         tipo_contacto: this.tipoContacto,
-        fileBase64: this.fileBase64
+        fileBase64: this.fileBase64,
+        recomienda_email: this.recomiendaEmail
       });
 
+      if (this.tipoContacto !== 'FUNCIONARIOS' && reporterVersion !== this.reporterLookupVersion) return;
       this.analysisResult = response;
       this.activeFilter = 'TODOS';
       this.render();
@@ -916,10 +859,10 @@ const BulkUploadModule = {
               </span>
               <div>
                 <div class="font-bold text-blue-950 text-sm">
-                  ${this.recomiendaNombre || App.currentUser?.nombre_completo || 'Funcionario TEC'}
+                  ${this.escapeReporterText(this.isReporterVerified() ? this.recomiendaNombre : 'Funcionario pendiente de verificación')}
                 </div>
                 <div class="text-blue-800 font-mono">
-                  ${this.recomiendaEmail || App.currentUser?.email || '(Sin correo registrado)'}
+                  ${this.escapeReporterText(this.recomiendaEmail || '(Sin correo verificado)')}
                 </div>
               </div>
             </div>
@@ -1087,7 +1030,7 @@ const BulkUploadModule = {
             ` : ''}
 
             ${summary.posiblesDuplicados > 0 ? `
-              <button class="btn btn-outline text-amber-800 border-amber-300 hover:bg-amber-50 py-2.5 px-4 text-xs font-semibold flex items-center gap-1.5" onclick="BulkUploadModule.confirmImport(true)">
+              <button class="btn btn-outline text-amber-800 border-amber-300 hover:bg-amber-50 py-2.5 px-4 text-xs font-semibold flex items-center gap-1.5" id="btn-import-potential" onclick="BulkUploadModule.confirmImport(true)">
                 <i class="fa-solid fa-user-plus text-amber-600"></i>
                 <span>Subir nuevos + Posibles duplicados (${summary.correctos + summary.posiblesDuplicados})</span>
               </button>
@@ -1107,10 +1050,16 @@ const BulkUploadModule = {
     this.selectedFile = null;
     this.fileBase64 = null;
     this.analysisResult = null;
+    this.resetReporter();
     this.render();
   },
 
   async confirmImport(includePotentialDuplicates = false) {
+    if (this.tipoContacto !== 'FUNCIONARIOS' && !this.isReporterVerified()) {
+      App.showToast('Verifique el correo del funcionario en el padrón antes de confirmar la carga.', 'warning');
+      return;
+    }
+    if (!this.analysisResult) return;
     // Si la carga es del padrón institucional de funcionarios
     if (this.tipoContacto === 'FUNCIONARIOS') {
       const rowsToImport = this.analysisResult.analyzedRows
@@ -1149,28 +1098,8 @@ const BulkUploadModule = {
     }
 
     // Para contactos QS (Académicos / Empleadores)
-    const recNombre = (this.recomiendaNombre || App.currentUser?.nombre_completo || '').trim();
-    let recEmail = (this.recomiendaEmail || '').trim().toLowerCase();
-    if (!recEmail) {
-      const recInputEl = document.getElementById('bulk-recomienda-email');
-      if (recInputEl && recInputEl.value.trim()) {
-        recEmail = `${recInputEl.value.trim().split('@')[0]}@itcr.ac.cr`;
-      } else if (App.currentUser?.email) {
-        recEmail = App.currentUser.email.trim().toLowerCase();
-      }
-    }
-    if (recEmail && !recEmail.includes('@')) {
-      recEmail = `${recEmail}@itcr.ac.cr`;
-    }
-
-    if (!recNombre || recNombre.length < 3) {
-      App.showToast('Debe indicar el nombre de quien reporta la carga masiva (mínimo 3 caracteres).', 'warning');
-      return;
-    }
-    if (!recEmail || (!recEmail.endsWith('@itcr.ac.cr') && !recEmail.endsWith('@tec.ac.cr'))) {
-      App.showToast('Debe indicar un correo institucional del TEC válido (@itcr.ac.cr o @tec.ac.cr).', 'warning');
-      return;
-    }
+    const recNombre = this.funcionarioIdentificado.nombre;
+    const recEmail = this.funcionarioIdentificado.email;
 
     const rowsToImport = this.analysisResult.analyzedRows
       .filter(r => r.status === 'CORRECTO' || (includePotentialDuplicates && r.status === 'POSIBLE_DUPLICADO'))

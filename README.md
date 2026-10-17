@@ -76,6 +76,14 @@ registros de su sesión. El tablero, Drive, la exportación oficial QS y la carg
 masiva del padrón requieren sesión administrativa. La selección del funcionario
 reportante en los formularios es independiente del rol de acceso.
 
+El registro individual y la carga masiva de contactos inician con la sección de
+funcionario vacía. Ambos consultan el padrón por el correo institucional ingresado;
+los datos se limpian y el guardado se bloquea al cambiar el correo, mientras se
+consulta o si la consulta falla. El servidor vuelve a comprobar la existencia del
+funcionario al guardar o confirmar una importación y toma del padrón su nombre,
+correo, sede y dependencia. Esta comprobación identifica un registro del padrón;
+no incluye envío de códigos ni autenticación del buzón institucional.
+
 ---
 
 ## 📁 Estructura del Proyecto

@@ -16,6 +16,16 @@ const {
   normalizeEmail
 } = require('../utils/validator');
 const config = require('../config');
+const { verifyReporter } = require('../services/funcionarioService');
+
+function requireReporter(body, res) {
+  const reporter = verifyReporter(body.recomienda_email);
+  if (!reporter) {
+    res.status(422).json({ success: false, code: 'REPORTER_NOT_VERIFIED', field: 'recomienda_email',
+      message: 'Verifique un correo institucional registrado en el padrón del TEC antes de guardar o cargar contactos.' });
+  }
+  return reporter;
+}
 
 // Middleware de autenticación y resolución de usuario
 function authenticate(req, res, next) {
@@ -213,8 +223,12 @@ function handleApi(req, res, pathname, query, body, user) {
 
   // 5. Creación individual de contacto
   if (pathname === '/api/contacts' && method === 'POST') {
+    const reporter = requireReporter(body, res);
+    if (!reporter) return;
     const allowOverride = body.allow_duplicate_override === true;
-    const result = contactService.createContact(body, user, {
+    const result = contactService.createContact({ ...body, recomienda_nombre: reporter.nombre,
+      recomienda_email: reporter.email_normalized, sede_id: reporter.sede_id,
+      departamento_id: reporter.departamento_id }, user, {
       allowDuplicateOverride: allowOverride,
       metodoIngreso: 'INDIVIDUAL'
     });
@@ -280,6 +294,7 @@ function handleApi(req, res, pathname, query, body, user) {
     let fileBuffer;
     let fileName = body.fileName || 'archivo_carga.xlsx';
     const tipoContacto = (body.tipo_contacto || 'ACADEMICO').toUpperCase();
+    if (tipoContacto !== 'FUNCIONARIOS' && !requireReporter(body, res)) return;
 
     if (tipoContacto === 'FUNCIONARIOS' && user.rol !== 'ADMIN') {
       return res.status(403).json({
@@ -577,7 +592,7 @@ function handleApi(req, res, pathname, query, body, user) {
       return res.status(403).json({ success: false, message: 'La importación requiere rol de Administrador o Usuario.' });
     }
 
-    const { rowsToImport, fileName, tipo_contacto, fileBase64, recomienda_nombre, recomienda_email, sede_id, departamento_id } = body;
+    const { rowsToImport, fileName, tipo_contacto, fileBase64 } = body;
     if (!rowsToImport || !Array.isArray(rowsToImport) || rowsToImport.length === 0) {
       return res.status(400).json({ success: false, message: 'No se seleccionaron filas válidas para importar.' });
     }
@@ -612,10 +627,12 @@ function handleApi(req, res, pathname, query, body, user) {
 
     let importedCount = 0;
 
-    const reporterName = (recomienda_nombre || user.nombre_completo || 'Funcionario TEC').trim();
-    const reporterEmail = (recomienda_email || user.email || '').trim().toLowerCase();
-    const defaultSede = sede_id || user.sede_id || null;
-    const defaultDepto = departamento_id || user.departamento_id || null;
+    const reporter = requireReporter(body, res);
+    if (!reporter) return;
+    const reporterName = reporter.nombre;
+    const reporterEmail = reporter.email_normalized;
+    const defaultSede = reporter.sede_id;
+    const defaultDepto = reporter.departamento_id;
 
     const result = runTransaction((trx) => {
       // Registrar Lote
@@ -654,8 +671,8 @@ function handleApi(req, res, pathname, query, body, user) {
           row.email_normalized || normalizeEmail(row.email),
           row.phone || null,
           row.country_name,
-          row.sede_id || defaultSede,
-          row.departamento_id || defaultDepto,
+          defaultSede,
+          defaultDepto,
           row.job_title || null,
           row.department_unit || null,
           row.institution || null,
@@ -666,8 +683,8 @@ function handleApi(req, res, pathname, query, body, user) {
           initialStatus,
           'CARGA_MASIVA',
           loteId,
-          row.recomienda_nombre || reporterName,
-          row.recomienda_email || reporterEmail,
+          reporterName,
+          reporterEmail,
           user.id,
           user.nombre_completo,
           now

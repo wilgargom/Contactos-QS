@@ -20,47 +20,25 @@ const RegisterModule = {
 
   init(catalogs) {
     this.catalogs = catalogs;
-    // Iniciar siempre con los espacios de correo y nombre vacíos
-    this.selectedSedeId = '';
-    this.selectedDeptoId = '';
-    this.recomiendaNombre = '';
-    this.recomiendaEmail = '';
-    this.funcionarioIdentificado = null;
-    
-    // Asignar catálogos base de respaldo
-    if (this.catalogs?.sedes?.length > 0) {
-      this.selectedSedeId = this.catalogs.sedes[0].id;
-    }
-    if (this.catalogs?.departamentos?.length > 0) {
-      this.selectedDeptoId = this.catalogs.departamentos[0].id;
-    }
-
+    this.resetReporter();
     this.render();
   },
 
+  escapeReporterText(value) {
+    return String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  },
+
   getRecomiendaPrefix() {
-    if (!this.recomiendaEmail) return '';
-    return this.recomiendaEmail.split('@')[0];
+    return this.recomiendaEmail.includes('@') && this.isInstitutionalEmail(this.recomiendaEmail)
+      ? this.recomiendaEmail.split('@')[0] : this.recomiendaEmail;
   },
 
   getSelectedSedeNombre() {
-    if (this.funcionarioIdentificado?.sede) {
-      return this.funcionarioIdentificado.sede;
-    }
-    if (!this.recomiendaNombre && !this.funcionarioIdentificado) {
-      return 'Sede del TEC';
-    }
-    return this.catalogs?.sedes?.find(s => s.id === this.selectedSedeId)?.nombre || 'Sede del TEC';
+    return this.isReporterVerified() ? this.funcionarioIdentificado.sede : 'Sede del TEC';
   },
 
   getSelectedDeptoNombre() {
-    if (this.funcionarioIdentificado?.dependencia) {
-      return this.funcionarioIdentificado.dependencia;
-    }
-    if (!this.recomiendaNombre && !this.funcionarioIdentificado) {
-      return 'Oficina o Departamento';
-    }
-    return this.catalogs?.departamentos?.find(d => d.id === this.selectedDeptoId)?.nombre || 'Oficina o Departamento';
+    return this.isReporterVerified() ? this.funcionarioIdentificado.dependencia : 'Oficina o Departamento';
   },
 
   getInitials(name) {
@@ -129,22 +107,22 @@ const RegisterModule = {
 
           <!-- Disposición simétrica: Izquierda (Input de correo acortado) y Derecha (Tarjeta de datos del funcionario) -->
           <div class="grid grid-cols-1 md:grid-cols-[minmax(260px,360px)_1fr] gap-5 items-start">
-            <!-- COLUMNA IZQUIERDA: 1. Correo institucional (@itcr.ac.cr) * (Largo acortado a 360px y alto 76px) -->
+            <!-- COLUMNA IZQUIERDA: 1. Correo institucional del TEC * (Largo acortado a 360px y alto 76px) -->
             <div>
               <label class="form-label text-xs sm:text-sm font-bold text-slate-800 mb-2 block" for="reg-recomienda-email">
-                1. Correo institucional (@itcr.ac.cr) <span class="req text-red-500 font-bold">*</span>
+                1. Correo institucional del TEC <span class="req text-red-500 font-bold">*</span>
               </label>
               <div class="flex rounded-xl shadow-2xs overflow-hidden border border-slate-300 focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-100 bg-white transition-all h-[76px] w-full max-w-[360px]" id="rec-input-group">
                 <input type="text"
                        id="reg-recomienda-email"
                        class="flex-1 px-4 py-3 text-sm sm:text-base text-slate-900 placeholder:text-slate-400 placeholder:italic outline-none border-0 h-full"
                        placeholder="Espacio para digitar el correo"
-                       value="${this.getRecomiendaPrefix()}"
+                       value="${this.escapeReporterText(this.getRecomiendaPrefix())}"
                        oninput="RegisterModule.onRecomiendaEmailInput(this.value)"
                        onblur="RegisterModule.onRecomiendaBlur('reg-recomienda-email')"
                        autocomplete="off"
                        spellcheck="false">
-                <div class="bg-slate-100 border-l border-slate-300 px-4 sm:px-5 flex items-center justify-center font-mono text-xs sm:text-sm text-slate-700 font-semibold select-none shrink-0 h-full">
+                <div id="reg-recomienda-domain" class="bg-slate-100 border-l border-slate-300 px-4 sm:px-5 flex items-center justify-center font-mono text-xs sm:text-sm text-slate-700 font-semibold select-none shrink-0 h-full">
                   itcr.ac.cr
                 </div>
               </div>
@@ -170,13 +148,13 @@ const RegisterModule = {
                 <!-- 3 filas de información con interlineado simétrico -->
                 <div class="flex-1 min-w-0" id="card-funcionario-text">
                   <div class="text-sm sm:text-base font-bold text-slate-900 truncate leading-tight" id="card-display-nombre">
-                    ${this.recomiendaNombre || 'Nombre de la persona funcionaria'}
+                    ${this.escapeReporterText(this.isReporterVerified() ? this.recomiendaNombre : 'Nombre de la persona funcionaria')}
                   </div>
                   <div class="text-xs sm:text-sm text-slate-600 truncate leading-tight mt-1" id="card-display-depto">
-                    ${this.getSelectedDeptoNombre() || 'Oficina o Departamento'}
+                    ${this.escapeReporterText(this.getSelectedDeptoNombre())}
                   </div>
                   <div class="text-[11px] sm:text-xs text-slate-500 truncate leading-tight mt-0.5" id="card-display-sede">
-                    ${this.getSelectedSedeNombre() || 'Sede del TEC'}
+                    ${this.escapeReporterText(this.getSelectedSedeNombre())}
                   </div>
                 </div>
               </div>
@@ -236,11 +214,11 @@ const RegisterModule = {
     if (this.currentType) {
       this.attachFormListeners();
     }
+    this.updateCardDisplay();
   },
 
   onSedeChange(sedeId, preserveDeptoId = null, preserveDeptoName = null) {
     this.selectedSedeId = sedeId;
-    localStorage.setItem('tec_qs_pref_sede', sedeId);
 
     // Actualizar lista de departamentos
     const deptoSelect = document.getElementById('reg-departamento-id');
@@ -279,20 +257,17 @@ const RegisterModule = {
         this.selectedDeptoId = listaDeptos[0].id;
         deptoSelect.value = listaDeptos[0].id;
       }
-      localStorage.setItem('tec_qs_pref_depto', this.selectedDeptoId);
     }
     this.validateLive();
   },
 
   onDeptoChange(deptoId) {
     this.selectedDeptoId = deptoId;
-    localStorage.setItem('tec_qs_pref_depto', deptoId);
     this.validateLive();
   },
 
   onRecomiendaNombreInput(val) {
     this.recomiendaNombre = val;
-    localStorage.setItem('tec_qs_pref_recomienda_nombre', val);
     const errEl = document.getElementById('err-recomienda-nombre');
     const inputEl = document.getElementById('reg-recomienda-nombre');
     if (val.trim().length > 0 && val.trim().length < 3) {
@@ -305,183 +280,85 @@ const RegisterModule = {
     this.validateLive();
   },
 
-  onRecomiendaEmailInput(val) {
-    let cleanUser = (val || '').trim().toLowerCase();
-    // Si el usuario escribe o pega con @, extraer solo el nombre de usuario
-    if (cleanUser.includes('@')) {
-      cleanUser = cleanUser.split('@')[0];
-      const inputEl = document.getElementById('reg-recomienda-email');
-      if (inputEl) inputEl.value = cleanUser;
-    }
+  isInstitutionalEmail(email) {
+    return typeof email === 'string' && /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(email);
+  },
 
-    const fullEmail = cleanUser.length > 0 ? `${cleanUser}@itcr.ac.cr` : '';
-    this.recomiendaEmail = fullEmail;
-    if (fullEmail) {
-      localStorage.setItem('tec_qs_pref_recomienda_email', fullEmail);
-    } else {
-      localStorage.removeItem('tec_qs_pref_recomienda_email');
-    }
+  isReporterVerified() {
+    const f = this.funcionarioIdentificado;
+    return Boolean(f && !this.reporterLookupPending && this.isInstitutionalEmail(this.recomiendaEmail) &&
+      f.email?.trim().toLowerCase() === this.recomiendaEmail && f.nombre?.trim() &&
+      f.sede_id && f.departamento_id && this.recomiendaNombre === f.nombre);
+  },
 
-    const errEl = document.getElementById('err-recomienda-email');
-    const inputEl = document.getElementById('reg-recomienda-email');
-    const spinner = document.getElementById('rec-email-spinner');
-    const iconEl = document.getElementById('card-funcionario-icon');
-    const nombreEl = document.getElementById('card-display-nombre');
-    const deptoEl = document.getElementById('card-display-depto');
-    const sedeEl = document.getElementById('card-display-sede');
-    
+  resetReporter(email = '') {
     clearTimeout(this.recEmailCheckTimeout);
+    this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
+    this.reporterLookupPending = false;
+    this.reporterValidationError = '';
+    this.recomiendaEmail = email;
+    this.recomiendaNombre = '';
+    this.selectedSedeId = '';
+    this.selectedDeptoId = '';
+    this.selectedDeptoNombre = '';
+    this.funcionarioIdentificado = null;
+    for (const key of ['tec_qs_pref_recomienda_email', 'tec_qs_pref_recomienda_nombre',
+        'tec_qs_pref_sede', 'tec_qs_pref_depto']) localStorage.removeItem(key);
+  },
 
-    if (cleanUser.length === 0) {
-      this.funcionarioIdentificado = null;
-      this.recomiendaNombre = '';
-      if (errEl) errEl.textContent = '';
-      if (inputEl) inputEl.classList.remove('is-invalid', 'is-valid');
-      if (spinner) spinner.classList.add('hidden');
-      if (iconEl) {
-        iconEl.className = 'w-12 h-12 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-        iconEl.innerHTML = '<i class="fa-solid fa-user"></i>';
-      }
-      if (nombreEl) nombreEl.textContent = 'Nombre de la persona funcionaria';
-      if (deptoEl) deptoEl.textContent = 'Oficina o Departamento';
-      if (sedeEl) sedeEl.textContent = 'Sede del TEC';
-      this.validateLive();
-      return;
+  onRecomiendaEmailInput(value) {
+    const clean = String(value || '').trim().toLowerCase();
+    const email = clean ? (clean.includes('@') ? clean : `${clean}@itcr.ac.cr`) : '';
+    this.resetReporter(email);
+    if (email && !this.isInstitutionalEmail(email)) {
+      this.reporterValidationError = 'Ingrese un correo institucional válido (@itcr.ac.cr o @tec.ac.cr).';
+    } else if (email) {
+      this.reporterLookupPending = true;
+      this.recEmailCheckTimeout = setTimeout(() => this.lookupFuncionario(email), 250);
     }
-
-    if (/\s/.test(cleanUser)) {
-      if (errEl) errEl.innerHTML = `<span class="text-red-600 font-medium text-xs"><i class="fa-solid fa-circle-exclamation mr-1"></i> No incluya espacios en blanco.</span>`;
-      if (inputEl) inputEl.classList.add('is-invalid');
-      if (spinner) spinner.classList.add('hidden');
-      this.validateLive();
-      return;
-    }
-
-    if (errEl) errEl.textContent = '';
-    if (inputEl) inputEl.classList.remove('is-invalid');
-
-    // Buscar funcionario con debounce de 250ms
-    if (spinner) spinner.classList.remove('hidden');
-    this.recEmailCheckTimeout = setTimeout(() => {
-      this.lookupFuncionario(fullEmail);
-    }, 250);
-
-    this.validateLive();
+    this.updateCardDisplay();
   },
 
   async lookupFuncionario(email) {
-    const spinner = document.getElementById('rec-email-spinner');
-    const inputEl = document.getElementById('reg-recomienda-email');
-    const iconEl = document.getElementById('card-funcionario-icon');
-    const nombreEl = document.getElementById('card-display-nombre');
-    const deptoEl = document.getElementById('card-display-depto');
-    const sedeEl = document.getElementById('card-display-sede');
-    const errEl = document.getElementById('err-recomienda-email');
-
+    clearTimeout(this.recEmailCheckTimeout);
+    if (email !== this.recomiendaEmail || !this.isInstitutionalEmail(email)) return;
+    const version = this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
+    this.funcionarioIdentificado = null;
+    this.recomiendaNombre = '';
+    this.selectedSedeId = '';
+    this.selectedDeptoId = '';
+    this.reporterLookupPending = true;
+    this.reporterValidationError = '';
+    this.updateCardDisplay();
     try {
-      const res = await API.get(`/api/funcionarios/by-email?email=${encodeURIComponent(email)}`);
-      if (spinner) spinner.classList.add('hidden');
-
-      if (res.exists && res.funcionario) {
-        const f = res.funcionario;
+      const res = await API.get('/api/funcionarios/by-email', { email });
+      if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
+      const f = res.funcionario;
+      if (res.exists && f?.email?.trim().toLowerCase() === email && f.nombre?.trim() &&
+          f.sede_id && f.departamento_id) {
         this.funcionarioIdentificado = f;
-        this.recomiendaNombre = f.nombre || '';
-        this.recomiendaEmail = f.email || email;
-
-        localStorage.setItem('tec_qs_pref_recomienda_email', this.recomiendaEmail);
-        localStorage.setItem('tec_qs_pref_recomienda_nombre', this.recomiendaNombre);
-
-        // Resolver sede
-        let matchedSedeId = f.sede_id;
-        if (!matchedSedeId && this.catalogs?.sedes) {
-          const s = this.catalogs.sedes.find(x => 
-            x.id === f.sede_id || 
-            (f.sede && (x.nombre.toLowerCase().includes(f.sede.toLowerCase()) || f.sede.toLowerCase().includes(x.nombre.toLowerCase())))
-          );
-          if (s) matchedSedeId = s.id;
-        }
-        if (!matchedSedeId) matchedSedeId = 'sede-cartago';
-        this.selectedSedeId = matchedSedeId;
-        localStorage.setItem('tec_qs_pref_sede', matchedSedeId);
-
-        // Resolver departamento
-        this.selectedDeptoId = f.departamento_id || null;
-        if (f.dependencia) {
-          this.selectedDeptoNombre = f.dependencia;
-        }
-        if (this.selectedDeptoId) {
-          localStorage.setItem('tec_qs_pref_depto', this.selectedDeptoId);
-        }
-
-        // 1. Actualizar Tarjeta a estado Verde / Encontrado
-        if (iconEl) {
-          iconEl.className = 'w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-          iconEl.innerHTML = '<i class="fa-solid fa-user-check"></i>';
-        }
-        if (nombreEl) nombreEl.textContent = f.nombre;
-        if (deptoEl) deptoEl.textContent = f.dependencia || this.getSelectedDeptoNombre();
-        if (sedeEl) sedeEl.textContent = f.sede || this.getSelectedSedeNombre();
-
-        if (inputEl) {
-          inputEl.value = this.getRecomiendaPrefix();
-          inputEl.classList.remove('is-invalid');
-          inputEl.classList.add('is-valid');
-        }
-        if (errEl) errEl.textContent = '';
+        this.recomiendaNombre = f.nombre;
+        this.selectedSedeId = f.sede_id;
+        this.selectedDeptoId = f.departamento_id;
       } else {
-        this.funcionarioIdentificado = null;
-        this.recomiendaNombre = '';
-
-        // Actualizar Tarjeta a estado Advertencia / No encontrado
-        if (iconEl) {
-          iconEl.className = 'w-12 h-12 rounded-lg bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-          iconEl.innerHTML = '<i class="fa-solid fa-user-xmark"></i>';
-        }
-        if (nombreEl) nombreEl.innerHTML = '<span class="text-amber-800 text-sm font-semibold">Funcionario no registrado en el padrón</span>';
-        if (deptoEl) deptoEl.innerHTML = '<span class="text-slate-500 text-xs">Verifique el correo institucional o <button type="button" class="text-blue-800 font-bold underline hover:text-blue-900" onclick="RegisterModule.openNuevoUsuarioModal()">inclúyalo en el padrón</button></span>';
-        if (sedeEl) sedeEl.textContent = '';
-
-        if (inputEl) {
-          inputEl.classList.add('is-invalid');
-          inputEl.classList.remove('is-valid');
-        }
-        if (errEl) {
-          errEl.innerHTML = '<span class="text-amber-700 text-xs font-medium"><i class="fa-solid fa-circle-info mr-1"></i> No se encontró este usuario en el padrón oficial del TEC.</span>';
-        }
+        this.reporterValidationError = res.exists
+          ? 'El funcionario tiene datos institucionales incompletos. Revise su registro en el padrón.'
+          : 'Correo no encontrado en el padrón del TEC. Verifíquelo o registre al funcionario.';
       }
-      this.validateLive();
-    } catch (err) {
-      if (spinner) spinner.classList.add('hidden');
-      console.warn('Error al consultar funcionario:', err);
+    } catch (_) {
+      if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
+      this.reporterValidationError = 'No se logró verificar el correo. Intente nuevamente.';
+    } finally {
+      if (version === this.reporterLookupVersion && email === this.recomiendaEmail) {
+        this.reporterLookupPending = false;
+        this.updateCardDisplay();
+      }
     }
   },
 
   limpiarFuncionario() {
-    this.recomiendaEmail = '';
-    this.recomiendaNombre = '';
-    this.funcionarioIdentificado = null;
-    localStorage.removeItem('tec_qs_pref_recomienda_email');
-    localStorage.removeItem('tec_qs_pref_recomienda_nombre');
-
-    const inputEmail = document.getElementById('reg-recomienda-email');
-    const inputNombre = document.getElementById('reg-recomienda-nombre');
-    const badgeFound = document.getElementById('rec-status-indicator');
-    const badgeNotFound = document.getElementById('rec-notfound-indicator');
-
-    if (inputEmail) {
-      inputEmail.value = '';
-      inputEmail.classList.remove('is-valid', 'is-invalid');
-      inputEmail.focus();
-    }
-    if (inputNombre) {
-      inputNombre.value = '';
-      inputNombre.classList.remove('is-valid', 'is-invalid');
-    }
-    if (badgeFound) badgeFound.classList.add('hidden');
-    if (badgeNotFound) badgeNotFound.classList.add('hidden');
-
-    App.showToast('Campos de funcionario limpiados. Digite el correo o incluya un nuevo usuario.', 'info');
-    this.validateLive();
+    this.resetReporter();
+    this.updateCardDisplay();
   },
 
   openNuevoUsuarioModal() {
@@ -508,7 +385,7 @@ const RegisterModule = {
           </div>
 
           <p class="text-xs text-slate-500 mb-4">
-            Registre al funcionario/a en el padrón institucional del TEC. Una vez registrado, sus datos quedarán seleccionados automáticamente para este reporte y futuros registros.
+            Registre al funcionario/a en el padrón institucional del TEC. Una vez registrado, sus datos quedarán seleccionados automáticamente para este reporte, después de verificar su correo.
           </p>
 
           <form id="form-nuevo-funcionario" onsubmit="RegisterModule.saveNuevoUsuarioModal(event)" class="space-y-3.5">
@@ -694,45 +571,8 @@ const RegisterModule = {
           }
         }
 
-        // Establecer valores en el formulario de Registro Individual
-        this.recomiendaEmail = email;
-        this.recomiendaNombre = nombre;
-        this.selectedSedeId = sedeId;
-        this.selectedDeptoId = res.funcionario.departamento_id;
-        this.funcionarioIdentificado = res.funcionario;
-
-        localStorage.setItem('tec_qs_pref_recomienda_email', email);
-        localStorage.setItem('tec_qs_pref_recomienda_nombre', nombre);
-        localStorage.setItem('tec_qs_pref_sede', sedeId);
-        if (res.funcionario.departamento_id) {
-          localStorage.setItem('tec_qs_pref_depto', res.funcionario.departamento_id);
-        }
-
-        const inputEmail = document.getElementById('reg-recomienda-email');
-        const inputNombre = document.getElementById('reg-recomienda-nombre');
-        const sedeEl = document.getElementById('reg-sede-id');
-        const badgeFound = document.getElementById('rec-status-indicator');
-        const badgeNotFound = document.getElementById('rec-notfound-indicator');
-
-        if (inputEmail) {
-          inputEmail.value = this.getRecomiendaPrefix();
-          inputEmail.classList.add('is-valid');
-        }
-        if (inputNombre) {
-          inputNombre.value = nombre;
-          inputNombre.classList.add('is-valid');
-        }
-        if (sedeEl) {
-          sedeEl.value = sedeId;
-          sedeEl.classList.add('is-valid');
-        }
-        if (badgeFound) badgeFound.classList.remove('hidden');
-        if (badgeNotFound) badgeNotFound.classList.add('hidden');
-
-        // Actualizar departamentos y seleccionar el nuevo
-        this.selectedDeptoId = res.funcionario.departamento_id;
-        this.updateCardDisplay();
-        this.validateLive();
+        this.onRecomiendaEmailInput(res.funcionario.email);
+        await this.lookupFuncionario(this.recomiendaEmail);
       }
     } catch (err) {
       App.showToast(err.message || 'Error al guardar funcionario', 'error');
@@ -741,42 +581,36 @@ const RegisterModule = {
   },
 
   updateCardDisplay() {
-    const iconEl = document.getElementById('card-funcionario-icon');
-    const nombreEl = document.getElementById('card-display-nombre');
-    const sedeEl = document.getElementById('card-display-sede');
-    const deptoEl = document.getElementById('card-display-depto');
-    const inputEl = document.getElementById('reg-recomienda-email');
-
-    const nombre = this.recomiendaNombre || App.currentUser?.nombre_completo || '';
-
-    if (inputEl) {
-      inputEl.value = this.getRecomiendaPrefix();
-      if (this.recomiendaEmail) {
-        inputEl.classList.add('is-valid');
-        inputEl.classList.remove('is-invalid');
-      }
+    const verified = this.isReporterVerified();
+    const input = document.getElementById('reg-recomienda-email');
+    if (input) {
+      input.value = this.getRecomiendaPrefix();
+      input.classList.toggle('is-valid', verified);
+      input.classList.toggle('is-invalid', Boolean(this.reporterValidationError));
     }
-
-    if (nombre) {
-      if (iconEl) {
-        iconEl.className = 'w-12 h-12 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-        iconEl.innerHTML = '<i class="fa-solid fa-user-check"></i>';
-      }
-      if (nombreEl) nombreEl.textContent = nombre;
-      if (deptoEl) deptoEl.textContent = this.getSelectedDeptoNombre();
-      if (sedeEl) sedeEl.textContent = this.getSelectedSedeNombre();
-    } else {
-      if (iconEl) {
-        iconEl.className = 'w-12 h-12 rounded-lg bg-slate-100 text-slate-400 border border-slate-200 flex items-center justify-center text-2xl shrink-0 shadow-2xs';
-        iconEl.innerHTML = '<i class="fa-solid fa-user"></i>';
-      }
-      if (nombreEl) nombreEl.textContent = 'Nombre de la persona funcionaria';
-      if (deptoEl) deptoEl.textContent = 'Oficina o Departamento';
-      if (sedeEl) sedeEl.textContent = 'Sede del TEC';
+    const domain = document.getElementById('reg-recomienda-domain');
+    if (domain) domain.textContent = this.isInstitutionalEmail(this.recomiendaEmail)
+      ? '@' + this.recomiendaEmail.split('@')[1] : '@itcr.ac.cr';
+    const icon = document.getElementById('card-funcionario-icon');
+    if (icon) {
+      icon.className = `w-12 h-12 rounded-lg flex items-center justify-center text-2xl shrink-0 border ${verified ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-100 text-slate-400 border-slate-200'}`;
+      icon.innerHTML = `<i class="fa-solid ${verified ? 'fa-user-check' : 'fa-user'}"></i>`;
     }
-
+    const values = {
+      'card-display-nombre': verified ? this.funcionarioIdentificado.nombre : 'Nombre de la persona funcionaria',
+      'card-display-depto': this.getSelectedDeptoNombre(),
+      'card-display-sede': this.getSelectedSedeNombre(),
+      'err-recomienda-email': this.reporterValidationError || ''
+    };
+    for (const [id, value] of Object.entries(values)) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    }
+    document.getElementById('rec-email-spinner')?.classList.toggle('hidden', !this.reporterLookupPending);
     this.validateLive();
   },
+
+
 
   openBuscarFuncionarioModal() {
     const modalContainer = document.getElementById('duplicate-modal-container');
@@ -897,40 +731,18 @@ const RegisterModule = {
   },
 
   selectFuncionario(f) {
-    this.recomiendaNombre = f.nombre;
-    this.recomiendaEmail = f.email;
-    this.selectedSedeId = f.sede_id || 'sede-cartago';
-    this.selectedDeptoId = f.departamento_id || null;
-
-    localStorage.setItem('tec_qs_pref_recomienda_nombre', f.nombre);
-    localStorage.setItem('tec_qs_pref_recomienda_email', f.email);
-    if (f.sede_id) localStorage.setItem('tec_qs_pref_sede', f.sede_id);
-    if (f.departamento_id) localStorage.setItem('tec_qs_pref_depto', f.departamento_id);
-
     this.closeModal();
-    this.updateCardDisplay();
-    App.showToast(`✅ Funcionario seleccionado: ${f.nombre}`, 'success');
+    this.onRecomiendaEmailInput(f.email);
   },
 
   resetToCurrentUser() {
-    this.recomiendaNombre = App.currentUser?.nombre_completo || '';
-    this.recomiendaEmail = App.currentUser?.email || '';
-    this.selectedSedeId = App.currentUser?.sede_id || 'sede-cartago';
-    this.selectedDeptoId = App.currentUser?.departamento_id || null;
-
-    localStorage.setItem('tec_qs_pref_recomienda_nombre', this.recomiendaNombre);
-    localStorage.setItem('tec_qs_pref_recomienda_email', this.recomiendaEmail);
-    if (this.selectedSedeId) localStorage.setItem('tec_qs_pref_sede', this.selectedSedeId);
-    if (this.selectedDeptoId) localStorage.setItem('tec_qs_pref_depto', this.selectedDeptoId);
-
     this.closeModal();
-    this.updateCardDisplay();
-    App.showToast('✅ Restablecido a sus datos de usuario.', 'info');
+    this.limpiarFuncionario();
   },
 
   onRecomiendaBlur(fieldId) {
     this.touchedFields[fieldId] = true;
-    if (fieldId === 'reg-recomienda-email' && this.recomiendaEmail) {
+    if (fieldId === 'reg-recomienda-email' && this.recomiendaEmail && !this.isReporterVerified() && !this.reporterLookupPending) {
       this.lookupFuncionario(this.recomiendaEmail);
     }
     this.validateLive();
@@ -1580,22 +1392,11 @@ const RegisterModule = {
     const recNombreInput = document.getElementById('reg-recomienda-nombre');
     const recEmailInput = document.getElementById('reg-recomienda-email');
 
-    let recEmailClean = (this.recomiendaEmail || '').trim().toLowerCase();
-    if (!recEmailClean) {
-      const recInputEl = document.getElementById('reg-recomienda-email');
-      if (recInputEl && recInputEl.value.trim()) {
-        recEmailClean = `${recInputEl.value.trim().split('@')[0]}@itcr.ac.cr`;
-      } else if (App.currentUser?.email) {
-        recEmailClean = App.currentUser.email.trim().toLowerCase();
-      }
-    }
-    if (recEmailClean && !recEmailClean.includes('@')) {
-      recEmailClean = `${recEmailClean}@itcr.ac.cr`;
-    }
+    const recEmailClean = this.recomiendaEmail;
 
     const data = {
       tipo_contacto: this.currentType,
-      recomienda_nombre: (this.recomiendaNombre || App.currentUser?.nombre_completo || '').trim(),
+      recomienda_nombre: this.isReporterVerified() ? this.funcionarioIdentificado.nombre : '',
       recomienda_email: recEmailClean,
       title: document.getElementById('field-title')?.value.trim() || '',
       first_name: document.getElementById('field-first_name')?.value.trim() || '',
@@ -1603,8 +1404,8 @@ const RegisterModule = {
       country_name: document.getElementById('field-country_name')?.value.trim() || '',
       email: document.getElementById('field-email')?.value.trim() || '',
       phone: document.getElementById('field-phone')?.value.trim() || '',
-      sede_id: this.selectedSedeId || App.currentUser?.sede_id || 'sede-cartago',
-      departamento_id: this.selectedDeptoId || App.currentUser?.departamento_id || null
+      sede_id: this.isReporterVerified() ? this.funcionarioIdentificado.sede_id : '',
+      departamento_id: this.isReporterVerified() ? this.funcionarioIdentificado.departamento_id : null
     };
 
     if (isAcademic) {
@@ -1629,7 +1430,7 @@ const RegisterModule = {
 
   validateLive() {
     const data = this.getFormData();
-    let isValid = true;
+    let isValid = this.isReporterVerified();
     const isAcademic = this.currentType === 'ACADEMICO';
 
     const checkField = (fieldId, errId, condition, errMsg, warningMsg = '') => {
@@ -1762,6 +1563,10 @@ const RegisterModule = {
   },
 
   async handleSubmit() {
+    if (!this.isReporterVerified()) {
+      App.showToast('Verifique el correo del funcionario en el padrón antes de guardar.', 'warning');
+      return;
+    }
     this.submitting = true;
     if (this.emailIsTecDomain) {
       App.showToast('Restricción QS: No se permiten correos del dominio institucional (@itcr.ac.cr / @tec.ac.cr). Los contactos deben ser externos.', 'error');
@@ -1799,7 +1604,7 @@ const RegisterModule = {
       }
     } finally {
       if (btnSave) {
-        btnSave.disabled = false;
+        btnSave.disabled = !this.isReporterVerified();
         btnSave.innerHTML = `
           <i class="fa-solid fa-floppy-disk"></i>
           Guardar Contacto
@@ -1828,6 +1633,7 @@ const RegisterModule = {
     this.touchedFields = {};
     this.submitting = false;
     this.currentType = null;
+    this.resetReporter();
     this.render();
   },
 

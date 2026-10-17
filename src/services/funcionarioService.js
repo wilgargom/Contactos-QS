@@ -230,10 +230,22 @@ function listFuncionarios() {
   return db.prepare('SELECT * FROM funcionarios ORDER BY nombre ASC').all();
 }
 
+// Validación común de la persona reportante para registro individual y carga de contactos.
+// Comprueba su existencia en el padrón; no sustituye una autenticación del buzón.
+function verifyReporter(email) {
+  if (typeof email !== 'string') return null;
+  const normalized = email.trim().toLowerCase();
+  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(normalized)) return null;
+  const funcionario = getFuncionarioByEmail(normalized);
+  if (!funcionario || !funcionario.nombre?.trim() || !funcionario.sede_id || !funcionario.departamento_id) return null;
+  return funcionario;
+}
+
 module.exports = {
   getFuncionarioByEmail,
   searchFuncionarios,
   upsertFuncionario,
   bulkImportFuncionarios,
+  verifyReporter,
   listFuncionarios
 };

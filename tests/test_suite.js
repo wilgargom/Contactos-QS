@@ -193,7 +193,7 @@ test('usuario automático, administrador autenticado y cierre con revocación re
   const data = { tipo_contacto: 'ACADEMICO', title: 'Prof', first_name: 'Persona', last_name: 'Prueba',
     email: 'prueba@universidad.example', country_name: 'Costa Rica', institution: 'Universidad Prueba',
     job_title: 'Professor', department_unit: 'Computación', subject_area: 'Computer Science & Information Systems',
-    sede_id: 'sede-cartago', departamento_id: 'dep-comp' };
+    sede_id: 'sede-cartago', departamento_id: 'dep-comp', recomienda_email: 'cbrenes@itcr.ac.cr' };
   const created = await request(server, '/api/contacts', 'POST', data, guest.cookies);
   assert.equal(created.status, 201, created.text);
   const list = (await request(server, '/api/contacts', 'GET', undefined, guest.cookies)).json().contacts;
@@ -288,3 +288,149 @@ test('sin configuración privada se conserva Usuario y se bloquea administració
   })).status, 401);
   assert.equal((await request(server, '/api/health')).status, 200);
 });
+
+test('ambas cargas exigen correo en padrón y guardan los datos oficiales del reportante', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-reporters-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const contact = { tipo_contacto: 'ACADEMICO', title: 'Prof', first_name: 'Reporte', last_name: 'Verificado',
+    email: 'registro@universidad.example', country_name: 'Costa Rica', institution: 'Universidad de Prueba',
+    job_title: 'Professor', department_unit: 'Computación', subject_area: 'Computer Science & Information Systems' };
+  for (const cookie of [guest.cookies, admin.cookies]) {
+    for (const email of [undefined, '', {}, 'otro@gmail.com', 'cbrenes@gmail.com', 'inexistente@itcr.ac.cr']) {
+      const body = { ...contact, recomienda_nombre: 'Nombre anterior', recomienda_email: email };
+      for (const [route, payload] of [['/api/contacts', body],
+          ['/api/bulk/analyze', { tipo_contacto: 'ACADEMICO', recomienda_email: email }],
+          ['/api/bulk/import', { tipo_contacto: 'ACADEMICO', recomienda_email: email, rowsToImport: [body] }]]) {
+        const denied = await request(server, route, 'POST', payload, cookie);
+        assert.equal(denied.status, 422, `${route}: ${denied.text}`);
+        assert.equal(denied.json().code, 'REPORTER_NOT_VERIFIED');
+      }
+    }
+  }
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, guest.cookies)).json().count, 0);
+  const individual = await request(server, '/api/contacts', 'POST', { ...contact,
+    recomienda_email: '  CBRENES@ITCR.AC.CR ', recomienda_nombre: 'Nombre manipulado',
+    sede_id: 'sede-sanjose', departamento_id: 'dep-admin' }, guest.cookies);
+  assert.equal(individual.status, 201, individual.text);
+  assert.equal(individual.json().contact.recomienda_nombre, 'Dr. Carlos Brenes Solano');
+  assert.equal(individual.json().contact.recomienda_email, 'cbrenes@itcr.ac.cr');
+  assert.equal(individual.json().contact.departamento_id, 'dep-comp');
+  const imported = await request(server, '/api/bulk/import', 'POST', {
+    tipo_contacto: 'ACADEMICO', recomienda_email: 'psolis@itcr.ac.cr', recomienda_nombre: 'Nombre anterior',
+    rowsToImport: [{ ...contact, email: 'masivo@universidad.example', recomienda_nombre: 'Nombre manipulado',
+      recomienda_email: 'otro@itcr.ac.cr', sede_id: 'sede-sanjose', departamento_id: 'dep-admin' }]
+  }, admin.cookies);
+  assert.equal(imported.status, 200, imported.text);
+  const list = (await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().contacts;
+  const row = list.find(c => c.email === 'masivo@universidad.example');
+  assert.equal(row.recomienda_nombre, 'Dra. Patricia Solís Gómez');
+  assert.equal(row.recomienda_email, 'psolis@itcr.ac.cr');
+  assert.equal(row.sede_id, 'sede-cartago');
+  assert.equal(row.departamento_id, 'dep-elec');
+  // La confirmación vuelve a consultar el padrón, aunque se haya analizado antes.
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  db.prepare('DELETE FROM funcionarios WHERE email_normalized = ?').run('psolis@itcr.ac.cr');
+  db.close();
+  const blocked = await request(server, '/api/bulk/import', 'POST', {
+    tipo_contacto: 'ACADEMICO', recomienda_email: 'psolis@itcr.ac.cr', rowsToImport: [contact]
+  }, admin.cookies);
+  assert.equal(blocked.status, 422);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, list.length);
+});
+
+for (const [file, moduleName, inputId, cardPrefix] of [
+  ['register.js', 'RegisterModule', 'reg', 'card'], ['bulkUpload.js', 'BulkUploadModule', 'bulk', 'bulk-card']
+]) {
+  test(`${moduleName}: sección vacía, cambio de correo y respuestas tardías no autorizan cargas`, async () => {
+    const vm = require('node:vm');
+    const nodes = new Map();
+    const element = id => {
+      if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', innerHTML: '', disabled: false, style: {},
+        classList: { add() {}, remove() {}, toggle() {} }, addEventListener() {}, focus() {} });
+      return nodes.get(id);
+    };
+    let pendingResolve;
+    let pendingReject;
+    let posts = 0;
+    const api = { get: () => new Promise((resolve, reject) => { pendingResolve = resolve; pendingReject = reject; }),
+      post: () => { posts++; throw new Error('No debe guardar sin verificar'); } };
+    const timers = new Map(); let timerId = 0;
+    const prefs = new Map([['tec_qs_pref_depto', 'dependencia-anterior']]);
+    const context = vm.createContext({ console, API: api,
+      App: { currentUser: { rol: 'ADMIN', nombre_completo: 'Anterior', email: 'anterior@itcr.ac.cr' }, showToast() {} },
+      document: { getElementById: element },
+      localStorage: { removeItem: key => prefs.delete(key) },
+      setTimeout: cb => { timers.set(++timerId, cb); return timerId; }, clearTimeout: id => timers.delete(id) });
+    vm.runInContext(fs.readFileSync(path.join(appRoot, 'public', 'js', file), 'utf8') + `\nglobalThis.moduleUnderTest = ${moduleName};`, context);
+    const mod = context.moduleUnderTest;
+    mod.init({ sedes: [{ id: 'sede-cartago', nombre: 'Cartago' }],
+      departamentos: [{ id: 'dep-comp', nombre: 'Departamento anterior' }] });
+    assert.equal(mod.recomiendaEmail, '');
+    assert.equal(mod.selectedSedeId, '');
+    assert.equal(mod.selectedDeptoId, '');
+    assert.equal(element(`${cardPrefix}-display-depto`).textContent, 'Oficina o Departamento');
+    assert.equal(element(`${cardPrefix}-display-sede`).textContent, 'Sede del TEC');
+    assert.equal(prefs.size, 0);
+    assert.equal(mod.isReporterVerified(), false);
+    if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled, true);
+    mod.onRecomiendaEmailInput('  CBRENES@ITCR.AC.CR ');
+    const first = mod.lookupFuncionario(mod.recomiendaEmail);
+    pendingResolve({ exists: true, funcionario: { nombre: 'Carlos', email: 'cbrenes@itcr.ac.cr',
+      sede_id: 'sede-cartago', departamento_id: 'dep-comp', sede: 'Cartago', dependencia: 'Computación' } });
+    await first;
+    assert.equal(mod.isReporterVerified(), true);
+    assert.equal(element(`${inputId}-recomienda-email`).value, 'cbrenes');
+    mod.onRecomiendaEmailInput('otra');
+    assert.equal(mod.isReporterVerified(), false);
+    assert.equal(mod.recomiendaNombre, '');
+    assert.equal(element(`${cardPrefix}-display-depto`).textContent, 'Oficina o Departamento');
+    if (inputId === 'bulk') {
+      assert.equal(element('bulk-file-select').disabled, true);
+      await mod.confirmImport();
+    } else await mod.handleSubmit();
+    assert.equal(posts, 0);
+    const stale = mod.lookupFuncionario(mod.recomiendaEmail);
+    const resolveOld = pendingResolve;
+    mod.onRecomiendaEmailInput('nuevo@tec.ac.cr');
+    const current = mod.lookupFuncionario(mod.recomiendaEmail);
+    pendingResolve({ exists: true, funcionario: { nombre: 'Nuevo', email: 'nuevo@tec.ac.cr',
+      sede_id: 'sede-cartago', departamento_id: 'dep-comp', sede: 'Cartago', dependencia: 'Computación' } });
+    await current;
+    resolveOld({ exists: true, funcionario: { nombre: 'Anterior', email: 'otra@itcr.ac.cr',
+      sede_id: 'sede-cartago', departamento_id: 'dep-comp' } });
+    await stale;
+    assert.equal(mod.recomiendaEmail, 'nuevo@tec.ac.cr');
+    assert.equal(mod.recomiendaNombre, 'Nuevo');
+    assert.equal(element(`${inputId}-recomienda-domain`).textContent, '@tec.ac.cr');
+    mod.onRecomiendaEmailInput('inexistente');
+    const unknown = mod.lookupFuncionario(mod.recomiendaEmail);
+    pendingResolve({ exists: false });
+    await unknown;
+    assert.equal(mod.isReporterVerified(), false);
+    assert.match(mod.reporterValidationError, /no encontrado/);
+    mod.onRecomiendaEmailInput('fallo');
+    const failed = mod.lookupFuncionario(mod.recomiendaEmail);
+    pendingReject(new Error('Sin conexión'));
+    await failed;
+    assert.equal(mod.isReporterVerified(), false);
+    assert.match(mod.reporterValidationError, /No se logró verificar/);
+    mod.onRecomiendaEmailInput('cbrenes@gmail.com');
+    assert.equal(mod.recomiendaEmail, 'cbrenes@gmail.com');
+    assert.equal(mod.isReporterVerified(), false);
+    assert.equal(timers.size, 0);
+    mod.onRecomiendaEmailInput('pendiente');
+    const beforeClear = mod.lookupFuncionario(mod.recomiendaEmail);
+    const resolveAfterClear = pendingResolve;
+    mod.limpiarFuncionario();
+    resolveAfterClear({ exists: true, funcionario: { nombre: 'Anterior', email: 'pendiente@itcr.ac.cr',
+      sede_id: 'sede-cartago', departamento_id: 'dep-comp' } });
+    await beforeClear;
+    assert.equal(mod.recomiendaEmail, '');
+    assert.equal(mod.funcionarioIdentificado, null);
+    assert.equal(mod.isReporterVerified(), false);
+  });
+}

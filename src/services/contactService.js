@@ -119,32 +119,6 @@ function createContact(rawData, user, options = {}) {
       datos: s
     });
 
-    // Auto-registrar funcionario si fue ingresado y no existía
-    if (recomiendaEmail && (recomiendaEmail.endsWith('@itcr.ac.cr') || recomiendaEmail.endsWith('@tec.ac.cr'))) {
-      try {
-        const { upsertFuncionario } = require('./funcionarioService');
-        let sedeNombre = null;
-        let deptoNombre = null;
-        if (sedeId) {
-          const sRow = trx.prepare('SELECT nombre FROM sedes WHERE id = ?').get(sedeId);
-          if (sRow) sedeNombre = sRow.nombre;
-        }
-        if (deptoId) {
-          const dRow = trx.prepare('SELECT nombre FROM departamentos WHERE id = ?').get(deptoId);
-          if (dRow) deptoNombre = dRow.nombre;
-        }
-
-        upsertFuncionario({
-          nombre: recomiendaNombre || user.nombre_completo,
-          email: recomiendaEmail,
-          dependencia: deptoNombre || rawData.dependencia || 'Dependencia TEC',
-          sede: sedeNombre || rawData.sede || 'Campus Central Cartago',
-          sede_id: sedeId,
-          departamento_id: deptoId
-        });
-      } catch (_) {}
-    }
-
     const created = trx.prepare('SELECT * FROM contactos WHERE id = ?').get(contactId);
     return {
       success: true,

@@ -63,7 +63,9 @@ function request(server, route, method = 'GET', body, cookie, extraHeaders = {})
     const connection = typeof server.address === 'string'
       ? { socketPath: server.address }
       : { hostname: '127.0.0.1', port: server.address.port };
-    const req = http.request({ ...connection, path: route, method,
+    // Cada solicitud de prueba usa su conexión: la preparación síncrona de datos
+    // puede superar el keep-alive en Windows y dejar un socket cerrado en el agente.
+    const req = http.request({ ...connection, path: route, method, agent: false,
       headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...extraHeaders }
     }, res => {
       let text = '';
@@ -777,9 +779,11 @@ test('paginación acota cada respuesta y la exportación conserva todos los resu
   const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  db.exec('BEGIN');
   for (let i = 0; i < 125; i++) db.prepare(`INSERT INTO contactos (id,tipo_contacto,title,first_name,last_name,email,email_normalized,country_name,estado,metodo_ingreso,created_by,created_at)
     VALUES (?, 'EMPLEADOR', 'Mr', 'Prueba', 'Pagina', ?, ?, 'Costa Rica', 'NUEVO', 'INDIVIDUAL', 'test', ?)`)
     .run(`page-${i}`, `page${i}@example.com`, `page${i}@example.com`, new Date().toISOString());
+  db.exec('COMMIT');
   db.close();
   const first = (await request(server, '/api/contacts?page_size=50', 'GET', undefined, admin.cookies)).json();
   const second = (await request(server, '/api/contacts?page=2&page_size=50', 'GET', undefined, admin.cookies)).json();

@@ -59,11 +59,20 @@ function handleApi(req, res, pathname, query, body, user) {
 
   // Las funciones del tablero, Drive, exportación QS y padrón masivo son administrativas.
   const adminOnly = pathname === '/api/stats' || pathname.startsWith('/api/drive/') ||
+    pathname === '/api/contacts/bulk-delete' ||
     pathname.startsWith('/api/bulk/consolidated/') ||
     pathname.startsWith('/api/export/') || pathname === '/api/templates/FUNCIONARIOS' ||
     (pathname.startsWith('/api/bulk/') && body.tipo_contacto === 'FUNCIONARIOS');
   if (adminOnly && user.rol !== 'ADMIN') {
     return res.status(403).json({ success: false, message: 'Se requiere una sesión de administrador.' });
+  }
+
+  if (pathname === '/api/contacts/bulk-delete' && method === 'POST') {
+    if (body.confirmed !== true) {
+      return res.status(400).json({ success: false, message: 'Confirme la eliminación de los contactos seleccionados.' });
+    }
+    const result = contactService.deleteContacts(body.ids, user);
+    return res.status(result.statusCode || 200).json(result);
   }
 
   if (['/api/bulk/consolidated/analyze', '/api/bulk/consolidated/import'].includes(pathname) && method === 'POST') {

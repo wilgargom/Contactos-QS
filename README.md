@@ -102,6 +102,19 @@ escuelas contradictorias o sin escuela se excluyen para revisión, los registros
 incompletos nuevos quedan en estado `NUEVO` y fuera de la exportación oficial QS.
 Esta función está restringida al administrador tanto en la interfaz como en la API.
 
+
+### Eliminación múltiple del administrador
+
+El directorio ofrece casillas de selección y un contador para el administrador.
+La casilla del encabezado selecciona los resultados visibles, al aplicar filtros
+o actualizar la lista se limpia la selección. **Eliminar seleccionados** abre una
+confirmación con la cantidad de contactos; **Cancelar** no elimina registros.
+
+La API comprueba el rol administrativo y la confirmación, verifica que todos los
+contactos existan y ejecuta el borrado en una transacción. Si falta un contacto o
+falla una eliminación, no se aplica un borrado parcial. Cada contacto eliminado
+conserva una entrada de auditoría asociada a la misma operación de eliminación.
+
 ---
 
 ## 📁 Estructura del Proyecto

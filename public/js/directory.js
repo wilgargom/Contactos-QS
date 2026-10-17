@@ -14,9 +14,16 @@ const DirectoryModule = {
     mis_registros_solamente: ''
   },
   selectedContact: null,
+  selectedIds: new Set(),
+  pendingDeleteIds: null,
+  bulkDeleting: false,
+  loadingContacts: false,
+  listVersion: 0,
 
   init(catalogs) {
     this.catalogs = catalogs;
+    this.clearSelection();
+    this.contacts = [];
     this.render();
     this.loadContacts();
   },
@@ -147,6 +154,14 @@ const DirectoryModule = {
           </div>
         </div>
 
+        ${isAdmin ? `
+          <div class="flex flex-wrap items-center justify-between gap-3 border border-slate-200 rounded-xl p-3 mb-4" aria-label="Selección de contactos">
+            <span id="dir-selected-count" class="text-sm font-semibold text-slate-700" aria-live="polite">0 contactos seleccionados</span>
+            <div class="flex flex-wrap gap-2">
+              <button id="dir-clear-selection" class="btn btn-outline btn-sm" disabled onclick="DirectoryModule.clearSelection()">Limpiar selección</button>
+              <button id="dir-delete-selected" class="btn btn-outline btn-sm text-red-700 border-red-300" disabled onclick="DirectoryModule.confirmDeleteSelected()">Eliminar seleccionados</button>
+            </div>
+          </div>` : ''}
         <!-- Tabla de Contactos -->
         <div id="dir-table-area">
           <div class="text-center py-8 text-slate-400">Cargando registros...</div>
@@ -209,18 +224,129 @@ const DirectoryModule = {
   },
 
   async loadContacts() {
+    const version = ++this.listVersion;
+    this.loadingContacts = true;
+    this.clearSelection();
     try {
       const response = await API.get('/api/contacts', this.filters);
+      if (version !== this.listVersion) return;
       this.contacts = response.contacts || [];
+      this.loadingContacts = false;
       this.renderTable();
     } catch (err) {
-      App.showToast('Error al cargar contactos: ' + err.message, 'error');
+      if (version === this.listVersion) App.showToast('Error al cargar contactos: ' + err.message, 'error');
+    } finally {
+      if (version === this.listVersion) {
+        this.loadingContacts = false;
+        this.updateSelectionUI();
+      }
+    }
+  },
+
+  escapeSelectionText(value) {
+    return String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  },
+
+  clearSelection() {
+    this.selectedIds.clear();
+    if (this.pendingDeleteIds && !this.bulkDeleting) this.closeModal();
+    this.updateSelectionUI();
+  },
+
+  toggleContactSelection(id, checked) {
+    if (App.currentUser?.rol !== 'ADMIN' || this.loadingContacts || this.bulkDeleting) return;
+    if (!this.contacts.some(c => c.id === id)) return;
+    if (checked) this.selectedIds.add(id);
+    else this.selectedIds.delete(id);
+    this.updateSelectionUI();
+  },
+
+  toggleAllSelection(checked) {
+    if (App.currentUser?.rol !== 'ADMIN' || this.loadingContacts || this.bulkDeleting) return;
+    this.selectedIds = checked ? new Set(this.contacts.map(c => c.id)) : new Set();
+    this.updateSelectionUI();
+  },
+
+  updateSelectionUI() {
+    const isAdmin = App.currentUser?.rol === 'ADMIN';
+    if (!isAdmin) this.selectedIds.clear();
+    const count = this.selectedIds.size;
+    const counter = document.getElementById('dir-selected-count');
+    if (counter) counter.textContent = `${count} ${count === 1 ? 'contacto seleccionado' : 'contactos seleccionados'}`;
+    for (const id of ['dir-delete-selected', 'dir-clear-selection']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = !isAdmin || !count || this.loadingContacts || this.bulkDeleting;
+    }
+    const all = document.getElementById('dir-select-all');
+    if (all) {
+      all.checked = this.contacts.length > 0 && count === this.contacts.length;
+      all.indeterminate = count > 0 && count < this.contacts.length;
+      all.disabled = !isAdmin || !this.contacts.length || this.loadingContacts || this.bulkDeleting;
+    }
+    for (const checkbox of document.querySelectorAll('[data-contact-select]')) {
+      checkbox.checked = this.selectedIds.has(checkbox.value);
+      checkbox.disabled = !isAdmin || this.loadingContacts || this.bulkDeleting;
+    }
+  },
+
+  confirmDeleteSelected() {
+    if (App.currentUser?.rol !== 'ADMIN' || this.loadingContacts || this.bulkDeleting || !this.selectedIds.size) return;
+    const selected = this.contacts.filter(c => this.selectedIds.has(c.id));
+    if (!selected.length) return;
+    this.pendingDeleteIds = selected.map(c => c.id);
+    const modal = document.getElementById('dir-modal-container');
+    if (!modal) { this.pendingDeleteIds = null; return; }
+    modal.innerHTML = `<div class="modal-overlay"><div class="modal-content" style="max-width: 560px;" role="dialog" aria-modal="true" aria-labelledby="dir-delete-many-title">
+      <div class="modal-header"><h3 id="dir-delete-many-title" class="modal-title text-red-700">Eliminar contactos seleccionados</h3></div>
+      <p class="text-sm text-slate-700 my-4">¿Confirma la eliminación de <strong>${selected.length} ${selected.length === 1 ? 'contacto' : 'contactos'}</strong>? Esta acción eliminará los registros del directorio y conservará el evento en la auditoría.</p>
+      <ul class="max-h-48 overflow-y-auto text-sm text-slate-600 mb-4">${selected.slice(0, 20).map(c => `<li>${this.escapeSelectionText(`${c.first_name || ''} ${c.last_name || ''}`.trim() || c.email || 'Sin nombre')}</li>`).join('')}</ul>
+      ${selected.length > 20 ? `<p class="text-sm mb-4">Y ${selected.length - 20} contactos adicionales de la selección.</p>` : ''}
+      <div class="flex justify-end gap-3"><button id="dir-bulk-delete-cancel" type="button" class="btn btn-outline" onclick="DirectoryModule.closeModal()">Cancelar</button>
+        <button id="dir-bulk-delete-confirm" type="button" class="btn btn-tec" onclick="DirectoryModule.deleteSelectedContacts()">Sí, eliminar ${selected.length} ${selected.length === 1 ? 'contacto' : 'contactos'}</button></div>
+      </div></div>`;
+    document.getElementById('dir-bulk-delete-cancel')?.focus?.();
+  },
+
+  async deleteSelectedContacts() {
+    if (App.currentUser?.rol !== 'ADMIN' || this.bulkDeleting || !this.pendingDeleteIds?.length) return;
+    const ids = [...this.pendingDeleteIds];
+    this.bulkDeleting = true;
+    for (const id of ['dir-bulk-delete-confirm', 'dir-bulk-delete-cancel']) {
+      const button = document.getElementById(id);
+      if (button) button.disabled = true;
+    }
+    this.updateSelectionUI();
+    try {
+      const response = await API.post('/api/contacts/bulk-delete', { ids, confirmed: true });
+      this.bulkDeleting = false;
+      this.closeModal();
+      this.clearSelection();
+      App.showToast(response.message || `Se eliminaron ${response.deletedCount} contactos.`, 'success');
+      await this.loadContacts();
+    } catch (err) {
+      this.bulkDeleting = false;
+      App.showToast(err.message || 'Error al eliminar los contactos seleccionados.', 'error');
+      if (err.status === 409) {
+        this.closeModal();
+        await this.loadContacts();
+      }
+    } finally {
+      this.bulkDeleting = false;
+      for (const id of ['dir-bulk-delete-confirm', 'dir-bulk-delete-cancel']) {
+        const button = document.getElementById(id);
+        if (button) button.disabled = false;
+      }
+      this.updateSelectionUI();
     }
   },
 
   renderTable() {
     const area = document.getElementById('dir-table-area');
     if (!area) return;
+    const isAdmin = App.currentUser?.rol === 'ADMIN';
+    const visibleIds = new Set(this.contacts.map(c => c.id));
+    this.selectedIds = new Set([...this.selectedIds].filter(id => visibleIds.has(id)));
+    this.updateSelectionUI();
 
     if (this.contacts.length === 0) {
       area.innerHTML = `
@@ -241,11 +367,12 @@ const DirectoryModule = {
         <table class="data-table-fit">
           <thead>
             <tr>
-              <th style="width: 26%;">Contacto y Tipo</th>
-              <th style="width: 27%;">Institución / Empresa & Cargo</th>
-              <th style="width: 26%;">Procedencia TEC</th>
+              ${isAdmin ? `<th style="width: 4%; padding: 0.65rem 0.35rem; text-align: center;"><input id="dir-select-all" type="checkbox" aria-label="Seleccionar todos los contactos visibles" title="Seleccionar todos los resultados visibles" onchange="DirectoryModule.toggleAllSelection(this.checked)"></th>` : ''}
+              <th style="width: ${isAdmin ? 25 : 26}%;">Contacto y Tipo</th>
+              <th style="width: ${isAdmin ? 26 : 27}%;">Institución / Empresa & Cargo</th>
+              <th style="width: ${isAdmin ? 25 : 26}%;">Procedencia TEC</th>
               <th style="width: 11%;">País y Estado</th>
-              <th style="width: 10%; text-align: center;">Acciones</th>
+              <th style="width: ${isAdmin ? 9 : 10}%; text-align: center;">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -262,6 +389,7 @@ const DirectoryModule = {
 
               return `
                 <tr>
+                  ${isAdmin ? `<td style="padding: 0.7rem 0.35rem; text-align: center;"><input type="checkbox" data-contact-select value="${this.escapeSelectionText(c.id)}" aria-label="Seleccionar ${this.escapeSelectionText(`${c.first_name || ''} ${c.last_name || ''}`.trim() || c.email || 'contacto')}" onchange="DirectoryModule.toggleContactSelection(this.value, this.checked)"></td>` : ''}
                   <td>
                     <div class="mb-1">
                       <span class="badge ${isAcademico ? 'bg-blue-50 text-blue-900 border border-blue-200' : 'bg-emerald-50 text-emerald-900 border border-emerald-200'} text-[10px] font-bold py-0.5 px-2">
@@ -322,6 +450,7 @@ const DirectoryModule = {
         </table>
       </div>
     `;
+    this.updateSelectionUI();
   },
 
   async viewDetails(id) {
@@ -642,6 +771,8 @@ const DirectoryModule = {
   },
 
   closeModal() {
+    if (this.bulkDeleting) return;
+    this.pendingDeleteIds = null;
     const modal = document.getElementById('dir-modal-container');
     if (modal) modal.innerHTML = '';
   }

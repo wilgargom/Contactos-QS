@@ -403,10 +403,42 @@ function deleteContact(id, user) {
   });
 }
 
+function deleteContacts(ids, user) {
+  if (user?.rol !== 'ADMIN') {
+    return { success: false, statusCode: 403, message: 'La eliminación múltiple requiere una sesión de administrador.' };
+  }
+  if (!Array.isArray(ids) || !ids.length || ids.length > 10000 ||
+      ids.some(id => typeof id !== 'string' || !id.trim() || id.length > 200)) {
+    return { success: false, statusCode: 400, message: 'Seleccione entre 1 y 10000 contactos válidos.' };
+  }
+  const uniqueIds = [...new Set(ids)];
+  return runTransaction(trx => {
+    const lookup = trx.prepare('SELECT * FROM contactos WHERE id = ?');
+    const contacts = uniqueIds.map(id => lookup.get(id));
+    if (contacts.some(c => !c)) {
+      return { success: false, statusCode: 409,
+        message: 'La selección contiene contactos que ya no están disponibles. Actualice la lista; no se eliminó ningún contacto.' };
+    }
+    const batchId = crypto.randomUUID();
+    const actor = { ...user, nombre_completo: user.nombre_completo || 'Administrador' };
+    const remove = trx.prepare('DELETE FROM contactos WHERE id = ?');
+    for (const contact of contacts) {
+      logAudit(trx, contact.id, actor, 'ELIMINACION', {
+        metodo: 'ELIMINACION_MULTIPLE', lote_eliminacion: batchId,
+        cantidad_seleccionada: uniqueIds.length, contacto_eliminado: contact
+      });
+      remove.run(contact.id);
+    }
+    return { success: true, deletedCount: uniqueIds.length,
+      message: `Se eliminaron ${uniqueIds.length} contactos del directorio.` };
+  });
+}
+
 module.exports = {
   createContact,
   updateContact,
   deleteContact,
+  deleteContacts,
   listContacts,
   getContactById,
   resolveDuplicate,

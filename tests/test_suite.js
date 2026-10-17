@@ -539,3 +539,128 @@ test('consolidado exclusivo del administrador: dos hojas, Escuela Proponente y a
   assert.ok(allStats.porDepto.length > 6);
   assert.equal(allStats.porDepto.reduce((sum, d) => sum + d.count, 0), allStats.total);
 });
+
+test('eliminación múltiple: solo administrador, confirmación, auditoría y transacción completa', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-delete-many-'));
+  const server = await startServer(storage);
+  let db;
+  t.after(async () => { if (db) db.close(); await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const endpoint = '/api/contacts/bulk-delete';
+  const ids = ['cnt-acad-01', 'cnt-emp-01'];
+  assert.equal((await request(server, endpoint, 'POST', { ids, confirmed: true })).status, 401);
+  assert.equal((await request(server, endpoint, 'POST', { ids, confirmed: true }, guest.cookies)).status, 403);
+  for (const body of [{ ids }, { ids, confirmed: false }, { ids: [], confirmed: true },
+      { ids: 'cnt-acad-01', confirmed: true }, { ids: [null], confirmed: true }]) {
+    assert.equal((await request(server, endpoint, 'POST', body, admin.cookies)).status, 400);
+  }
+  const missing = await request(server, endpoint, 'POST', { ids: [ids[0], 'ya-no-existe'], confirmed: true }, admin.cookies);
+  assert.equal(missing.status, 409);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, 2);
+  const { DatabaseSync } = require('node:sqlite');
+  db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM auditoria').get().n, 0);
+  // Un fallo en el segundo contacto debe revertir también el primero y su auditoría.
+  db.exec(`CREATE TRIGGER fail_selected_delete BEFORE DELETE ON contactos
+    WHEN OLD.id = 'cnt-emp-01' BEGIN SELECT RAISE(ABORT, 'Fallo de prueba'); END;`);
+  const failed = await request(server, endpoint, 'POST', { ids, confirmed: true }, admin.cookies);
+  assert.equal(failed.status, 500);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM contactos').get().n, 2);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM auditoria').get().n, 0);
+  db.exec('DROP TRIGGER fail_selected_delete');
+  const deleted = await request(server, endpoint, 'POST', { ids: [...ids, ids[0]], confirmed: true }, admin.cookies);
+  assert.equal(deleted.status, 200, deleted.text);
+  assert.equal(deleted.json().deletedCount, 2);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, 0);
+  const audit = db.prepare("SELECT * FROM auditoria WHERE accion = 'ELIMINACION'").all();
+  assert.equal(audit.length, 2);
+  assert.ok(audit.every(a => a.usuario_nombre === 'Administrador'));
+  const details = audit.map(a => JSON.parse(a.detalles));
+  assert.ok(details.every(d => d.metodo === 'ELIMINACION_MULTIPLE' && d.cantidad_seleccionada === 2));
+  assert.equal(new Set(details.map(d => d.lote_eliminacion)).size, 1);
+  assert.deepEqual(details.map(d => d.contacto_eliminado.id).sort(), [...ids].sort());
+  assert.equal((await request(server, endpoint, 'POST', { ids, confirmed: true }, admin.cookies)).status, 409);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM auditoria').get().n, 2);
+});
+
+test('directorio: selección visible, contador, cancelar y confirmar una sola solicitud', async () => {
+  const vm = require('node:vm');
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { value: '', textContent: '', innerHTML: '', disabled: false,
+      checked: false, indeterminate: false, addEventListener() {} });
+    return nodes.get(id);
+  };
+  const rows = [{ id: 'a', first_name: '<img>', last_name: 'Prueba', tipo_contacto: 'ACADEMICO' },
+    { id: 'b', first_name: 'Segunda', last_name: 'Persona', tipo_contacto: 'EMPLEADOR' }];
+  let results = rows;
+  const checkboxes = rows.map(c => ({ value: c.id, checked: false, disabled: false }));
+  const requests = [];
+  let resolveDelete;
+  const context = vm.createContext({ console, URLSearchParams, setTimeout, clearTimeout,
+    App: { currentUser: { rol: 'ADMIN' }, showToast() {} },
+    document: { getElementById: node, querySelectorAll: () => checkboxes },
+    API: { get: async () => ({ contacts: results }), post: (url, body) => {
+      requests.push({ url, body });
+      return new Promise(resolve => { resolveDelete = resolve; });
+    } } });
+  vm.runInContext(fs.readFileSync(path.join(appRoot, 'public', 'js', 'directory.js'), 'utf8') +
+    '\nglobalThis.dir = DirectoryModule;', context);
+  const dir = context.dir;
+  dir.catalogs = {};
+  dir.render();
+  await dir.loadContacts();
+  assert.match(node('directory-view').innerHTML, /Eliminar seleccionados/);
+  assert.match(node('dir-table-area').innerHTML, /Seleccionar todos los contactos visibles/);
+  assert.equal(node('dir-delete-selected').disabled, true);
+  dir.toggleContactSelection('a', true);
+  dir.toggleContactSelection('a', true);
+  dir.toggleContactSelection('fuera-de-la-lista', true);
+  assert.equal(node('dir-selected-count').textContent, '1 contacto seleccionado');
+  assert.equal(node('dir-select-all').indeterminate, true);
+  dir.toggleAllSelection(true);
+  assert.equal(dir.selectedIds.size, 2);
+  assert.equal(node('dir-select-all').checked, true);
+  dir.confirmDeleteSelected();
+  assert.match(node('dir-modal-container').innerHTML, /2 contactos/);
+  assert.match(node('dir-modal-container').innerHTML, /&lt;img&gt;/);
+  assert.doesNotMatch(node('dir-modal-container').innerHTML, /<img>/);
+  assert.equal(requests.length, 0);
+  dir.closeModal();
+  await dir.deleteSelectedContacts();
+  assert.equal(requests.length, 0);
+  assert.equal(dir.selectedIds.size, 2);
+  results = [rows[1]];
+  await dir.loadContacts();
+  assert.equal(dir.selectedIds.size, 0);
+  assert.equal(node('dir-selected-count').textContent, '0 contactos seleccionados');
+  dir.toggleAllSelection(true);
+  assert.deepEqual([...dir.selectedIds], ['b']);
+  dir.confirmDeleteSelected();
+  const deletion = dir.deleteSelectedContacts();
+  await dir.deleteSelectedContacts();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, '/api/contacts/bulk-delete');
+  assert.deepEqual([...requests[0].body.ids], ['b']);
+  assert.equal(requests[0].body.confirmed, true);
+  assert.equal(node('dir-bulk-delete-confirm').disabled, true);
+  dir.closeModal();
+  assert.ok(dir.pendingDeleteIds);
+  results = [];
+  resolveDelete({ success: true, deletedCount: 1 });
+  await deletion;
+  assert.equal(dir.pendingDeleteIds, null);
+  assert.equal(dir.selectedIds.size, 0);
+  context.App.currentUser.rol = 'USUARIO';
+  dir.render();
+  dir.contacts = rows;
+  dir.renderTable();
+  dir.toggleAllSelection(true);
+  dir.confirmDeleteSelected();
+  await dir.deleteSelectedContacts();
+  assert.equal(requests.length, 1);
+  assert.equal(dir.selectedIds.size, 0);
+  assert.doesNotMatch(node('directory-view').innerHTML, /Eliminar seleccionados/);
+  assert.doesNotMatch(node('dir-table-area').innerHTML, /data-contact-select/);
+});

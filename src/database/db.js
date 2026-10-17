@@ -19,6 +19,9 @@ function getDb() {
     const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     dbInstance.exec(schemaSql);
 
+    try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN es_consolidado INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
+    try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN escuela_proponente TEXT;'); } catch (_) {}
+
     // Auto-migraciones para columnas de trazabilidad institucional
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN recomienda_nombre TEXT;'); } catch (_) {}
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN recomienda_email TEXT;'); } catch (_) {}

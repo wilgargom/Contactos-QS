@@ -155,8 +155,8 @@ function updateContact(id, rawData, user) {
 
   const now = new Date().toISOString();
 
-  const recNombre = rawData.recomienda_nombre !== undefined ? (rawData.recomienda_nombre || '').trim() : existing.recomienda_nombre;
-  const recEmail = rawData.recomienda_email !== undefined ? (rawData.recomienda_email || '').trim().toLowerCase() : existing.recomienda_email;
+  const recNombre = existing.es_consolidado ? 'Administrador' : (rawData.recomienda_nombre !== undefined ? (rawData.recomienda_nombre || '').trim() : existing.recomienda_nombre);
+  const recEmail = existing.es_consolidado ? '' : (rawData.recomienda_email !== undefined ? (rawData.recomienda_email || '').trim().toLowerCase() : existing.recomienda_email);
 
   return runTransaction((trx) => {
     const stmt = trx.prepare(`
@@ -344,7 +344,6 @@ function getStatistics() {
     LEFT JOIN departamentos d ON c.departamento_id = d.id
     GROUP BY d.nombre
     ORDER BY count DESC
-    LIMIT 6
   `).all();
 
   return {

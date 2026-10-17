@@ -169,7 +169,30 @@ function generateXlsx(sheetName, headers, rows) {
 /**
  * Parsea un archivo XLSX desde un Buffer
  */
-function parseXlsx(buffer) {
+// Leer las hojas por sus relaciones reales, sin asumir su orden o nombre de archivo.
+function parseXlsxSheets(buffer) {
+  const files = readZip(buffer);
+  const workbook = files.get('xl/workbook.xml')?.toString('utf8') || '';
+  const relationships = files.get('xl/_rels/workbook.xml.rels')?.toString('utf8') || '';
+  const attr = (xml, name) => unescapeXml(new RegExp(`\\b${name}="([^"]*)"`).exec(xml)?.[1] || '');
+  const targets = new Map();
+  for (const match of relationships.matchAll(/<Relationship\b[^>]*\/?>/g)) {
+    if (!attr(match[0], 'Type').endsWith('/worksheet')) continue;
+    const target = attr(match[0], 'Target');
+    const resolved = require('node:path').posix.normalize(target.startsWith('/') ? target.slice(1) : `xl/${target}`);
+    if (!resolved.startsWith('xl/worksheets/')) throw new Error('Relación de hoja inválida.');
+    targets.set(attr(match[0], 'Id'), resolved);
+  }
+  const sheets = [];
+  for (const match of workbook.matchAll(/<sheet\b[^>]*\/?>/g)) {
+    const target = targets.get(attr(match[0], 'r:id'));
+    if (target) sheets.push({ name: attr(match[0], 'name'), ...parseXlsx(buffer, target) });
+  }
+  if (!sheets.length) throw new Error('No se encontraron hojas de datos en el libro.');
+  return sheets;
+}
+
+function parseXlsx(buffer, sheetPath = null) {
   const files = readZip(buffer);
 
   // 1. Extraer Shared Strings si existen
@@ -193,7 +216,11 @@ function parseXlsx(buffer) {
 
   // 2. Extraer hoja de cálculo de datos (preferir sheet1.xml donde se ubican los registros)
   let sheetXmlStr = null;
-  if (files.has('xl/worksheets/sheet1.xml')) {
+  if (sheetPath && files.has(sheetPath)) {
+    sheetXmlStr = files.get(sheetPath).toString('utf8');
+  } else if (sheetPath) {
+    throw new Error('No se encontró la hoja indicada en el libro.');
+  } else if (files.has('xl/worksheets/sheet1.xml')) {
     sheetXmlStr = files.get('xl/worksheets/sheet1.xml').toString('utf8');
   } else {
     for (const [name, buf] of files.entries()) {
@@ -656,7 +683,7 @@ module.exports = {
   generateMultiSheetXlsx,
   generateOfficialTemplate,
   parseXlsx,
+  parseXlsxSheets,
   parseCsv,
   TEMPLATES
 };
-

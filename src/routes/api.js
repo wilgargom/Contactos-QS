@@ -59,10 +59,29 @@ function handleApi(req, res, pathname, query, body, user) {
 
   // Las funciones del tablero, Drive, exportación QS y padrón masivo son administrativas.
   const adminOnly = pathname === '/api/stats' || pathname.startsWith('/api/drive/') ||
+    pathname.startsWith('/api/bulk/consolidated/') ||
     pathname.startsWith('/api/export/') || pathname === '/api/templates/FUNCIONARIOS' ||
     (pathname.startsWith('/api/bulk/') && body.tipo_contacto === 'FUNCIONARIOS');
   if (adminOnly && user.rol !== 'ADMIN') {
     return res.status(403).json({ success: false, message: 'Se requiere una sesión de administrador.' });
+  }
+
+  if (['/api/bulk/consolidated/analyze', '/api/bulk/consolidated/import'].includes(pathname) && method === 'POST') {
+    try {
+      if (typeof body.fileBase64 !== 'string' || !body.fileBase64 ||
+          typeof body.fileName !== 'string' || !body.fileName.toLowerCase().endsWith('.xlsx')) {
+        return res.status(400).json({ success: false, message: 'Adjunte el libro consolidado en formato .xlsx.' });
+      }
+      const buffer = Buffer.from(body.fileBase64, 'base64');
+      const service = require('../services/consolidatedService');
+      if (pathname.endsWith('/analyze')) return res.json(service.analyzeConsolidated(buffer));
+      const result = service.importConsolidated(buffer, body.fileName, user);
+      driveService.saveDocumentArchive(body.fileName, buffer, 'CONSOLIDADO_ADMIN')
+        .catch(err => console.error('Error al archivar consolidado:', err.message));
+      return res.json(result);
+    } catch (err) {
+      return res.status(400).json({ success: false, message: err.message });
+    }
   }
 
   // El rol de usuario conserva acceso a sus propios contactos.

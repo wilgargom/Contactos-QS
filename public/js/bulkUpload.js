@@ -16,7 +16,7 @@ const BulkUploadModule = {
 
   init(catalogs) {
     this.catalogs = catalogs || App.catalogs;
-    if (this.tipoContacto === 'FUNCIONARIOS' && App.currentUser?.rol !== 'ADMIN') {
+    if (['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && App.currentUser?.rol !== 'ADMIN') {
       this.tipoContacto = 'ACADEMICO';
     }
     this.resetReporter();
@@ -358,10 +358,10 @@ const BulkUploadModule = {
       if (el) el.textContent = value;
     }
     document.getElementById('bulk-rec-email-spinner')?.classList.toggle('hidden', !this.reporterLookupPending);
-    const blocked = this.tipoContacto !== 'FUNCIONARIOS' && !verified;
+    const blocked = !['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !verified;
     for (const id of ['excel-file-input', 'bulk-file-select', 'btn-import-valid', 'btn-import-potential']) {
       const el = document.getElementById(id);
-      if (el) el.disabled = blocked;
+      if (el) el.disabled = blocked || (this.tipoContacto === 'CONSOLIDADO' && id === 'btn-import-valid' && !this.analysisResult?.summary.correctos);
     }
   },
 
@@ -397,7 +397,7 @@ const BulkUploadModule = {
     `).join('');
 
     const isAdmin = App.currentUser?.rol === 'ADMIN';
-    if (!isAdmin && this.tipoContacto === 'FUNCIONARIOS') {
+    if (!isAdmin && ['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto)) {
       this.tipoContacto = 'ACADEMICO';
     }
 
@@ -477,7 +477,7 @@ const BulkUploadModule = {
         </div>
 
         <!-- 1. Bloque: Datos de la persona del TEC que reporta la carga (solo para contactos) -->
-        ${this.tipoContacto !== 'FUNCIONARIOS' ? `
+        ${!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) ? `
           <div class="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 mb-6 shadow-2xs">
             <div class="mb-4 pb-2 border-b border-slate-100 flex items-center justify-between">
               <h3 class="text-xs sm:text-sm font-bold text-blue-950 uppercase tracking-wider m-0 flex items-center gap-2">
@@ -551,6 +551,7 @@ const BulkUploadModule = {
           </div>
         ` : ''}
 
+        ${this.tipoContacto === 'CONSOLIDADO' ? `<div class="alert alert-info mb-5">Procedencia TEC: <strong>Administrador</strong>, el tablero agrupará por <strong>Escuela Proponente</strong>, revise la vista previa antes de importar nuevos contactos o actualizar procedencias existentes.</div>` : ''}
         <!-- 2. Selección de Tipo de Contacto y Ubicación del Archivo -->
         ${!this.analysisResult ? `
           <div class="space-y-6">
@@ -587,6 +588,11 @@ const BulkUploadModule = {
                   </label>
 
                   ${isAdmin ? `
+                    <label class="flex-1 flex items-start gap-3 p-3.5 border-2 rounded-xl cursor-pointer ${this.tipoContacto === 'CONSOLIDADO' ? 'border-blue-900 bg-blue-50' : 'border-slate-200'}">
+                      <input type="radio" name="bulk_tipo" value="CONSOLIDADO" ${this.tipoContacto === 'CONSOLIDADO' ? 'checked' : ''} onchange="BulkUploadModule.setTipoContacto('CONSOLIDADO')" class="accent-tec-primary w-4 h-4 mt-0.5">
+                      <div><div class="text-sm font-bold text-slate-900">Consolidado institucional</div>
+                        <div class="text-xs text-slate-500">Solo administrador · Ambas hojas y Escuela Proponente</div></div>
+                    </label>
                     <label class="flex-1 flex items-start gap-3 p-3.5 border-2 rounded-xl cursor-pointer transition-all ${this.tipoContacto === 'FUNCIONARIOS' ? 'border-blue-900 bg-blue-50/70 shadow-xs' : 'border-slate-200 bg-white hover:border-slate-300'}">
                       <input type="radio" name="bulk_tipo" value="FUNCIONARIOS" ${this.tipoContacto === 'FUNCIONARIOS' ? 'checked' : ''} onchange="BulkUploadModule.setTipoContacto('FUNCIONARIOS')" class="accent-tec-primary w-4 h-4 mt-0.5">
                       <div>
@@ -606,7 +612,7 @@ const BulkUploadModule = {
                     <div class="flex items-center justify-between pb-2 mb-2 border-b border-amber-200/60">
                       <span class="font-bold text-amber-950 flex items-center gap-2 text-xs uppercase tracking-wider">
                         <i class="fa-solid fa-clipboard-check text-amber-700"></i>
-                        Reglas Mínimas para Evitar Errores (${this.tipoContacto === 'ACADEMICO' ? 'Académicos' : this.tipoContacto === 'EMPLEADOR' ? 'Empleadores' : 'Funcionarios TEC'})
+                        Reglas Mínimas para Evitar Errores (${this.tipoContacto === 'ACADEMICO' ? 'Académicos' : this.tipoContacto === 'EMPLEADOR' ? 'Empleadores' : this.tipoContacto === 'CONSOLIDADO' ? 'Consolidado institucional' : 'Funcionarios TEC'})
                       </span>
                       <span class="text-[11px] text-amber-800/80 font-medium hidden sm:inline">
                         Pestaña "Reglas e Instrucciones" en el Excel descargado
@@ -614,7 +620,7 @@ const BulkUploadModule = {
                     </div>
 
                     <div class="flex-1 flex flex-col justify-around py-0.5">
-                      ${this.tipoContacto === 'ACADEMICO' ? `
+                      ${this.tipoContacto === 'CONSOLIDADO' ? `<p>Libro .xlsx con las hojas de empleadores y académicos, y Escuela Proponente en cada fila, la procedencia será Administrador, los registros incompletos quedarán pendientes de revisión.</p>` : this.tipoContacto === 'ACADEMICO' ? `
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-slate-700">
                           <div class="flex items-start gap-2">
                             <i class="fa-solid fa-check text-emerald-600 mt-0.5 shrink-0 text-[11px]"></i>
@@ -717,7 +723,7 @@ const BulkUploadModule = {
                          placeholder="Haga clic en 'Buscar archivo...' para seleccionar la ubicación (.xlsx, .csv)" 
                          value="${this.selectedFile ? this.selectedFile.name : ''}"
                          class="form-control text-sm bg-slate-50 text-slate-700 w-full cursor-pointer truncate pr-10"
-                         onclick="if (BulkUploadModule.tipoContacto === 'FUNCIONARIOS' || BulkUploadModule.isReporterVerified()) document.getElementById('excel-file-input').click()">
+                         onclick="if (['FUNCIONARIOS', 'CONSOLIDADO'].includes(BulkUploadModule.tipoContacto) || BulkUploadModule.isReporterVerified()) document.getElementById('excel-file-input').click()">
                   <span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
                     <i class="fa-solid fa-file-excel"></i>
                   </span>
@@ -725,13 +731,13 @@ const BulkUploadModule = {
 
                 <input type="file" 
                        id="excel-file-input" 
-                       accept=".xlsx, .xls, .csv" 
+                       accept="${this.tipoContacto === 'CONSOLIDADO' ? '.xlsx' : '.xlsx, .xls, .csv'}"
                        class="hidden" 
                        onchange="BulkUploadModule.handleFileSelect(event)">
 
                 <button type="button" 
                         id="bulk-file-select" class="btn btn-tec whitespace-nowrap shadow-xs"
-                        onclick="if (BulkUploadModule.tipoContacto === 'FUNCIONARIOS' || BulkUploadModule.isReporterVerified()) document.getElementById('excel-file-input').click()">
+                        onclick="if (['FUNCIONARIOS', 'CONSOLIDADO'].includes(BulkUploadModule.tipoContacto) || BulkUploadModule.isReporterVerified()) document.getElementById('excel-file-input').click()">
                   <i class="fa-solid fa-folder-open"></i>
                   Buscar archivo...
                 </button>
@@ -751,18 +757,22 @@ const BulkUploadModule = {
   },
 
   setTipoContacto(tipo) {
-    if (tipo === 'FUNCIONARIOS' && App.currentUser?.rol !== 'ADMIN') {
-      App.showToast('La carga masiva del padrón de funcionarios está reservada para Administradores.', 'warning');
+    if (['FUNCIONARIOS', 'CONSOLIDADO'].includes(tipo) && App.currentUser?.rol !== 'ADMIN') {
+      App.showToast('Esta carga está reservada para Administradores.', 'warning');
       this.tipoContacto = 'ACADEMICO';
       this.render();
       return;
     }
     this.tipoContacto = tipo;
+    this.resetReporter();
+    this.selectedFile = null;
+    this.fileBase64 = null;
+    this.analysisResult = null;
     this.render();
   },
 
   handleFileSelect(event) {
-    if (this.tipoContacto !== 'FUNCIONARIOS' && !this.isReporterVerified()) {
+    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !this.isReporterVerified()) {
       App.showToast('Verifique el correo del funcionario en el padrón antes de cargar el archivo.', 'warning');
       event.target.value = '';
       return;
@@ -786,22 +796,23 @@ const BulkUploadModule = {
   },
 
   async analyzeFile() {
-    if (this.tipoContacto !== 'FUNCIONARIOS' && !this.isReporterVerified()) {
+    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !this.isReporterVerified()) {
       App.showToast('Verifique el correo del funcionario antes de analizar el archivo.', 'warning');
       return;
     }
     const reporterVersion = this.reporterLookupVersion;
+    const selectedType = this.tipoContacto;
     App.showToast('🔍 Analizando archivo y verificando duplicados...', 'info');
 
     try {
-      const response = await API.post('/api/bulk/analyze', {
+      const response = await API.post(this.tipoContacto === 'CONSOLIDADO' ? '/api/bulk/consolidated/analyze' : '/api/bulk/analyze', {
         fileName: this.selectedFile.name,
         tipo_contacto: this.tipoContacto,
         fileBase64: this.fileBase64,
         recomienda_email: this.recomiendaEmail
       });
 
-      if (this.tipoContacto !== 'FUNCIONARIOS' && reporterVersion !== this.reporterLookupVersion) return;
+      if (selectedType !== this.tipoContacto || (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && reporterVersion !== this.reporterLookupVersion)) return;
       this.analysisResult = response;
       this.activeFilter = 'TODOS';
       this.render();
@@ -815,7 +826,50 @@ const BulkUploadModule = {
     }
   },
 
+  renderConsolidatedAnalysisView() {
+    const { summary, analyzedRows } = this.analysisResult;
+    const esc = value => this.escapeReporterText(value);
+    const labels = { CORRECTO: 'Nuevo completo', PENDIENTE_REVISION: 'Nuevo pendiente de revisión',
+      ACTUALIZAR_PROCEDENCIA: 'Actualizar procedencia', ERROR: 'Revisar fila', DUPLICADO_EXACTO: 'Omitir duplicado' };
+    return `<div class="space-y-4">
+      <h3 class="text-lg font-bold text-slate-900">Vista previa del consolidado institucional</h3>
+      <p>Procedencia TEC: <strong>Administrador</strong>, agrupación por <strong>Escuela Proponente</strong>.</p>
+      <p>${summary.nuevos} nuevos, ${summary.actualizaciones} procedencias por actualizar, ${summary.pendientesRevision} nuevos pendientes de revisión, ${summary.conErrores} filas con errores y ${summary.duplicadosExactos} repetidas u omitidas.</p>
+      <p class="text-sm text-amber-800">Los registros incompletos se guardan como NUEVO y quedan fuera de la exportación QS, las actualizaciones de procedencia conservan los datos del contacto y su historial.</p>
+      <div class="table-responsive max-h-96 overflow-y-auto"><table class="data-table"><thead><tr>
+        <th>Hoja / fila</th><th>Tipo / Contacto</th><th>Escuela Proponente</th><th>Acción</th><th>Detalle</th>
+      </tr></thead><tbody>${analyzedRows.map(r => `<tr>
+        <td>${esc(r.sheet)} · ${r.rowNum}</td><td>${r.data.tipo_contacto === 'ACADEMICO' ? 'Académico' : 'Empleador'}<br>${esc(r.data.first_name)} ${esc(r.data.last_name)}<br>${esc(r.data.email)}</td>
+        <td>${esc(r.escuela || 'Sin Escuela Proponente')}</td><td>${esc(labels[r.status] || r.status)}</td><td>${esc(r.errors.join('; ') || 'Datos completos')}</td>
+      </tr>`).join('')}</tbody></table></div>
+      <div class="flex flex-wrap gap-3">
+        <button class="btn btn-outline" onclick="BulkUploadModule.cancelAnalysis()">Cancelar y volver</button>
+        <button class="btn btn-tec" id="btn-import-valid" ${summary.correctos ? '' : 'disabled'} onclick="BulkUploadModule.confirmConsolidatedImport()">Importar nuevos y actualizar procedencias (${summary.correctos})</button>
+      </div></div>`;
+  },
+
+  async confirmConsolidatedImport() {
+    if (App.currentUser?.rol !== 'ADMIN') {
+      App.showToast('La carga consolidada está reservada al administrador.', 'warning');
+      return;
+    }
+    if (!this.analysisResult || !this.fileBase64 || !this.analysisResult.summary.correctos) return;
+    const button = document.getElementById('btn-import-valid');
+    if (button) button.disabled = true;
+    try {
+      const result = await API.post('/api/bulk/consolidated/import', { fileName: this.selectedFile.name, fileBase64: this.fileBase64 });
+      App.showToast(result.message, 'success');
+      try { App.catalogs = await API.get('/api/catalogs'); } catch (_) { /* Los catálogos se actualizan al recargar. */ }
+      this.cancelAnalysis();
+      App.navigate('directory');
+    } catch (err) {
+      App.showToast(err.message || 'Error al importar el consolidado', 'error');
+      if (button) button.disabled = false;
+    }
+  },
+
   renderAnalysisView() {
+    if (this.tipoContacto === 'CONSOLIDADO') return this.renderConsolidatedAnalysisView();
     const { summary, errorDetails, analyzedRows } = this.analysisResult;
     const isFuncionarios = this.tipoContacto === 'FUNCIONARIOS';
 
@@ -1055,11 +1109,12 @@ const BulkUploadModule = {
   },
 
   async confirmImport(includePotentialDuplicates = false) {
-    if (this.tipoContacto !== 'FUNCIONARIOS' && !this.isReporterVerified()) {
+    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !this.isReporterVerified()) {
       App.showToast('Verifique el correo del funcionario en el padrón antes de confirmar la carga.', 'warning');
       return;
     }
     if (!this.analysisResult) return;
+    if (this.tipoContacto === 'CONSOLIDADO') return this.confirmConsolidatedImport();
     // Si la carga es del padrón institucional de funcionarios
     if (this.tipoContacto === 'FUNCIONARIOS') {
       const rowsToImport = this.analysisResult.analyzedRows

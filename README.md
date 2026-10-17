@@ -84,6 +84,24 @@ funcionario al guardar o confirmar una importación y toma del padrón su nombre
 correo, sede y dependencia. Esta comprobación identifica un registro del padrón;
 no incluye envío de códigos ni autenticación del buzón institucional.
 
+
+### Consolidado institucional del administrador
+
+En Carga masiva, el administrador dispone de **Consolidado institucional**, que
+lee las hojas de académicos y empleadores del libro `.xlsx`. La columna
+**Escuela Proponente** determina la escuela o unidad del tablero, mientras que
+**Procedencia TEC** muestra **Administrador**. No se utiliza `Department` del
+contacto externo como dependencia del TEC ni se asigna una sede ausente por defecto.
+
+La vista previa distingue nuevos, pendientes de revisión y procedencias existentes
+por actualizar. Al confirmar, el servidor vuelve a leer el archivo original,
+comprueba duplicados y guarda una auditoría por contacto. Los contactos existentes
+creados por carga masiva conservan sus datos al actualizar la procedencia, mientras
+que los registros individuales conservan su atribución original. Las filas con
+escuelas contradictorias o sin escuela se excluyen para revisión, los registros
+incompletos nuevos quedan en estado `NUEVO` y fuera de la exportación oficial QS.
+Esta función está restringida al administrador tanto en la interfaz como en la API.
+
 ---
 
 ## 📁 Estructura del Proyecto

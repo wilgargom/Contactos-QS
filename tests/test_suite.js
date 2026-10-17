@@ -432,5 +432,110 @@ for (const [file, moduleName, inputId, cardPrefix] of [
     assert.equal(mod.recomiendaEmail, '');
     assert.equal(mod.funcionarioIdentificado, null);
     assert.equal(mod.isReporterVerified(), false);
+    if (inputId === 'bulk') {
+      context.App.currentUser.rol = 'USUARIO';
+      mod.setTipoContacto('CONSOLIDADO');
+      assert.equal(mod.tipoContacto, 'ACADEMICO');
+      assert.doesNotMatch(element('bulk-upload-view').innerHTML, /value="CONSOLIDADO"/);
+      context.App.currentUser.rol = 'ADMIN';
+      mod.setTipoContacto('CONSOLIDADO');
+      assert.equal(mod.tipoContacto, 'CONSOLIDADO');
+      assert.equal(element('bulk-file-select').disabled, false);
+      assert.match(element('bulk-upload-view').innerHTML, /Consolidado institucional/);
+    }
   });
 }
+
+test('consolidado exclusivo del administrador: dos hojas, Escuela Proponente y actualización sin duplicar', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-consolidated-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const { generateMultiSheetXlsx } = require(path.join(appRoot, 'src/services/excelService'));
+  const headersE = ['Title', 'First Name', 'Last Name', 'Position', 'Industry', 'Company Name', 'Country or Territory', 'mail', 'Escuela Proponente '];
+  const headersA = ['Title', 'First Name', 'Last Name', 'Job Title', 'Department', 'Institution', 'Country', 'mail', 'Subject', 'Escuela Proponente'];
+  const old = { title: 'Mr', first_name: 'Original', last_name: 'Conservado', email: 'anterior@company.example',
+    position: 'Director', industry: 'Software', company_name: 'Empresa Anterior', country_name: 'Costa Rica' };
+  const legacy = await request(server, '/api/bulk/import', 'POST', { tipo_contacto: 'EMPLEADOR',
+    recomienda_email: 'cbrenes@itcr.ac.cr', rowsToImport: [old] }, guest.cookies);
+  assert.equal(legacy.status, 200, legacy.text);
+  const makeFile = () => generateMultiSheetXlsx([
+    { name: 'Resumen Académicos 22-25', headers: headersA, rows: [
+      ['Prof', 'Academico', 'Prueba', 'Professor', 'Department externo', 'Universidad Externa', 'Costa Rica', 'academico@uni.example', 'Computer Science & Information Systems', 'Escuela Alfa'],
+      ['Prof', 'David', 'Patterson', 'Professor', 'Computer Science', 'University of California, Berkeley', 'United States', 'pattrsn@berkeley.edu', 'Computer Science & Information Systems', 'No reemplazar registro individual']
+    ] },
+    { name: 'Resumen Empleadores 22-25', headers: headersE, rows: [
+      ['Mr', 'Nuevo', 'Empleador', 'Director', 'Software', 'Empresa Prueba', 'Costa Rica', 'nuevo@company.example', 'Escuela Alfa'],
+      ['', 'Pendiente', 'Revision', '', '', 'Empresa Dos', '', 'pendiente@company.example', 'Escuela Beta'],
+      ['Mr', 'Sin', 'Escuela', 'Director', 'Software', 'Empresa Tres', 'Costa Rica', 'sin@company.example', ''],
+      ['Mr', 'Otro nombre', 'No sobrescribir', 'Director', 'Software', 'Empresa Anterior', 'Costa Rica', 'anterior@company.example', 'Escuela Gamma'],
+      ['Mr', 'Nuevo', 'Empleador', 'Director', 'Software', 'Empresa Prueba', 'Costa Rica', 'nuevo@company.example', 'Escuela Alfa']
+    ] }
+  ]);
+  const body = { fileName: 'consolidado.xlsx', fileBase64: makeFile().toString('base64') };
+  for (const endpoint of ['analyze', 'import']) {
+    assert.equal((await request(server, `/api/bulk/consolidated/${endpoint}`, 'POST', { ...body, rol: 'ADMIN' }, guest.cookies)).status, 403);
+  }
+  const preview = await request(server, '/api/bulk/consolidated/analyze', 'POST', body, admin.cookies);
+  assert.equal(preview.status, 200, preview.text);
+  assert.equal(preview.json().summary.totalAnalizados, 7);
+  assert.equal(preview.json().summary.nuevos, 3);
+  assert.equal(preview.json().summary.actualizaciones, 1);
+  assert.equal(preview.json().summary.pendientesRevision, 1);
+  assert.equal(preview.json().summary.conErrores, 1);
+  assert.equal(preview.json().summary.duplicadosExactos, 2);
+  const before = (await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count;
+  const imported = await request(server, '/api/bulk/consolidated/import', 'POST', {
+    ...body, rowsToImport: [{ escuela: 'Dato manipulado' }], departamento_id: 'dep-inter'
+  }, admin.cookies);
+  assert.equal(imported.status, 200, imported.text);
+  assert.equal(imported.json().importedCount, 3);
+  assert.equal(imported.json().updatedCount, 1);
+  const list = (await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().contacts;
+  assert.equal(list.length, before + 3);
+  const consolidated = list.filter(c => c.es_consolidado);
+  assert.equal(consolidated.length, 4);
+  assert.ok(consolidated.every(c => c.recomienda_nombre === 'Administrador' && c.recomienda_email === ''));
+  assert.equal(list.find(c => c.email === 'pendiente@company.example').estado, 'NUEVO');
+  assert.equal(list.find(c => c.email === 'academico@uni.example').escuela_proponente, 'Escuela Alfa');
+  const previous = list.find(c => c.email === 'anterior@company.example');
+  assert.equal(previous.first_name, 'Original');
+  assert.equal(previous.escuela_proponente, 'Escuela Gamma');
+  const edited = await request(server, `/api/contacts/${previous.id}`, 'PUT', {
+    ...previous, recomienda_nombre: 'Otra persona', recomienda_email: 'otra@itcr.ac.cr'
+  }, admin.cookies);
+  assert.equal(edited.status, 200, edited.text);
+  assert.equal(edited.json().contact.recomienda_nombre, 'Administrador');
+  assert.equal(edited.json().contact.recomienda_email, '');
+
+  assert.equal(list.find(c => c.email === 'pattrsn@berkeley.edu').es_consolidado, 0);
+  const detail = (await request(server, `/api/contacts/${previous.id}`, 'GET', undefined, admin.cookies)).json();
+  assert.ok(detail.auditHistory.some(a => a.accion === 'ACTUALIZACION_PROCEDENCIA'));
+  const stats = (await request(server, '/api/stats', 'GET', undefined, admin.cookies)).json().stats;
+  assert.equal(stats.porDepto.find(d => d.departamento === 'Escuela Alfa').count, 2);
+  assert.equal(stats.porDepto.find(d => d.departamento === 'Escuela Beta').count, 1);
+  assert.equal(stats.porDepto.find(d => d.departamento === 'Escuela Gamma').count, 1);
+  assert.equal(stats.porDepto.reduce((sum, d) => sum + d.count, 0), stats.total);
+  const again = await request(server, '/api/bulk/consolidated/import', 'POST', body, admin.cookies);
+  assert.equal(again.status, 200, again.text);
+  assert.equal(again.json().importedCount, 0);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, list.length);
+  const ambiguous = generateMultiSheetXlsx([{ name: 'Empleadores', headers: headersE, rows: [
+    ['Mr', 'Dos', 'Escuelas', 'Director', 'Software', 'Empresa', 'Costa Rica', 'dos@company.example', 'Escuela Uno'],
+    ['Mr', 'Dos', 'Escuelas', 'Director', 'Software', 'Empresa', 'Costa Rica', 'dos@company.example', 'Escuela Dos']
+  ] }]);
+  const rejected = await request(server, '/api/bulk/consolidated/import', 'POST', {
+    fileName: 'ambiguo.xlsx', fileBase64: ambiguous.toString('base64')
+  }, admin.cookies);
+  assert.equal(rejected.status, 400);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, list.length);
+  const moreSchools = generateMultiSheetXlsx([{ name: 'Empleadores', headers: headersE,
+    rows: Array.from({ length: 7 }, (_, i) => ['Mr', 'Persona', `Prueba ${i}`, 'Director', 'Software', 'Empresa', 'Costa Rica', `escuela${i}@company.example`, `Unidad ${i}`]) }]);
+  assert.equal((await request(server, '/api/bulk/consolidated/import', 'POST', {
+    fileName: 'unidades.xlsx', fileBase64: moreSchools.toString('base64')
+  }, admin.cookies)).status, 200);
+  const allStats = (await request(server, '/api/stats', 'GET', undefined, admin.cookies)).json().stats;
+  assert.ok(allStats.porDepto.length > 6);
+  assert.equal(allStats.porDepto.reduce((sum, d) => sum + d.count, 0), allStats.total);
+});

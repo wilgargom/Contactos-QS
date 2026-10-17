@@ -284,10 +284,10 @@ const DirectoryModule = {
                   <td>
                     <div class="font-semibold text-slate-800 text-xs flex items-center gap-1.5 leading-snug">
                       <i class="fa-solid fa-user-tie text-amber-600 text-[10px] shrink-0"></i>
-                      <span>${c.recomienda_nombre || c.created_by_name || 'Funcionario TEC'}</span>
+                      <span>${c.es_consolidado ? 'Administrador' : (c.recomienda_nombre || c.created_by_name || 'Funcionario TEC')}</span>
                     </div>
-                    ${c.recomienda_email ? `<code class="text-[11px] text-blue-800 font-mono break-all block mt-0.5">${c.recomienda_email}</code>` : ''}
-                    <span class="text-slate-500 text-[11px] block mt-1">${c.sede_nombre || 'Sede N/A'} · ${c.departamento_nombre || 'Depto. N/A'}</span>
+                    ${!c.es_consolidado && c.recomienda_email ? `<code class="text-[11px] text-blue-800 font-mono break-all block mt-0.5">${c.recomienda_email}</code>` : ''}
+                    <span class="text-slate-500 text-[11px] block mt-1">${c.es_consolidado ? 'Carga consolidada institucional' : `${c.sede_nombre || 'Sede N/A'} · ${c.departamento_nombre || 'Depto. N/A'}`}</span>
                   </td>
                   <td>
                     <div class="text-xs font-semibold text-slate-700 flex items-center gap-1.5 mb-1.5">
@@ -351,18 +351,18 @@ const DirectoryModule = {
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-slate-700">
                 <div>
                   <span class="text-slate-500 block text-[11px]">Funcionario/a que recomienda:</span>
-                  <strong class="text-slate-900">${contact.recomienda_nombre || contact.created_by_name || 'No especificado'}</strong>
+                  <strong class="text-slate-900">${contact.es_consolidado ? 'Administrador' : (contact.recomienda_nombre || contact.created_by_name || 'No especificado')}</strong>
                 </div>
                 <div>
                   <span class="text-slate-500 block text-[11px]">Correo institucional del recomendador:</span>
-                  <code class="text-blue-900 font-semibold">${contact.recomienda_email || '(No registrado)'}</code>
+                  <code class="text-blue-900 font-semibold">${contact.es_consolidado ? 'Carga consolidada institucional' : (contact.recomienda_email || '(No registrado)')}</code>
                 </div>
                 <div>
                   <span class="text-slate-500 block text-[11px]">Sede de procedencia:</span>
                   <strong class="text-slate-800">${contact.sede_nombre || 'Sede no asignada'}</strong>
                 </div>
                 <div>
-                  <span class="text-slate-500 block text-[11px]">Carrera / Escuela / Departamento:</span>
+                  <span class="text-slate-500 block text-[11px]">${contact.es_consolidado ? 'Escuela Proponente:' : 'Carrera / Escuela / Departamento:'}</span>
                   <strong class="text-slate-800">${contact.departamento_nombre || 'No asignado'}</strong>
                 </div>
               </div>

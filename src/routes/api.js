@@ -18,6 +18,12 @@ const {
 const config = require('../config');
 const { verifyReporter } = require('../services/funcionarioService');
 
+function visibleDuplicate(info, user) {
+  if (!info?.existingContact || user.rol === 'ADMIN' || info.existingContact.created_by === user.id) return info;
+  return { ...info, explanation: 'Existe una coincidencia con un contacto registrado. Solicite revisión administrativa.',
+    existingContact: { first_name: 'Registro', last_name: 'existente', institution: 'Datos reservados', tipo_contacto: info.existingContact.tipo_contacto } };
+}
+
 function requireReporter(body, res) {
   const reporter = verifyReporter(body.recomienda_email);
   if (!reporter) {
@@ -56,10 +62,19 @@ function requireAdmin(req, res, next) {
 // Enrutador de API modular
 function handleApi(req, res, pathname, query, body, user) {
   const method = req.method;
+  for (const field of ['tipo_contacto', 'fileBase64', 'fileName']) {
+    if (body[field] !== undefined && typeof body[field] !== 'string') {
+      return res.status(400).json({ success: false, message: `El campo ${field} debe contener texto.` });
+    }
+  }
+  if (Object.values(query).some(value => typeof value !== 'string')) {
+    return res.status(400).json({ success: false, message: 'Los parámetros de consulta deben ser valores únicos.' });
+  }
 
   // Las funciones del tablero, Drive, exportación QS y padrón masivo son administrativas.
   const adminOnly = pathname === '/api/stats' || pathname.startsWith('/api/drive/') ||
     pathname === '/api/contacts/bulk-delete' ||
+    (pathname === '/api/funcionarios' && method !== 'GET') ||
     pathname.startsWith('/api/bulk/consolidated/') ||
     pathname.startsWith('/api/export/') || pathname === '/api/templates/FUNCIONARIOS' ||
     (pathname.startsWith('/api/bulk/') && body.tipo_contacto === 'FUNCIONARIOS');
@@ -128,8 +143,8 @@ function handleApi(req, res, pathname, query, body, user) {
 
   // 3. Listado de contactos con filtros
   if (pathname === '/api/contacts' && method === 'GET') {
-    const contacts = contactService.listContacts(query, user);
-    return res.json({ success: true, count: contacts.length, contacts });
+    const result = contactService.listContacts(query, user, true);
+    return res.json({ success: true, count: result.total, ...result });
   }
 
   // 3.1 Verificación inmediata de existencia de correo electrónico (Requisito de verificación temprana)
@@ -151,7 +166,7 @@ function handleApi(req, res, pathname, query, body, user) {
 
     const db = getDb();
     const existing = db.prepare(`
-      SELECT id, first_name, last_name, email, institution, company_name, tipo_contacto, created_by_name, created_at
+      SELECT id, first_name, last_name, email, institution, company_name, tipo_contacto, created_by, created_by_name, created_at
       FROM contactos
       WHERE email_normalized = ?
       LIMIT 1
@@ -161,7 +176,7 @@ function handleApi(req, res, pathname, query, body, user) {
       success: true,
       exists: !!existing,
       isTecDomain: false,
-      contact: existing || null
+      contact: existing && (user.rol === 'ADMIN' || existing.created_by === user.id) ? existing : null
     });
   }
 
@@ -242,9 +257,9 @@ function handleApi(req, res, pathname, query, body, user) {
   }
 
   // 4. Detalle individual de contacto
-  if (pathname.startsWith('/api/contacts/') && method === 'GET' && !pathname.endsWith('/resolve-duplicate')) {
+  if ((/^\/api\/contacts\/[^/]+$/).test(pathname) && method === 'GET') {
     const id = pathname.replace('/api/contacts/', '');
-    const data = contactService.getContactById(id);
+    const data = contactService.getContactById(id, user);
     if (!data) return res.status(404).json({ success: false, message: 'Contacto no encontrado' });
     return res.json({ success: true, ...data });
   }
@@ -261,6 +276,10 @@ function handleApi(req, res, pathname, query, body, user) {
       metodoIngreso: 'INDIVIDUAL'
     });
 
+    if (result.duplicateDetails) {
+      result.duplicateDetails = visibleDuplicate(result.duplicateDetails, user);
+      result.message = result.duplicateDetails.explanation;
+    }
     if (!result.success) {
       const statusCode = result.duplicateStatus === 'EXACT_MATCH' ? 409 : (result.duplicateStatus === 'POTENTIAL_DUPLICATE' ? 409 : 400);
       return res.status(statusCode).json(result);
@@ -269,17 +288,21 @@ function handleApi(req, res, pathname, query, body, user) {
   }
 
   // 6. Actualización de contacto
-  if (pathname.startsWith('/api/contacts/') && method === 'PUT') {
+  if ((/^\/api\/contacts\/[^/]+$/).test(pathname) && method === 'PUT') {
     const id = pathname.replace('/api/contacts/', '');
     const result = contactService.updateContact(id, body, user);
+    if (result.duplicateDetails) {
+      result.duplicateDetails = visibleDuplicate(result.duplicateDetails, user);
+      result.message = result.duplicateDetails.explanation;
+    }
     if (!result.success) {
-      return res.status(result.duplicateStatus === 'EXACT_MATCH' ? 409 : 400).json(result);
+      return res.status(result.statusCode || (result.duplicateStatus === 'EXACT_MATCH' ? 409 : 400)).json(result);
     }
     return res.json(result);
   }
 
   // 6.1 Eliminación de contacto reportado
-  if (pathname.startsWith('/api/contacts/') && method === 'DELETE') {
+  if ((/^\/api\/contacts\/[^/]+$/).test(pathname) && method === 'DELETE') {
     const id = pathname.replace('/api/contacts/', '');
     const result = contactService.deleteContact(id, user);
     if (!result.success) {
@@ -291,11 +314,11 @@ function handleApi(req, res, pathname, query, body, user) {
 
 
   // 7. Resolución de duplicados
-  if (pathname.includes('/resolve-duplicate') && method === 'POST') {
+  if ((/^\/api\/contacts\/[^/]+\/resolve-duplicate$/).test(pathname) && method === 'POST') {
     const id = pathname.split('/')[3];
     const { action, targetContactId } = body;
     const result = contactService.resolveDuplicate(id, action, targetContactId, user);
-    return res.json(result);
+    return res.status(result.statusCode || (result.success ? 200 : 404)).json(result);
   }
 
   // 8. Descarga de Plantillas Oficiales Excel
@@ -562,7 +585,7 @@ function handleApi(req, res, pathname, query, body, user) {
       // Verificación contra base de datos si no tiene error de formato
       let dupCheck = null;
       if (rowStatus === 'CORRECTO' && validation.sanitized) {
-        dupCheck = checkDuplicate(validation.sanitized);
+        dupCheck = visibleDuplicate(checkDuplicate(validation.sanitized), user);
         if (dupCheck.status === 'EXACT_MATCH') {
           rowStatus = 'DUPLICADO_EXACTO';
           duplicadosExactos++;
@@ -637,7 +660,9 @@ function handleApi(req, res, pathname, query, body, user) {
       }
 
       const funcionarioService = require('../services/funcionarioService');
-      const importResult = funcionarioService.bulkImportFuncionarios(rowsToImport);
+      let importResult;
+      try { importResult = funcionarioService.bulkImportFuncionarios(rowsToImport); }
+      catch (err) { return res.status(422).json({ success: false, message: err.message }); }
 
       // Guardar archivo original en staging Drive
       if (fileBase64) {
@@ -653,6 +678,9 @@ function handleApi(req, res, pathname, query, body, user) {
       });
     }
 
+    if (!['ACADEMICO', 'EMPLEADOR'].includes(tipo_contacto) || rowsToImport.length > 10000) {
+      return res.status(400).json({ success: false, message: 'Indique un tipo válido y hasta 10000 filas por importación.' });
+    }
     let importedCount = 0;
 
     const reporter = requireReporter(body, res);
@@ -662,66 +690,85 @@ function handleApi(req, res, pathname, query, body, user) {
     const defaultSede = reporter.sede_id;
     const defaultDepto = reporter.departamento_id;
 
-    const result = runTransaction((trx) => {
-      // Registrar Lote
-      trx.prepare(`
-        INSERT INTO lotes_carga (
-          id, nombre_archivo, tipo_contacto, total_filas, correctos, con_errores,
-          posibles_duplicados, duplicados_exactos, cargado_por, cargado_por_email, created_at, detalles_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        loteId, fileName || 'carga_excel.xlsx', tipo_contacto, rowsToImport.length,
-        rowsToImport.length, 0, 0, 0, reporterName, reporterEmail, now, JSON.stringify({ count: rowsToImport.length })
-      );
-
-      const stmtContact = trx.prepare(`
-        INSERT INTO contactos (
-          id, tipo_contacto, source, title, first_name, last_name, email, email_normalized, phone,
-          country_name, sede_id, departamento_id, job_title, department_unit, institution, subject_area,
-          position, industry, company_name, estado, metodo_ingreso, lote_id,
-          recomienda_nombre, recomienda_email,
-          created_by, created_by_name, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-
-      for (const row of rowsToImport) {
-        const contactId = crypto.randomUUID();
-        const initialStatus = row.status === 'POSIBLE_DUPLICADO' ? 'POSIBLE_DUPLICADO' : 'VALIDADO';
-        
-        stmtContact.run(
-          contactId,
-          tipo_contacto,
-          config.SOURCE_NAME,
-          row.title,
-          row.first_name,
-          row.last_name,
-          row.email,
-          row.email_normalized || normalizeEmail(row.email),
-          row.phone || null,
-          row.country_name,
-          defaultSede,
-          defaultDepto,
-          row.job_title || null,
-          row.department_unit || null,
-          row.institution || null,
-          row.subject_area || null,
-          row.position || null,
-          row.industry || null,
-          row.company_name || null,
-          initialStatus,
-          'CARGA_MASIVA',
-          loteId,
-          reporterName,
-          reporterEmail,
-          user.id,
-          user.nombre_completo,
-          now
+    try {
+      runTransaction((trx) => {
+        // Registrar Lote
+        trx.prepare(`
+          INSERT INTO lotes_carga (
+            id, nombre_archivo, tipo_contacto, total_filas, correctos, con_errores,
+            posibles_duplicados, duplicados_exactos, cargado_por, cargado_por_email, created_at, detalles_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          loteId, fileName || 'carga_excel.xlsx', tipo_contacto, rowsToImport.length,
+          rowsToImport.length, 0, 0, 0, reporterName, reporterEmail, now, JSON.stringify({ count: rowsToImport.length })
         );
-        importedCount++;
-      }
 
-      return { success: true, loteId, importedCount };
-    });
+        const stmtContact = trx.prepare(`
+          INSERT INTO contactos (
+            id, tipo_contacto, source, title, first_name, last_name, email, email_normalized, phone,
+            country_name, sede_id, departamento_id, job_title, department_unit, institution, subject_area,
+            position, industry, company_name, estado, metodo_ingreso, lote_id,
+            recomienda_nombre, recomienda_email,
+            created_by, created_by_name, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        for (const [index, rawRow] of rowsToImport.entries()) {
+          const validation = validateContact(rawRow, tipo_contacto);
+          if (!validation.isValid) {
+            const err = new Error(`La fila ${index + 1} contiene errores. No se guardó ninguna fila.`);
+            err.statusCode = 422; err.validationErrors = validation.errors; err.row = index + 1; throw err;
+          }
+          const row = validation.sanitized;
+          const duplicate = checkDuplicate(row);
+          if (duplicate.status === 'EXACT_MATCH') {
+            const err = new Error(`La fila ${index + 1} está duplicada. No se guardó ninguna fila.`);
+            err.statusCode = 409; err.row = index + 1; throw err;
+          }
+          const contactId = crypto.randomUUID();
+          const initialStatus = duplicate.status === 'POTENTIAL_DUPLICATE' ? 'POSIBLE_DUPLICADO' : 'VALIDADO';
+
+          stmtContact.run(
+            contactId,
+            tipo_contacto,
+            config.SOURCE_NAME,
+            row.title,
+            row.first_name,
+            row.last_name,
+            row.email,
+            row.email_normalized || normalizeEmail(row.email),
+            row.phone || null,
+            row.country_name,
+            defaultSede,
+            defaultDepto,
+            row.job_title || null,
+            row.department_unit || null,
+            row.institution || null,
+            row.subject_area || null,
+            row.position || null,
+            row.industry || null,
+            row.company_name || null,
+            initialStatus,
+            'CARGA_MASIVA',
+            loteId,
+            reporterName,
+            reporterEmail,
+            user.id,
+            user.nombre_completo,
+            now
+          );
+          contactService.logAudit(trx, contactId, user, 'CREACION', { metodo: 'CARGA_MASIVA', loteId, estado: initialStatus, datos: row });
+          importedCount++;
+        }
+
+        const potential = trx.prepare("SELECT COUNT(*) AS count FROM contactos WHERE lote_id = ? AND estado = 'POSIBLE_DUPLICADO'").get(loteId).count;
+        trx.prepare('UPDATE lotes_carga SET correctos = ?, posibles_duplicados = ? WHERE id = ?').run(importedCount - potential, potential, loteId);
+        return { success: true, loteId, importedCount };
+      });
+
+    } catch (err) {
+      return res.status(err.statusCode || 500).json({ success: false, message: err.statusCode ? err.message : 'La importación falló; no se guardó ninguna fila.', validationErrors: err.validationErrors, row: err.row });
+    }
 
     // Guardar archivo original en staging institucional / Google Drive
     if (fileBase64) {

@@ -19,6 +19,8 @@ const DirectoryModule = {
   bulkDeleting: false,
   loadingContacts: false,
   listVersion: 0,
+  page: 1,
+  pagination: null,
 
   init(catalogs) {
     this.catalogs = catalogs;
@@ -33,9 +35,9 @@ const DirectoryModule = {
     if (!container) return;
 
     const isAdmin = App.currentUser?.rol === 'ADMIN';
-    const sedesOpts = (this.catalogs?.sedes || []).map(s => `<option value="${s.id}">${s.nombre}</option>`).join('');
-    const deptosOpts = (this.catalogs?.departamentos || []).map(d => `<option value="${d.id}">${d.nombre}</option>`).join('');
-    const paisesOpts = (this.catalogs?.paises || []).map(p => `<option value="${p}">${p}</option>`).join('');
+    const sedesOpts = (this.catalogs?.sedes || []).map(s => `<option value="${this.escapeSelectionText(s.id)}">${this.escapeSelectionText(s.nombre)}</option>`).join('');
+    const deptosOpts = (this.catalogs?.departamentos || []).map(d => `<option value="${this.escapeSelectionText(d.id)}">${this.escapeSelectionText(d.nombre)}</option>`).join('');
+    const paisesOpts = (this.catalogs?.paises || []).map(p => `<option value="${this.escapeSelectionText(p)}">${this.escapeSelectionText(p)}</option>`).join('');
 
     container.innerHTML = `
       <div class="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-8">
@@ -79,7 +81,7 @@ const DirectoryModule = {
             <!-- Búsqueda libre -->
             <div class="form-group sm:col-span-2">
               <label class="form-label text-xs">Búsqueda rápida</label>
-              <input type="text" class="form-control" id="dir-filter-q" placeholder="Buscar por nombre, correo, institución, empresa o cargo..." value="${this.filters.q}">
+              <input type="text" class="form-control" id="dir-filter-q" placeholder="Buscar por nombre, correo, institución, empresa o cargo..." value="${this.escapeSelectionText(this.filters.q)}">
             </div>
 
             <!-- Tipo -->
@@ -223,14 +225,17 @@ const DirectoryModule = {
     this.loadContacts();
   },
 
-  async loadContacts() {
+  async loadContacts(resetPage = true) {
+    if (resetPage) this.page = 1;
     const version = ++this.listVersion;
     this.loadingContacts = true;
     this.clearSelection();
     try {
-      const response = await API.get('/api/contacts', this.filters);
+      const response = await API.get('/api/contacts', { ...this.filters, page: this.page, page_size: 50 });
       if (version !== this.listVersion) return;
       this.contacts = response.contacts || [];
+      this.pagination = response;
+      this.page = response.page || 1;
       this.loadingContacts = false;
       this.renderTable();
     } catch (err) {
@@ -241,6 +246,11 @@ const DirectoryModule = {
         this.updateSelectionUI();
       }
     }
+  },
+
+  changePage(delta) {
+    this.page += delta;
+    this.loadContacts(false);
   },
 
   escapeSelectionText(value) {
@@ -361,7 +371,9 @@ const DirectoryModule = {
     area.innerHTML = `
       <div class="mb-3 text-xs text-slate-500 font-medium flex items-center justify-between">
         <span>Mostrando <strong>${this.contacts.length}</strong> contactos registrados:</span>
-        <span class="text-[11px] text-slate-400">Todos los elementos visibles en pantalla</span>
+        <span class="text-[11px] text-slate-400">${this.pagination?.total || this.contacts.length} en total · Página ${this.page} de ${this.pagination?.pages || 1}</span>
+        <div class="flex gap-2"><button type="button" class="btn btn-outline btn-xs" ${this.page <= 1 ? 'disabled' : ''} onclick="DirectoryModule.changePage(-1)">Anterior</button>
+        <button type="button" class="btn btn-outline btn-xs" ${this.page >= (this.pagination?.pages || 1) ? 'disabled' : ''} onclick="DirectoryModule.changePage(1)">Siguiente</button></div>
       </div>
       <div class="table-responsive-fit">
         <table class="data-table-fit">
@@ -385,7 +397,7 @@ const DirectoryModule = {
                 c.estado === 'EXPORTADO' ? 'badge-exportado' : 'badge-nuevo';
 
               const isAcademico = c.tipo_contacto === 'ACADEMICO';
-              const safeFullName = encodeURIComponent(`${c.first_name || ''} ${c.last_name || ''}`.trim());
+              const safeFullName = encodeURIComponent(`${c.first_name || ''} ${c.last_name || ''}`.trim()).replace(/'/g, '%27');
 
               return `
                 <tr>
@@ -396,48 +408,48 @@ const DirectoryModule = {
                         ${isAcademico ? '🎓 Académico' : '💼 Empleador'}
                       </span>
                     </div>
-                    <strong class="text-slate-900 font-bold text-xs sm:text-sm block">${c.title || ''} ${c.first_name} ${c.last_name}</strong>
-                    <code class="text-xs text-slate-500 font-mono break-all block mt-0.5">${c.email}</code>
-                    ${c.phone ? `<span class="text-[11px] text-slate-500 block mt-0.5"><i class="fa-solid fa-phone text-[9px] text-slate-400 mr-1"></i>${c.phone}</span>` : ''}
+                    <strong class="text-slate-900 font-bold text-xs sm:text-sm block">${this.escapeSelectionText(c.title || '')} ${this.escapeSelectionText(c.first_name)} ${this.escapeSelectionText(c.last_name)}</strong>
+                    <code class="text-xs text-slate-500 font-mono break-all block mt-0.5">${this.escapeSelectionText(c.email)}</code>
+                    ${c.phone ? `<span class="text-[11px] text-slate-500 block mt-0.5"><i class="fa-solid fa-phone text-[9px] text-slate-400 mr-1"></i>${this.escapeSelectionText(c.phone)}</span>` : ''}
                   </td>
                   <td>
-                    <strong class="text-slate-800 font-semibold text-xs block leading-snug">${c.institution || c.company_name || '-'}</strong>
-                    <span class="text-xs text-slate-600 block mt-0.5">${c.job_title || c.position || '-'}</span>
+                    <strong class="text-slate-800 font-semibold text-xs block leading-snug">${this.escapeSelectionText(c.institution || c.company_name || '-')}</strong>
+                    <span class="text-xs text-slate-600 block mt-0.5">${this.escapeSelectionText(c.job_title || c.position || '-')}</span>
                     ${c.subject_area || c.industry ? `
                       <span class="text-[11px] text-slate-500 block mt-1">
-                        <i class="fa-solid fa-tag text-[9px] text-slate-400 mr-1"></i>${c.subject_area || c.industry}
+                        <i class="fa-solid fa-tag text-[9px] text-slate-400 mr-1"></i>${this.escapeSelectionText(c.subject_area || c.industry)}
                       </span>
                     ` : ''}
                   </td>
                   <td>
                     <div class="font-semibold text-slate-800 text-xs flex items-center gap-1.5 leading-snug">
                       <i class="fa-solid fa-user-tie text-amber-600 text-[10px] shrink-0"></i>
-                      <span>${c.es_consolidado ? 'Administrador' : (c.recomienda_nombre || c.created_by_name || 'Funcionario TEC')}</span>
+                      <span>${this.escapeSelectionText(c.es_consolidado ? 'Administrador' : (c.recomienda_nombre || c.created_by_name || 'Funcionario TEC'))}</span>
                     </div>
-                    ${!c.es_consolidado && c.recomienda_email ? `<code class="text-[11px] text-blue-800 font-mono break-all block mt-0.5">${c.recomienda_email}</code>` : ''}
-                    <span class="text-slate-500 text-[11px] block mt-1">${c.es_consolidado ? 'Carga consolidada institucional' : `${c.sede_nombre || 'Sede N/A'} · ${c.departamento_nombre || 'Depto. N/A'}`}</span>
+                    ${!c.es_consolidado && c.recomienda_email ? `<code class="text-[11px] text-blue-800 font-mono break-all block mt-0.5">${this.escapeSelectionText(c.recomienda_email)}</code>` : ''}
+                    <span class="text-slate-500 text-[11px] block mt-1">${c.es_consolidado ? 'Carga consolidada institucional' : `${this.escapeSelectionText(c.sede_nombre || 'Sede N/A')} · ${this.escapeSelectionText(c.departamento_nombre || 'Depto. N/A')}`}</span>
                   </td>
                   <td>
                     <div class="text-xs font-semibold text-slate-700 flex items-center gap-1.5 mb-1.5">
                       <i class="fa-solid fa-earth-americas text-slate-400 text-[11px] shrink-0"></i>
-                      <span>${c.country_name}</span>
+                      <span>${this.escapeSelectionText(c.country_name)}</span>
                     </div>
-                    <span class="badge ${badgeClass} text-[10px]">${c.estado}</span>
+                    <span class="badge ${badgeClass} text-[10px]">${this.escapeSelectionText(c.estado)}</span>
                   </td>
                   <td style="text-align: center;">
                     <div class="flex items-center justify-center gap-1">
                       <button class="btn btn-outline btn-xs px-2 py-1 text-slate-700 hover:text-blue-900 hover:bg-blue-50 border-slate-300" 
-                              onclick="DirectoryModule.viewDetails('${c.id}')" 
+                              onclick="DirectoryModule.viewDetails('${this.escapeSelectionText(c.id)}')"
                               title="Ver Expediente y Auditoría">
                         <i class="fa-solid fa-eye text-xs"></i>
                       </button>
                       <button class="btn btn-outline btn-xs px-2 py-1 text-slate-700 hover:text-blue-900 hover:bg-blue-50 border-slate-300" 
-                              onclick="DirectoryModule.editContact('${c.id}')" 
+                              onclick="DirectoryModule.editContact('${this.escapeSelectionText(c.id)}')"
                               title="Editar Contacto">
                         <i class="fa-solid fa-pen text-xs"></i>
                       </button>
                       <button class="btn btn-outline btn-xs px-2 py-1 text-red-600 hover:text-white hover:bg-red-600 border-red-300 transition-colors" 
-                              onclick="DirectoryModule.confirmDelete('${c.id}', '${safeFullName}')" 
+                              onclick="DirectoryModule.confirmDelete('${this.escapeSelectionText(c.id)}', '${safeFullName}')"
                               title="Eliminar Contacto Reportado">
                         <i class="fa-solid fa-trash-can text-xs"></i>
                       </button>
@@ -480,19 +492,19 @@ const DirectoryModule = {
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-slate-700">
                 <div>
                   <span class="text-slate-500 block text-[11px]">Funcionario/a que recomienda:</span>
-                  <strong class="text-slate-900">${contact.es_consolidado ? 'Administrador' : (contact.recomienda_nombre || contact.created_by_name || 'No especificado')}</strong>
+                  <strong class="text-slate-900">${this.escapeSelectionText(contact.es_consolidado ? 'Administrador' : (contact.recomienda_nombre || contact.created_by_name || 'No especificado'))}</strong>
                 </div>
                 <div>
                   <span class="text-slate-500 block text-[11px]">Correo institucional del recomendador:</span>
-                  <code class="text-blue-900 font-semibold">${contact.es_consolidado ? 'Carga consolidada institucional' : (contact.recomienda_email || '(No registrado)')}</code>
+                  <code class="text-blue-900 font-semibold">${this.escapeSelectionText(contact.es_consolidado ? 'Carga consolidada institucional' : (contact.recomienda_email || '(No registrado)'))}</code>
                 </div>
                 <div>
                   <span class="text-slate-500 block text-[11px]">Sede de procedencia:</span>
-                  <strong class="text-slate-800">${contact.sede_nombre || 'Sede no asignada'}</strong>
+                  <strong class="text-slate-800">${this.escapeSelectionText(contact.sede_nombre || 'Sede no asignada')}</strong>
                 </div>
                 <div>
                   <span class="text-slate-500 block text-[11px]">${contact.es_consolidado ? 'Escuela Proponente:' : 'Carrera / Escuela / Departamento:'}</span>
-                  <strong class="text-slate-800">${contact.departamento_nombre || 'No asignado'}</strong>
+                  <strong class="text-slate-800">${this.escapeSelectionText(contact.departamento_nombre || 'No asignado')}</strong>
                 </div>
               </div>
             </div>
@@ -500,18 +512,18 @@ const DirectoryModule = {
             <!-- Ficha Técnica -->
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl mb-5 text-sm">
               <div>
-                <div><strong>Tipo:</strong> ${contact.tipo_contacto}</div>
-                <div><strong>Nombre:</strong> ${contact.title} ${contact.first_name} ${contact.last_name}</div>
-                <div><strong>Correo:</strong> <code>${contact.email}</code></div>
-                <div><strong>Teléfono:</strong> ${contact.phone || '(No registrado)'}</div>
-                <div><strong>País:</strong> ${contact.country_name}</div>
+                <div><strong>Tipo:</strong> ${this.escapeSelectionText(contact.tipo_contacto)}</div>
+                <div><strong>Nombre:</strong> ${this.escapeSelectionText(contact.title)} ${this.escapeSelectionText(contact.first_name)} ${this.escapeSelectionText(contact.last_name)}</div>
+                <div><strong>Correo:</strong> <code>${this.escapeSelectionText(contact.email)}</code></div>
+                <div><strong>Teléfono:</strong> ${this.escapeSelectionText(contact.phone || '(No registrado)')}</div>
+                <div><strong>País:</strong> ${this.escapeSelectionText(contact.country_name)}</div>
               </div>
               <div>
-                <div><strong>Institución/Empresa:</strong> ${contact.institution || contact.company_name}</div>
-                <div><strong>Puesto/Cargo:</strong> ${contact.job_title || contact.position}</div>
-                <div><strong>Disciplina/Sector:</strong> ${contact.subject_area || contact.industry}</div>
-                <div><strong>Estado:</strong> <span class="badge badge-validado">${contact.estado}</span></div>
-                <div><strong>Método de Ingreso:</strong> ${contact.metodo_ingreso}</div>
+                <div><strong>Institución/Empresa:</strong> ${this.escapeSelectionText(contact.institution || contact.company_name)}</div>
+                <div><strong>Puesto/Cargo:</strong> ${this.escapeSelectionText(contact.job_title || contact.position)}</div>
+                <div><strong>Disciplina/Sector:</strong> ${this.escapeSelectionText(contact.subject_area || contact.industry)}</div>
+                <div><strong>Estado:</strong> <span class="badge badge-validado">${this.escapeSelectionText(contact.estado)}</span></div>
+                <div><strong>Método de Ingreso:</strong> ${this.escapeSelectionText(contact.metodo_ingreso)}</div>
               </div>
             </div>
 
@@ -531,9 +543,9 @@ const DirectoryModule = {
                   ${auditHistory.map(a => `
                     <tr>
                       <td>${new Date(a.created_at).toLocaleString()}</td>
-                      <td>${a.usuario_nombre}</td>
-                      <td><strong>${a.accion}</strong></td>
-                      <td><code>${a.detalles}</code></td>
+                      <td>${this.escapeSelectionText(a.usuario_nombre)}</td>
+                      <td><strong>${this.escapeSelectionText(a.accion)}</strong></td>
+                      <td><code>${this.escapeSelectionText(a.detalles)}</code></td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -546,10 +558,10 @@ const DirectoryModule = {
                 <div>
                   <strong>Atención:</strong> Este contacto se encuentra en estado de revisión de duplicados.
                   <div class="mt-2 flex gap-2">
-                    <button class="btn btn-sm btn-tec" onclick="DirectoryModule.resolveDuplicate('${contact.id}', 'CONFIRM_VALID')">
+                    <button class="btn btn-sm btn-tec" onclick="DirectoryModule.resolveDuplicate('${this.escapeSelectionText(contact.id)}', 'CONFIRM_VALID')">
                       Aprobar Como Contacto Válido
                     </button>
-                    <button class="btn btn-sm btn-outline text-red-600 border-red-300" onclick="DirectoryModule.resolveDuplicate('${contact.id}', 'DISCARD')">
+                    <button class="btn btn-sm btn-outline text-red-600 border-red-300" onclick="DirectoryModule.resolveDuplicate('${this.escapeSelectionText(contact.id)}', 'DISCARD')">
                       Descartar Como Duplicado
                     </button>
                   </div>
@@ -559,12 +571,12 @@ const DirectoryModule = {
 
             <div class="flex flex-wrap items-center justify-between gap-3 mt-5 pt-3 border-t border-slate-100">
               <button type="button" class="btn btn-outline text-red-600 border-red-300 hover:bg-red-50 hover:text-red-700 btn-sm" 
-                      onclick="DirectoryModule.confirmDelete('${contact.id}', '${encodeURIComponent(`${contact.first_name || ''} ${contact.last_name || ''}`.trim())}')">
+                      onclick="DirectoryModule.confirmDelete('${this.escapeSelectionText(contact.id)}', '${encodeURIComponent(`${contact.first_name || ''} ${contact.last_name || ''}`.trim()).replace(/'/g, '%27')}')">
                 <i class="fa-solid fa-trash-can mr-1.5"></i>
                 Eliminar Contacto Reportado
               </button>
               <div class="flex gap-2">
-                <button type="button" class="btn btn-outline btn-sm" onclick="DirectoryModule.editContact('${contact.id}')">
+                <button type="button" class="btn btn-outline btn-sm" onclick="DirectoryModule.editContact('${this.escapeSelectionText(contact.id)}')">
                   <i class="fa-solid fa-pen mr-1"></i> Editar
                 </button>
                 <button type="button" class="btn btn-tec btn-sm" onclick="DirectoryModule.closeModal()">Cerrar</button>
@@ -582,22 +594,23 @@ const DirectoryModule = {
     try {
       const response = await API.get(`/api/contacts/${id}`);
       const { contact } = response;
+      this.selectedContact = contact;
       const isAcademic = contact.tipo_contacto === 'ACADEMICO';
       const modal = document.getElementById('dir-modal-container');
       if (!modal) return;
 
-      const countriesOpts = (this.catalogs?.paises || []).map(p => `<option value="${p}" ${p === contact.country_name ? 'selected' : ''}>${p}</option>`).join('');
-      const titlesOpts = (this.catalogs?.titulos || []).map(t => `<option value="${t}" ${t === contact.title ? 'selected' : ''}>${t}</option>`).join('');
+      const countriesOpts = [...new Set([...(this.catalogs?.paises || []), contact.country_name])].filter(Boolean).map(p => `<option value="${this.escapeSelectionText(p)}" ${p === contact.country_name ? 'selected' : ''}>${this.escapeSelectionText(p)}</option>`).join('');
+      const titlesOpts = [...new Set([...(this.catalogs?.titulos || []), contact.title])].filter(Boolean).map(t => `<option value="${this.escapeSelectionText(t)}" ${t === contact.title ? 'selected' : ''}>${this.escapeSelectionText(t)}</option>`).join('');
 
       modal.innerHTML = `
         <div class="modal-overlay">
           <div class="modal-content" style="max-width: 650px;">
             <div class="modal-header">
-              <h3 class="modal-title">Editar Contacto (${contact.tipo_contacto})</h3>
+              <h3 class="modal-title">Editar Contacto (${this.escapeSelectionText(contact.tipo_contacto)})</h3>
               <button class="modal-close" onclick="DirectoryModule.closeModal()">&times;</button>
             </div>
 
-            <form id="edit-form" onsubmit="event.preventDefault(); DirectoryModule.saveEdit('${contact.id}');">
+            <form id="edit-form" onsubmit="event.preventDefault(); DirectoryModule.saveEdit('${this.escapeSelectionText(contact.id)}');">
               <div class="form-grid">
                 <div class="form-group">
                   <label class="form-label">Título *</label>
@@ -605,15 +618,15 @@ const DirectoryModule = {
                 </div>
                 <div class="form-group">
                   <label class="form-label">Nombre *</label>
-                  <input type="text" class="form-control" id="edit-first_name" value="${contact.first_name}" required>
+                  <input type="text" class="form-control" id="edit-first_name" value="${this.escapeSelectionText(contact.first_name)}" required>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Apellido *</label>
-                  <input type="text" class="form-control" id="edit-last_name" value="${contact.last_name}" required>
+                  <input type="text" class="form-control" id="edit-last_name" value="${this.escapeSelectionText(contact.last_name)}" required>
                 </div>
                 <div class="form-group">
                   <label class="form-label">Correo Electrónico *</label>
-                  <input type="email" class="form-control" id="edit-email" value="${contact.email}" required>
+                  <input type="email" class="form-control" id="edit-email" value="${this.escapeSelectionText(contact.email)}" required>
                 </div>
                 <div class="form-group">
                   <label class="form-label">País *</label>
@@ -621,30 +634,38 @@ const DirectoryModule = {
                 </div>
                 <div class="form-group">
                   <label class="form-label">Teléfono</label>
-                  <input type="tel" class="form-control" id="edit-phone" value="${contact.phone || ''}">
+                  <input type="tel" class="form-control" id="edit-phone" value="${this.escapeSelectionText(contact.phone || '')}">
                 </div>
 
                 ${isAcademic ? `
                   <div class="form-group">
                     <label class="form-label">Puesto / Cargo *</label>
-                    <input type="text" class="form-control" id="edit-job_title" value="${contact.job_title}" required>
+                    <input type="text" class="form-control" id="edit-job_title" value="${this.escapeSelectionText(contact.job_title)}" required>
                   </div>
                   <div class="form-group">
                     <label class="form-label">Institución *</label>
-                    <input type="text" class="form-control" id="edit-institution" value="${contact.institution}" required>
+                    <input type="text" class="form-control" id="edit-institution" value="${this.escapeSelectionText(contact.institution)}" required>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Disciplina académica *</label>
+                    <input type="text" class="form-control" id="edit-subject_area" value="${this.escapeSelectionText(contact.subject_area || '')}" required>
                   </div>
                   <div class="form-group">
                     <label class="form-label">Departamento *</label>
-                    <input type="text" class="form-control" id="edit-department_unit" value="${contact.department_unit}" required>
+                    <input type="text" class="form-control" id="edit-department_unit" value="${this.escapeSelectionText(contact.department_unit)}" required>
                   </div>
                 ` : `
                   <div class="form-group">
                     <label class="form-label">Posición *</label>
-                    <input type="text" class="form-control" id="edit-position" value="${contact.position}" required>
+                    <input type="text" class="form-control" id="edit-position" value="${this.escapeSelectionText(contact.position)}" required>
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label">Industria / Sector *</label>
+                    <input type="text" class="form-control" id="edit-industry" value="${this.escapeSelectionText(contact.industry || '')}" required>
                   </div>
                   <div class="form-group">
                     <label class="form-label">Empresa *</label>
-                    <input type="text" class="form-control" id="edit-company_name" value="${contact.company_name}" required>
+                    <input type="text" class="form-control" id="edit-company_name" value="${this.escapeSelectionText(contact.company_name)}" required>
                   </div>
                 `}
                 <div class="form-group sm:col-span-2 bg-slate-50 p-3 rounded-lg border border-slate-200 mt-2">
@@ -652,11 +673,11 @@ const DirectoryModule = {
                   <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label class="form-label text-xs">Nombre Funcionario/a TEC</label>
-                      <input type="text" class="form-control text-sm bg-white" id="edit-recomienda_nombre" value="${contact.recomienda_nombre || ''}">
+                      <input type="text" class="form-control text-sm bg-white" readonly id="edit-recomienda_nombre" value="${this.escapeSelectionText(contact.recomienda_nombre || '')}">
                     </div>
                     <div>
                       <label class="form-label text-xs">Correo institucional (@itcr.ac.cr)</label>
-                      <input type="email" class="form-control text-sm bg-white" id="edit-recomienda_email" value="${contact.recomienda_email || ''}">
+                      <input type="email" class="form-control text-sm bg-white" readonly id="edit-recomienda_email" value="${this.escapeSelectionText(contact.recomienda_email || '')}">
                     </div>
                   </div>
                 </div>
@@ -676,7 +697,11 @@ const DirectoryModule = {
   },
 
   async saveEdit(id) {
+    document.querySelectorAll('[data-edit-error]').forEach(el => el.remove());
     const updatedData = {
+      version: this.selectedContact?.version,
+      subject_area: document.getElementById('edit-subject_area')?.value,
+      industry: document.getElementById('edit-industry')?.value,
       title: document.getElementById('edit-title').value,
       first_name: document.getElementById('edit-first_name').value,
       last_name: document.getElementById('edit-last_name').value,
@@ -698,7 +723,15 @@ const DirectoryModule = {
       this.closeModal();
       this.loadContacts();
     } catch (err) {
-      App.showToast(err.message || 'Error al actualizar contacto', 'error');
+      for (const [field, message] of Object.entries(err.data?.validationErrors || {})) {
+        const key = ({ subject: 'subject_area', department: 'department_unit', country: 'country_name' })[field] || field;
+        const input = document.getElementById(`edit-${key}`);
+        if (input) {
+          const error = document.createElement('p'); error.dataset.editError = '';
+          error.className = 'text-xs text-red-700'; error.textContent = message; input.after(error);
+        }
+      }
+      App.showToast(err.message || 'Revise los campos indicados.', 'error');
     }
   },
 
@@ -731,7 +764,7 @@ const DirectoryModule = {
 
           <div class="py-4">
             <p class="text-sm text-slate-700 mb-3">
-              ¿Está seguro de que desea eliminar el contacto reportado <strong class="text-slate-900">${contactName}</strong>?
+              ¿Está seguro de que desea eliminar el contacto reportado <strong class="text-slate-900">${this.escapeSelectionText(contactName)}</strong>?
             </p>
             <div class="bg-red-50 border border-red-200 rounded-xl p-3.5 text-xs text-red-900 mb-2 flex items-start gap-2.5">
               <i class="fa-solid fa-circle-exclamation text-red-600 mt-0.5 shrink-0 text-sm"></i>

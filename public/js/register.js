@@ -20,8 +20,45 @@ const RegisterModule = {
 
   init(catalogs) {
     this.catalogs = catalogs;
+    this.loadDraft();
     this.resetReporter();
     this.render();
+  },
+
+  draft: null,
+  draftKey() { return `tec_qs_contact_draft_${App.currentUser?.id || 'local'}`; },
+
+  loadDraft() {
+    try {
+      const saved = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(this.draftKey()) : null;
+      this.draft = saved ? JSON.parse(saved) : null;
+      if (!['ACADEMICO', 'EMPLEADOR'].includes(this.draft?.type)) this.draft = null;
+    } catch (_) { this.draft = null; }
+    this.currentType = this.draft?.type || null;
+  },
+
+  captureDraft() {
+    const form = document.getElementById('contact-form');
+    if (!form || !this.currentType) return;
+    const fields = {};
+    for (const input of form.querySelectorAll('[id^="field-"]')) fields[input.id] = input.value;
+    this.draft = { type: this.currentType, fields, custom: this.isCustomSubject };
+    try { sessionStorage.setItem(this.draftKey(), JSON.stringify(this.draft)); } catch (_) {}
+  },
+
+  restoreDraft() {
+    if (this.draft?.type !== this.currentType) return;
+    this.isCustomSubject = Boolean(this.draft.custom);
+    for (const [id, value] of Object.entries(this.draft.fields || {})) {
+      if (!id.startsWith('field-') || typeof value !== 'string') continue;
+      const input = document.getElementById(id);
+      if (!input) continue;
+      if (input.tagName === 'SELECT' && ![...input.options].some(option => option.value === value)) {
+        const option = document.createElement('option'); option.value = value; option.textContent = value; input.appendChild(option);
+      }
+      input.value = value;
+    }
+    document.getElementById('custom-subject-wrapper')?.classList.toggle('hidden', !this.isCustomSubject);
   },
 
   escapeReporterText(value) {
@@ -57,7 +94,7 @@ const RegisterModule = {
 
     // Generar opciones de sedes
     const sedesOptions = (this.catalogs?.sedes || []).map(s => `
-      <option value="${s.id}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${s.nombre}</option>
+      <option value="${this.escapeReporterText(s.id)}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${this.escapeReporterText(s.nombre)}</option>
     `).join('');
 
     // Filtrar o listar departamentos (priorizando la sede seleccionada)
@@ -66,7 +103,7 @@ const RegisterModule = {
     const listaDeptos = deptosParaSede.length > 0 ? deptosParaSede : todosDeptos;
 
     const deptosOptions = listaDeptos.map(d => `
-      <option value="${d.id}" ${d.id === this.selectedDeptoId ? 'selected' : ''}>${d.nombre}</option>
+      <option value="${this.escapeReporterText(d.id)}" ${d.id === this.selectedDeptoId ? 'selected' : ''}>${this.escapeReporterText(d.nombre)}</option>
     `).join('');
 
     container.innerHTML = `
@@ -98,7 +135,7 @@ const RegisterModule = {
             </h3>
             <button type="button" 
                     class="btn btn-outline btn-xs text-blue-900 border-blue-200 bg-white hover:bg-blue-50 py-1.5 px-3 text-xs font-semibold flex items-center gap-1.5 rounded-lg shadow-2xs transition-colors shrink-0"
-                    onclick="RegisterModule.openNuevoUsuarioModal()"
+                    ${App.currentUser?.rol !== 'ADMIN' ? 'hidden' : ''} onclick="RegisterModule.openNuevoUsuarioModal()"
                     title="Incluir a una nueva persona funcionaria en el padrón del TEC">
               <i class="fa-solid fa-user-plus text-amber-600"></i>
               <span>+ Nuevo funcionario</span>
@@ -212,6 +249,7 @@ const RegisterModule = {
     `;
 
     if (this.currentType) {
+      this.restoreDraft();
       this.attachFormListeners();
     }
     this.updateCardDisplay();
@@ -247,7 +285,7 @@ const RegisterModule = {
       }
 
       deptoSelect.innerHTML = listaDeptos.map(d => `
-        <option value="${d.id}" ${preserveDeptoId ? (d.id === preserveDeptoId ? 'selected' : '') : (d.id === this.selectedDeptoId ? 'selected' : '')}>${d.nombre}</option>
+        <option value="${this.escapeReporterText(d.id)}" ${preserveDeptoId ? (d.id === preserveDeptoId ? 'selected' : '') : (d.id === this.selectedDeptoId ? 'selected' : '')}>${this.escapeReporterText(d.nombre)}</option>
       `).join('');
 
       if (preserveDeptoId) {
@@ -343,7 +381,7 @@ const RegisterModule = {
       } else {
         this.reporterValidationError = res.exists
           ? 'El funcionario tiene datos institucionales incompletos. Revise su registro en el padrón.'
-          : 'Correo no encontrado en el padrón del TEC. Verifíquelo o registre al funcionario.';
+          : 'Correo no encontrado en el padrón del TEC. Solicite al administrador su incorporación o corrección.';
       }
     } catch (_) {
       if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
@@ -362,11 +400,15 @@ const RegisterModule = {
   },
 
   openNuevoUsuarioModal() {
+    if (App.currentUser?.rol !== 'ADMIN') {
+      App.showToast('Solicite al administrador la incorporación o corrección del funcionario en el padrón.', 'info');
+      return;
+    }
     const modalContainer = document.getElementById('duplicate-modal-container');
     if (!modalContainer) return;
 
     const sedesOpts = (this.catalogs?.sedes || []).map(s => `
-      <option value="${s.id}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${s.nombre}</option>
+      <option value="${this.escapeReporterText(s.id)}" ${s.id === this.selectedSedeId ? 'selected' : ''}>${this.escapeReporterText(s.nombre)}</option>
     `).join('');
 
     modalContainer.innerHTML = `
@@ -482,7 +524,7 @@ const RegisterModule = {
                 <i class="fa-solid fa-circle-check text-emerald-600"></i> Funcionario ya registrado en el padrón
               </div>
               <div class="mt-1 text-slate-700">
-                <strong>${f.nombre}</strong> (${f.dependencia || 'Dependencia no indicada'} · ${f.sede || 'Sede no indicada'}).
+                <strong>${this.escapeReporterText(f.nombre)}</strong> (${this.escapeReporterText(f.dependencia || 'Dependencia no indicada')} · ${this.escapeReporterText(f.sede || 'Sede no indicada')}).
               </div>
               <div class="text-[11px] text-blue-700 mt-0.5">Sus datos se completaron automáticamente para seleccionarlo.</div>
             </div>
@@ -658,7 +700,7 @@ const RegisterModule = {
               <i class="fa-solid fa-rotate-left mr-1"></i> Usar mis datos de usuario
             </button>
             <div class="flex items-center gap-2">
-              <button type="button" class="btn btn-outline btn-xs text-blue-900 border-blue-200" onclick="RegisterModule.openNuevoUsuarioModal()">
+              <button type="button" class="btn btn-outline btn-xs text-blue-900 border-blue-200" ${App.currentUser?.rol !== 'ADMIN' ? 'hidden' : ''} onclick="RegisterModule.openNuevoUsuarioModal()">
                 <i class="fa-solid fa-user-plus text-amber-600 mr-1"></i> + Nuevo funcionario
               </button>
               <button type="button" class="btn btn-outline btn-sm" onclick="RegisterModule.closeModal()">
@@ -699,9 +741,9 @@ const RegisterModule = {
       if (list.length === 0) {
         resultsContainer.innerHTML = `
           <div class="text-center py-6 text-slate-400 text-xs">
-            No se encontraron funcionarios que coincidan con "<strong>${query}</strong>".
+            No se encontraron funcionarios que coincidan con "<strong>${this.escapeReporterText(query)}</strong>".
             <div class="mt-2">
-              <button type="button" class="btn btn-outline btn-xs" onclick="RegisterModule.openNuevoUsuarioModal()">
+              <button type="button" class="btn btn-outline btn-xs" ${App.currentUser?.rol !== 'ADMIN' ? 'hidden' : ''} onclick="RegisterModule.openNuevoUsuarioModal()">
                 + Incluir como nuevo funcionario en el padrón
               </button>
             </div>
@@ -711,13 +753,13 @@ const RegisterModule = {
       }
 
       resultsContainer.innerHTML = list.map(f => {
-        const fJson = JSON.stringify(f).replace(/"/g, '&quot;');
+        const fJson = this.escapeReporterText(JSON.stringify(f));
         return `
           <div class="p-3 border border-slate-200 rounded-xl hover:border-blue-300 hover:bg-blue-50/50 transition-all flex items-center justify-between gap-3 cursor-pointer" onclick='RegisterModule.selectFuncionario(${fJson})'>
             <div class="min-w-0">
-              <div class="text-xs font-bold text-slate-900 truncate">${f.nombre}</div>
-              <div class="text-[11px] font-mono text-blue-900">${f.email}</div>
-              <div class="text-[11px] text-slate-500 truncate">${f.sede || ''} · ${f.dependencia || ''}</div>
+              <div class="text-xs font-bold text-slate-900 truncate">${this.escapeReporterText(f.nombre)}</div>
+              <div class="text-[11px] font-mono text-blue-900">${this.escapeReporterText(f.email)}</div>
+              <div class="text-[11px] text-slate-500 truncate">${this.escapeReporterText(f.sede || '')} · ${this.escapeReporterText(f.dependencia || '')}</div>
             </div>
             <button type="button" class="btn btn-tec btn-xs shrink-0 py-1 px-2.5 text-[11px]">
               Seleccionar
@@ -749,14 +791,19 @@ const RegisterModule = {
   },
 
   selectType(type) {
+    if (this.draft && this.currentType !== type && !window.confirm('Cambiar el tipo descartará el borrador actual, ¿desea continuar?')) return;
+    if (this.currentType !== type) {
+      this.draft = null;
+      try { sessionStorage.removeItem(this.draftKey()); } catch (_) {}
+    }
     this.currentType = type;
     this.render();
   },
 
   renderFormFields() {
     const isAcademic = this.currentType === 'ACADEMICO';
-    const countriesOptions = (this.catalogs?.paises || []).map(c => `<option value="${c}">${c}</option>`).join('');
-    const titlesOptions = (this.catalogs?.titulos || ['Dr', 'Dra', 'Prof', 'Ing', 'Lic', 'MSc', 'PhD', 'Mr', 'Mrs', 'Ms']).map(t => `<option value="${t}">${t}</option>`).join('');
+    const countriesOptions = (this.catalogs?.paises || []).map(c => `<option value="${this.escapeReporterText(c)}">${this.escapeReporterText(c)}</option>`).join('');
+    const titlesOptions = (this.catalogs?.titulos || ['Dr', 'Dra', 'Prof', 'Ing', 'Lic', 'MSc', 'PhD', 'Mr', 'Mrs', 'Ms']).map(t => `<option value="${this.escapeReporterText(t)}">${this.escapeReporterText(t)}</option>`).join('');
     const defaultSubjectsEs = [
       'Administración y Negocios',
       'Agricultura y Silvicultura / Ciencias Forestales',
@@ -788,8 +835,8 @@ const RegisterModule = {
       'Química'
     ];
     const rawSubjects = (this.catalogs?.areas_qs && this.catalogs.areas_qs.length > 0) ? this.catalogs.areas_qs : defaultSubjectsEs;
-    const subjectsOptions = rawSubjects.map(s => `<option value="${s}">${s}</option>`).join('');
-    const industriesOptions = (this.catalogs?.industrias_qs || []).map(i => `<option value="${i}">${i}</option>`).join('');
+    const subjectsOptions = rawSubjects.map(s => `<option value="${this.escapeReporterText(s)}">${this.escapeReporterText(s)}</option>`).join('');
+    const industriesOptions = (this.catalogs?.industrias_qs || []).map(i => `<option value="${this.escapeReporterText(i)}">${this.escapeReporterText(i)}</option>`).join('');
 
     return `
       <form id="contact-form" onsubmit="event.preventDefault(); RegisterModule.handleSubmit();" novalidate class="mt-4 pt-4 border-t border-slate-100">
@@ -927,7 +974,7 @@ const RegisterModule = {
                        id="field-subject_area_custom" 
                        placeholder="Ej. Nanotecnología Aplicada..." 
                        maxlength="120" 
-                       value="${this.customSubjectValue || ''}" 
+                       value="${this.escapeReporterText(this.customSubjectValue || '')}"
                        oninput="RegisterModule.onCustomSubjectInput(this.value)">
                 <div class="error-feedback" id="err-subject_area_custom"></div>
               </div>
@@ -1290,7 +1337,7 @@ const RegisterModule = {
               Restricción institucional y QS: Correo no permitido
             </div>
             <div class="text-xs text-red-900 mt-1.5 font-semibold">
-              ${res.message || 'No se permiten correos del dominio institucional del TEC.'}
+              ${this.escapeReporterText(res.message || 'No se permiten correos del dominio institucional del TEC.')}
             </div>
           </div>
         `;
@@ -1316,7 +1363,7 @@ const RegisterModule = {
               Este correo ya existe
             </div>
             <div class="text-xs text-red-800 mt-1 font-medium">
-              Ya se encuentra registrado en el sistema como <strong>${c.tipo_contacto}</strong>: ${c.first_name} ${c.last_name} (${org}).
+              Ya se encuentra registrado en el sistema como <strong>${this.escapeReporterText(c.tipo_contacto)}</strong>: ${this.escapeReporterText(c.first_name)} ${this.escapeReporterText(c.last_name)} (${this.escapeReporterText(org)}).
             </div>
             <div class="text-[11px] text-red-700/90 mt-1 bg-white/70 p-1.5 rounded border border-red-200">
               <i class="fa-solid fa-hand text-amber-600 mr-1"></i> No es necesario continuar completando los demás campos para este contacto ya que se encuentra almacenado.
@@ -1367,6 +1414,8 @@ const RegisterModule = {
       });
     }
 
+    form.addEventListener('input', () => this.captureDraft());
+    form.addEventListener('change', () => this.captureDraft());
     const inputs = form.querySelectorAll('input, select');
     inputs.forEach(input => {
       input.addEventListener('input', () => {
@@ -1600,7 +1649,13 @@ const RegisterModule = {
       if (err.data && (err.data.duplicateStatus === 'EXACT_MATCH' || err.data.duplicateStatus === 'POTENTIAL_DUPLICATE')) {
         this.showDuplicateDialog(data, err.data);
       } else {
-        App.showToast(err.message || 'Error al guardar el contacto', 'error');
+        for (const [field, message] of Object.entries(err.data?.validationErrors || {})) {
+          const key = ({ subject: 'subject_area', country: 'country_name', department: 'department_unit' })[field] || field;
+          const error = document.getElementById(`err-${key}`);
+          if (error) error.textContent = message;
+          document.getElementById(`field-${key}`)?.classList.add('is-invalid');
+        }
+        App.showToast(err.message || 'Revise los campos indicados.', 'error');
       }
     } finally {
       if (btnSave) {
@@ -1620,10 +1675,18 @@ const RegisterModule = {
     if (data.subject_area && this.catalogs?.areas_qs && !this.catalogs.areas_qs.includes(data.subject_area)) {
       this.catalogs.areas_qs.push(data.subject_area);
     }
+    this.clearDraft();
     this.resetForm();
   },
 
+  clearDraft() {
+    this.draft = null;
+    try { sessionStorage.removeItem(this.draftKey()); } catch (_) {}
+  },
+
   resetForm() {
+    if (this.draft && !window.confirm('¿Desea descartar el borrador del contacto?')) return;
+    this.clearDraft();
     clearTimeout(this.emailCheckTimeout);
     this.emailExists = false;
     this.emailValid = false;
@@ -1658,7 +1721,7 @@ const RegisterModule = {
 
           <div class="alert ${isExact ? 'alert-error' : 'alert-warning'}">
             <div>
-              <strong>Diagnóstico del Sistema:</strong> ${details.explanation}
+              <strong>Diagnóstico del Sistema:</strong> ${this.escapeReporterText(details.explanation)}
               ${isExact ? '<p class="mt-1">Por integridad del proceso QS, el sistema no permite duplicar este contacto.</p>' : ''}
             </div>
           </div>
@@ -1666,20 +1729,20 @@ const RegisterModule = {
           <div class="diff-comparison">
             <div class="diff-col">
               <h5>Datos Que Intenta Registrar</h5>
-              <div class="diff-item"><strong>Nombre:</strong> ${candidateData.first_name} ${candidateData.last_name}</div>
-              <div class="diff-item"><strong>Correo:</strong> ${candidateData.email}</div>
-              <div class="diff-item"><strong>Tipo:</strong> ${candidateData.tipo_contacto}</div>
-              <div class="diff-item"><strong>Institución/Empresa:</strong> ${candidateData.institution || candidateData.company_name}</div>
-              <div class="diff-item"><strong>País:</strong> ${candidateData.country_name}</div>
+              <div class="diff-item"><strong>Nombre:</strong> ${this.escapeReporterText(candidateData.first_name)} ${this.escapeReporterText(candidateData.last_name)}</div>
+              <div class="diff-item"><strong>Correo:</strong> ${this.escapeReporterText(candidateData.email)}</div>
+              <div class="diff-item"><strong>Tipo:</strong> ${this.escapeReporterText(candidateData.tipo_contacto)}</div>
+              <div class="diff-item"><strong>Institución/Empresa:</strong> ${this.escapeReporterText(candidateData.institution || candidateData.company_name)}</div>
+              <div class="diff-item"><strong>País:</strong> ${this.escapeReporterText(candidateData.country_name)}</div>
             </div>
 
             <div class="diff-col">
               <h5>Registro Existente en Sistema</h5>
-              <div class="diff-item"><strong>Nombre:</strong> ${existing.first_name} ${existing.last_name}</div>
-              <div class="diff-item"><strong>Correo:</strong> ${existing.email}</div>
-              <div class="diff-item"><strong>Tipo:</strong> ${existing.tipo_contacto}</div>
-              <div class="diff-item"><strong>Institución/Empresa:</strong> ${existing.institution || existing.company_name}</div>
-              <div class="diff-item"><strong>Registrado por:</strong> ${existing.created_by_name || 'Usuario institucional'}</div>
+              <div class="diff-item"><strong>Nombre:</strong> ${this.escapeReporterText(existing.first_name)} ${this.escapeReporterText(existing.last_name)}</div>
+              <div class="diff-item"><strong>Correo:</strong> ${this.escapeReporterText(existing.email)}</div>
+              <div class="diff-item"><strong>Tipo:</strong> ${this.escapeReporterText(existing.tipo_contacto)}</div>
+              <div class="diff-item"><strong>Institución/Empresa:</strong> ${this.escapeReporterText(existing.institution || existing.company_name)}</div>
+              <div class="diff-item"><strong>Registrado por:</strong> ${this.escapeReporterText(existing.created_by_name || 'Usuario institucional')}</div>
               <div class="diff-item"><strong>Fecha de registro:</strong> ${new Date(existing.created_at).toLocaleDateString()}</div>
             </div>
           </div>

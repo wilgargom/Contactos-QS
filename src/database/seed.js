@@ -57,6 +57,9 @@ function seedDatabase() {
         salt = '', rol = 'ADMIN', activo = excluded.activo, sede_id = NULL, departamento_id = NULL
     `).run(adminCredentials.id, adminCredentials.username, adminCredentials.passwordHash, new Date().toISOString(), configured ? 1 : 0);
 
+    // Ejemplos únicamente en pruebas aisladas; nunca en el arranque institucional.
+    if (process.env.NODE_ENV !== 'test' || process.env.QS_SEED_DEMO !== '1') return;
+
     // 4. Contactos iniciales de prueba (para demostración inmediata de filtros, duplicados y exportación)
     const initialContacts = [
       {

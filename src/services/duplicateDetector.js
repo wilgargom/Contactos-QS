@@ -8,25 +8,17 @@ function levenshteinDistance(a, b) {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
 
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
-  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
-
+  let previous = Array.from({ length: a.length + 1 }, (_, i) => i);
   for (let i = 1; i <= b.length; i++) {
+    const current = [i];
     for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1, // sustitución
-          matrix[i][j - 1] + 1,     // inserción
-          matrix[i - 1][j] + 1      // eliminación
-        );
-      }
+      current[j] = Math.min(current[j - 1] + 1, previous[j] + 1,
+        previous[j - 1] + (b[i - 1] === a[j - 1] ? 0 : 1));
     }
+    previous = current;
   }
+  return previous[a.length];
 
-  return matrix[b.length][a.length];
 }
 
 /**
@@ -106,7 +98,7 @@ function checkDuplicate(candidate, excludeId = null) {
     queryAll += ' AND id != ?';
     paramsAll.push(excludeId);
   }
-  const allContacts = db.prepare(queryAll).all(...paramsAll);
+  const allContacts = db.prepare(queryAll).iterate(...paramsAll);
 
   let bestMatch = null;
   let highestScore = 0;

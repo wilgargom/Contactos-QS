@@ -137,7 +137,11 @@ function validateContact(data, tipo) {
   const warnings = {};
   const sanitized = {};
 
-  const contactType = (tipo || data.tipo_contacto || '').toUpperCase();
+  if (!data || typeof data !== 'object' || Array.isArray(data) ||
+      Object.values(data).some(value => value !== null && value !== undefined && !['string', 'number', 'boolean'].includes(typeof value))) {
+    return { isValid: false, errors: { datos: 'Los campos deben contener valores simples.' }, warnings, sanitized };
+  }
+  const contactType = String(tipo || data.tipo_contacto || '').toUpperCase();
   if (!['ACADEMICO', 'EMPLEADOR'].includes(contactType)) {
     errors.tipo_contacto = 'El tipo de contacto debe ser "Académico" o "Empleador".';
     return { isValid: false, errors, warnings, sanitized };
@@ -310,6 +314,9 @@ function validateContact(data, tipo) {
   sanitized.sede_id = data.sede_id || null;
   sanitized.departamento_id = data.departamento_id || null;
 
+  for (const [field, value] of Object.entries(sanitized)) {
+    if (typeof value === 'string' && value.length > 500) errors[field] = 'El campo no debe superar 500 caracteres.';
+  }
   const isValid = Object.keys(errors).length === 0;
   return { isValid, errors, warnings, sanitized };
 }

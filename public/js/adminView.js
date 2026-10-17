@@ -105,7 +105,7 @@ const AdminModule = {
                 <tbody>
                   ${porSede.map(s => `
                     <tr>
-                      <td>${s.sede}</td>
+                      <td>${DirectoryModule.escapeSelectionText(s.sede)}</td>
                       <td style="text-align: right;"><strong>${s.count}</strong></td>
                     </tr>
                   `).join('')}
@@ -127,7 +127,7 @@ const AdminModule = {
                 <tbody>
                   ${porDepto.map(d => `
                     <tr>
-                      <td>${d.departamento}</td>
+                      <td>${DirectoryModule.escapeSelectionText(d.departamento)}</td>
                       <td style="text-align: right;"><strong>${d.count}</strong></td>
                     </tr>
                   `).join('')}
@@ -157,7 +157,7 @@ const AdminModule = {
 
           <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-lg text-xs">
             <div><strong>Modo Almacenamiento:</strong> <code class="text-blue-900">${this.driveStatus.mode}</code></div>
-            <div><strong>Carpeta Destino Drive:</strong> <code class="text-slate-600">${this.driveStatus.targetSharedDrive}</code></div>
+            <div><strong>Carpeta Destino Drive:</strong> <code class="text-slate-600">${DirectoryModule.escapeSelectionText(this.driveStatus.targetSharedDrive)}</code></div>
             <div><strong>Evidencias Archivadas:</strong> <strong>${this.driveStatus.stagedArchivesCount}</strong> archivos</div>
             <div><strong>Copias Respaldo BD:</strong> <strong>${this.driveStatus.backupsCount}</strong> respaldos</div>
           </div>

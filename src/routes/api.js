@@ -42,7 +42,7 @@ function authenticate(req, res, next) {
     return res.status(401).json({ success: false, message: 'Autenticación requerida.' });
   }
 
-  const user = authService.getSessionUser(token);
+  const user = authService.getSessionUser(token, { touch: true });
   if (!user) {
     return res.status(401).json({ success: false, message: 'Sesión expirada o inválida.' });
   }
@@ -132,6 +132,7 @@ function handleApi(req, res, pathname, query, body, user) {
       titulos: TITLES,
       areas_qs: QS_SUBJECTS,
       industrias_qs: QS_INDUSTRIES,
+      limits: { max_import_rows: config.MAX_IMPORT_ROWS, max_file_bytes: 5 * 1024 * 1024 },
       source_default: config.SOURCE_NAME
     });
   }
@@ -406,6 +407,9 @@ function handleApi(req, res, pathname, query, body, user) {
 
     // Analizar filas una a una
     const totalFilas = parsed.rows.length;
+    if (totalFilas > config.MAX_IMPORT_ROWS) {
+      return res.status(413).json({ success: false, message: `Divida el archivo en lotes de hasta ${config.MAX_IMPORT_ROWS} filas.` });
+    }
     if (totalFilas === 0) {
       return res.status(400).json({ success: false, message: 'El archivo Excel no contiene filas de datos.' });
     }
@@ -644,8 +648,8 @@ function handleApi(req, res, pathname, query, body, user) {
     }
 
     const { rowsToImport, fileName, tipo_contacto, fileBase64 } = body;
-    if (!rowsToImport || !Array.isArray(rowsToImport) || rowsToImport.length === 0) {
-      return res.status(400).json({ success: false, message: 'No se seleccionaron filas válidas para importar.' });
+    if (!rowsToImport || !Array.isArray(rowsToImport) || rowsToImport.length === 0 || rowsToImport.length > config.MAX_IMPORT_ROWS) {
+      return res.status(400).json({ success: false, message: `Seleccione entre 1 y ${config.MAX_IMPORT_ROWS} filas por carga.` });
     }
 
     const loteId = crypto.randomUUID();
@@ -678,8 +682,8 @@ function handleApi(req, res, pathname, query, body, user) {
       });
     }
 
-    if (!['ACADEMICO', 'EMPLEADOR'].includes(tipo_contacto) || rowsToImport.length > 10000) {
-      return res.status(400).json({ success: false, message: 'Indique un tipo válido y hasta 10000 filas por importación.' });
+    if (!['ACADEMICO', 'EMPLEADOR'].includes(tipo_contacto)) {
+      return res.status(400).json({ success: false, message: 'Indique un tipo de contacto válido.' });
     }
     let importedCount = 0;
 

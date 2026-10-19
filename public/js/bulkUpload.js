@@ -749,6 +749,7 @@ const BulkUploadModule = {
 
               <p class="text-xs text-slate-500 mt-2">
                 Formatos permitidos: Hojas de cálculo Excel (.xlsx, .xls) o texto delimitado por comas (.csv).
+                Máximo 5 MB y ${this.catalogs?.limits?.max_import_rows || 2000} filas por carga.
               </p>
             </div>
           </div>
@@ -783,20 +784,22 @@ const BulkUploadModule = {
     }
     const file = event.target.files[0];
     if (!file) return;
+    if (file.size > (this.catalogs?.limits?.max_file_bytes || 5 * 1024 * 1024)) {
+      App.showToast('El archivo supera 5 MB. Divídalo en cargas menores.', 'warning');
+      event.target.value = '';
+      return;
+    }
 
     this.selectedFile = file;
+    const sessionVersion = App.sessionVersion;
     const reader = new FileReader();
     reader.onload = (e) => {
-      const arrayBuf = e.target.result;
-      let binary = '';
-      const bytes = new Uint8Array(arrayBuf);
-      for (let i = 0; i < bytes.byteLength; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      this.fileBase64 = btoa(binary);
+      if (App.suspended || sessionVersion !== App.sessionVersion || this.selectedFile !== file) return;
+      this.fileBase64 = String(e.target.result).split(',')[1];
       this.analyzeFile();
     };
-    reader.readAsArrayBuffer(file);
+    reader.onerror = () => App.showToast('No se logró leer el archivo. Selecciónelo nuevamente.', 'error');
+    reader.readAsDataURL(file);
   },
 
   async analyzeFile() {

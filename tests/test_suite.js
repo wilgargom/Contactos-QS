@@ -264,7 +264,7 @@ test('migración conserva contactos, retira sesiones antiguas y respeta vencimie
   db.prepare(`INSERT INTO usuarios (id, nombre_completo, email, password_hash, salt, rol, created_at)
     VALUES ('usr-admin-backup', 'Anterior', 'admin@tec.ac.cr', 'hash', 'salt', 'ADMIN', ?)`)
     .run(new Date().toISOString());
-  db.prepare('INSERT INTO sesiones VALUES (?, ?, ?, ?)').run(oldToken, 'usr-admin-backup',
+  db.prepare('INSERT INTO sesiones (token, usuario_id, expires_at, created_at) VALUES (?, ?, ?, ?)').run(oldToken, 'usr-admin-backup',
     new Date(Date.now() + 3600000).toISOString(), new Date().toISOString());
   db.prepare('UPDATE sesiones SET expires_at = ? WHERE token = ?').run('2000-01-01T00:00:00.000Z', login.cookies.split('=')[1]);
   const before = db.prepare('SELECT COUNT(*) n FROM contactos').get().n;
@@ -956,4 +956,152 @@ test('evidencia local no informa sincronización por la sola presencia de creden
     assert.equal(path.dirname(data.result.localPath), path.join(storage, 'drive_staging'));
     assert.equal(fs.readFileSync(data.result.localPath, 'utf8'), 'evidencia');
   } finally { fs.rmSync(storage, { recursive: true, force: true }); }
+});
+
+test('inactividad se verifica en servidor, las consultas no renuevan y reanudar conserva al usuario', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-idle-'));
+  const server = await startServer(storage, '0', true, { QS_SESSION_IDLE_MINUTES: '1' });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  t.after(async () => { db.close(); await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const guestToken = guest.cookies.split('=')[1];
+  assert.equal(guest.json().user.idle_timeout_ms, 60000);
+  const old = new Date(Date.now() - 40000).toISOString();
+  db.prepare('UPDATE sesiones SET last_activity_at = ? WHERE token = ?').run(old, guestToken);
+  assert.equal((await request(server, '/api/auth/me', 'GET', undefined, guest.cookies)).status, 200);
+  assert.equal(db.prepare('SELECT last_activity_at FROM sesiones WHERE token = ?').get(guestToken).last_activity_at, old);
+  assert.equal((await request(server, '/api/auth/activity', 'POST', {}, guest.cookies)).status, 200);
+  assert.ok(db.prepare('SELECT last_activity_at FROM sesiones WHERE token = ?').get(guestToken).last_activity_at > old);
+  const expired = new Date(Date.now() - 90000).toISOString();
+  db.prepare('UPDATE sesiones SET last_activity_at = ? WHERE token = ?').run(expired, guestToken);
+  assert.equal((await request(server, '/api/auth/me', 'GET', undefined, guest.cookies)).status, 401);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, guest.cookies)).status, 401);
+  assert.equal((await request(server, '/api/auth/activity', 'POST', {}, guest.cookies)).status, 401);
+  const resumed = await request(server, '/api/auth/guest', 'POST', {}, guest.cookies);
+  assert.equal(resumed.json().user.id, guest.json().user.id);
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const adminToken = admin.cookies.split('=')[1];
+  db.prepare('UPDATE sesiones SET last_activity_at = ? WHERE token = ?').run(expired, adminToken);
+  assert.equal((await request(server, '/api/stats', 'GET', undefined, admin.cookies)).status, 401);
+  assert.equal(db.prepare('SELECT token FROM sesiones WHERE token = ?').get(adminToken), undefined);
+  const loginAgain = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const both = `${guest.cookies}; ${loginAgain.cookies}`;
+  assert.equal((await request(server, '/api/auth/suspend', 'POST', {}, both)).status, 200);
+  assert.equal((await request(server, '/api/stats', 'GET', undefined, loginAgain.cookies)).status, 401);
+  assert.equal((await request(server, '/api/contacts', 'GET', undefined, guest.cookies)).status, 401);
+});
+
+test('veinte usuarios simultáneos guardan contactos independientes con auditoría y sin perder datos', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-users-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guests = await Promise.all(Array.from({ length: 20 }, () => request(server, '/api/auth/guest', 'POST')));
+  assert.ok(guests.every(r => r.status === 200));
+  assert.equal(new Set(guests.map(r => r.json().user.id)).size, 20);
+  const saved = await Promise.all(guests.map((g, i) => request(server, '/api/contacts', 'POST', {
+    tipo_contacto: 'EMPLEADOR', title: 'Mr', first_name: `Nombre${i}`, last_name: `Apellido${i}`,
+    email: `simultaneo${i}@empresa.example`, position: 'Director', company_name: `Empresa${i}`,
+    industry: 'Servicios', country_name: 'Costa Rica', recomienda_email: 'cbrenes@itcr.ac.cr', allow_duplicate_override: true
+  }, g.cookies)));
+  assert.ok(saved.every(r => r.status === 201), saved.map(r => r.text).join('\n'));
+  const lists = await Promise.all(guests.map(g => request(server, '/api/contacts', 'GET', undefined, g.cookies)));
+  for (let i = 0; i < lists.length; i++) {
+    assert.equal(lists[i].json().count, 1);
+    const contact = lists[i].json().contacts[0];
+    assert.equal(contact.email, `simultaneo${i}@empresa.example`);
+    const detail = (await request(server, `/api/contacts/${contact.id}`, 'GET', undefined, guests[i].cookies)).json();
+    assert.equal(detail.auditHistory.length, 1);
+  }
+});
+
+test('base ocupada no bloquea HTTP y la cola llena responde 503 sin ejecutar solicitudes adicionales', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-backpressure-'));
+  const server = await startServer(storage, '0', true, { QS_MAX_API_QUEUE: '2' });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  t.after(async () => {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+    db.close(); await server.stop(); fs.rmSync(storage, { recursive: true, force: true });
+  });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  db.exec('BEGIN EXCLUSIVE');
+  const active = request(server, '/api/contacts', 'GET', undefined, guest.cookies);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const queued = Array.from({ length: 4 }, () => request(server, '/api/contacts', 'GET', undefined, guest.cookies));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const started = Date.now();
+  const health = await request(server, '/api/health');
+  assert.equal(health.status, 200);
+  assert.ok(Date.now() - started < 1500, 'HTTP debe responder mientras SQLite espera el bloqueo');
+  db.exec('COMMIT');
+  assert.equal((await active).status, 200);
+  const results = await Promise.all(queued);
+  assert.equal(results.filter(r => r.status === 503).length, 2);
+  assert.ok(results.filter(r => r.status === 503).every(r => r.headers['retry-after'] === '3'));
+  assert.equal(results.filter(r => r.status === 200).length, 2);
+});
+
+test('limita cargas por filas, bytes y expansión de Excel antes de guardar', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-limits-'));
+  const server = await startServer(storage, '0', true, { QS_MAX_IMPORT_ROWS: '2' });
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const excessive = await request(server, '/api/bulk/import', 'POST', {
+    tipo_contacto: 'EMPLEADOR', recomienda_email: 'cbrenes@itcr.ac.cr', rowsToImport: [{}, {}, {}]
+  }, guest.cookies);
+  assert.equal(excessive.status, 400);
+  const oversized = await request(server, '/api/contacts', 'POST', {}, guest.cookies, { 'Content-Length': String(9 * 1024 * 1024) });
+  assert.equal(oversized.status, 413);
+  const { createZip, readZip } = require(path.join(appRoot, 'src/utils/zip'));
+  const compressed = createZip([{ name: 'xl/worksheets/sheet1.xml', data: Buffer.alloc(25 * 1024 * 1024, 65) }]);
+  assert.throws(() => readZip(compressed), /24 MB/);
+  assert.equal((await request(server, '/api/health')).status, 200);
+});
+
+test('sesión inactiva deja de consultar y reanuda solo por acción explícita, coordinando pestañas', async () => {
+  const vm = require('node:vm');
+  let now = 1000000;
+  const saved = new Map(); const timers = new Map(); const nodes = new Map(); const events = {};
+  let timerId = 0; let captured = 0;
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { id, textContent: '', innerHTML: '', style: {}, hidden: false,
+      classList: { add() {}, remove() {} }, replaceChildren() {}, close() {}, reset() {}, focus() {},
+      addEventListener(name, cb) { events[`${id}:${name}`] = cb; }, remove() { nodes.delete(id); } });
+    return nodes.get(id);
+  };
+  const calls = [];
+  const context = vm.createContext({ console, Date: class extends Date { static now() { return now; } },
+    setTimeout: (cb, ms) => { timers.set(++timerId, { cb, ms }); return timerId; }, clearTimeout: id => timers.delete(id),
+    localStorage: { setItem: (k, v) => saved.set(k, v), getItem: k => saved.get(k), removeItem: k => saved.delete(k) },
+    window: { addEventListener: (event, cb) => { events[event] = cb; } },
+    document: { getElementById: node, addEventListener: (event, cb) => { events[event] = cb; },
+      createElement: () => node('session-suspended'), body: { appendChild() {} } },
+    RegisterModule: { captureDraft() { captured++; }, resetReporter() {} },
+    BulkUploadModule: { resetReporter() {} }, DirectoryModule: { selectedIds: new Set() }, AdminModule: {},
+    API: { post: async endpoint => { calls.push(endpoint); return { user: { id: 'same-guest', rol: 'USUARIO', idle_timeout_ms: 60000 } }; } }
+  });
+  vm.runInContext(fs.readFileSync(path.join(appRoot, 'public/js/app.js'), 'utf8') + '\nglobalThis.app = App;', context);
+  const app = context.app;
+  app.currentUser = { id: 'admin', rol: 'ADMIN', idle_timeout_ms: 60000 }; app.catalogs = {};
+  app.navigate = () => {};
+  app.startSessionMonitor();
+  assert.equal(calls.length, 0); // No hay consultas periódicas al servidor.
+  now += 60001;
+  saved.set(app.activityKey, String(now - 10000)); // Otra pestaña sí estuvo activa.
+  app.scheduleIdleCheck();
+  assert.equal(app.suspended, false);
+  now += 60001;
+  app.scheduleIdleCheck();
+  await Promise.resolve();
+  assert.equal(app.suspended, true);
+  assert.equal(app.currentUser, null);
+  assert.equal(captured, 1);
+  assert.deepEqual(calls, ['/api/auth/suspend']);
+  events.focus(); app.noteActivity();
+  assert.equal(calls.length, 1);
+  await app.resumeSession();
+  assert.equal(app.suspended, false);
+  assert.equal(app.currentUser.rol, 'USUARIO');
+  assert.deepEqual(calls, ['/api/auth/suspend', '/api/auth/guest']);
 });

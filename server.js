@@ -6,6 +6,7 @@ const os = require('node:os');
 const config = require('./src/config');
 const { getDb } = require('./src/database/db');
 const { seedDatabase } = require('./src/database/seed');
+const { ApiDispatcher } = require('./src/apiDispatcher');
 
 // MIME Types para servidor estático
 const MIME_TYPES = {
@@ -23,6 +24,8 @@ const MIME_TYPES = {
 // Inicializar base de datos y catálogos
 getDb();
 seedDatabase();
+const dispatcher = new ApiDispatcher();
+let bufferedBytes = 0;
 
 // =========================================================================
 // SISTEMA DE RECARGA EN CALIENTE (HOT-RELOAD) PARA MEJORAS CONTINUAS
@@ -34,13 +37,7 @@ if (config.HOT_RELOAD) {
   try {
     fs.watch(srcDir, { recursive: true }, (eventType, filename) => {
       if (filename) {
-        Object.keys(require.cache).forEach(modulePath => {
-          // Preservar conexión de base de datos sqlite en memoria para estabilidad
-          if (modulePath.startsWith(srcDir) && !modulePath.includes('db.js')) {
-            delete require.cache[modulePath];
-          }
-        });
-        console.log(`[Hot-Reload] ⚡ Mejora detectada en ${filename}. Módulos actualizados en tiempo real.`);
+        dispatcher.run({ kind: 'reload' }).catch(err => console.warn('Recarga aplazada:', err.message));
       }
     });
   } catch (err) {
@@ -48,16 +45,7 @@ if (config.HOT_RELOAD) {
   }
 }
 
-// Carga dinámica de rutas y autenticación
-function getRouteHandlers() {
-  return {
-    handleAuth: require('./src/routes/auth').handleAuth,
-    handleApi: require('./src/routes/api').handleApi,
-    authenticate: require('./src/routes/api').authenticate
-  };
-}
-
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   // CORS y encabezados de seguridad institucionales
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -83,10 +71,31 @@ const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
   const pathname = parsedUrl.pathname;
   const query = parsedUrl.query;
+  const taskInfo = { method: req.method, headers: req.headers,
+    socket: { remoteAddress: req.socket.remoteAddress, encrypted: Boolean(req.socket.encrypted) } };
+  const dispatch = async task => {
+    try {
+      const result = await dispatcher.run({ ...taskInfo, ...task }, task.bytes || 0);
+      if (res.destroyed) return;
+      res.statusCode = result.status;
+      for (const [name, value] of Object.entries(result.headers)) res.setHeader(name, value);
+      if (task.kind !== 'document') res.end(typeof result.body === 'string' ? result.body : Buffer.from(result.body));
+      return true;
+    } catch (err) {
+      if (!res.destroyed) {
+        res.setHeader('Retry-After', '3');
+        res.status(503).json({ success: false, message: err.message });
+      }
+      return false;
+    }
+  };
 
   // Rutas de API
   if (pathname.startsWith('/api/')) {
     res.setHeader('Cache-Control', 'no-store');
+    if (pathname === '/api/health' && req.method === 'GET') {
+      return res.status(dispatcher.ready ? 200 : 503).json({ success: dispatcher.ready, status: dispatcher.ready ? 'UP' : 'STARTING' });
+    }
     if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
       // Las cookies de sesión solo se utilizan en solicitudes del mismo sitio.
       const origin = req.headers.origin;
@@ -99,17 +108,35 @@ const server = http.createServer((req, res) => {
         return res.status(415).json({ success: false, message: 'Se requiere contenido JSON.' });
       }
     }
-    let bodyData = '';
+    const chunks = [];
+    let received = 0;
+    let failed = false;
+    const release = () => { bufferedBytes -= received; received = 0; chunks.length = 0; };
+    const rejectBody = (status, message) => {
+      if (failed) return;
+      failed = true; release();
+      res.setHeader('Connection', 'close');
+      res.status(status).json({ success: false, message });
+      req.resume();
+    };
+    if (Number(req.headers['content-length']) > config.MAX_BODY_BYTES) {
+      return rejectBody(413, 'La solicitud excede 8 MB. Divida el archivo en cargas menores.');
+    }
+    req.on('aborted', () => { failed = true; release(); });
+    req.on('error', () => { failed = true; release(); });
     req.on('data', chunk => {
-      bodyData += chunk;
-      // Protección contra archivos excesivamente grandes (> 35MB)
-      if (bodyData.length > 35 * 1024 * 1024) {
-        res.status(413).json({ success: false, message: 'El payload excede el límite máximo permitido (35MB).' });
-        req.destroy();
-      }
+      if (failed) return;
+      if (received + chunk.length > config.MAX_BODY_BYTES) return rejectBody(413, 'La solicitud excede 8 MB. Divida el archivo en cargas menores.');
+      if (bufferedBytes + dispatcher.bytes + chunk.length > config.MAX_BUFFERED_BYTES) return rejectBody(503, 'El servidor está ocupado. Intente nuevamente en unos segundos.');
+      received += chunk.length; bufferedBytes += chunk.length;
+      chunks.push(chunk);
     });
 
     req.on('end', () => {
+      if (failed) return;
+      const bytes = received;
+      const bodyData = Buffer.concat(chunks).toString('utf8');
+      release();
       let body = {};
       if (bodyData) {
         try {
@@ -123,44 +150,14 @@ const server = http.createServer((req, res) => {
         return res.status(400).json({ success: false, message: 'Se requiere un objeto JSON.' });
       }
 
-      req.query = query;
-      const routes = getRouteHandlers();
-
-      try {
-        // Endpoint público de salud
-        if (pathname === '/api/health') {
-          return res.json({ success: true, status: 'UP', timestamp: new Date().toISOString() });
-        }
-
-        // Autenticación pública
-        if (pathname.startsWith('/api/auth/')) {
-          return routes.handleAuth(req, res, pathname, query, body);
-        }
-
-        // Rutas protegidas de API
-        routes.authenticate(req, res, () => {
-          routes.handleApi(req, res, pathname, query, body, req.user);
-        });
-      } catch (err) {
-        console.error('Error no capturado en ruta API:', err);
-        if (!res.headersSent) {
-          res.status(500).json({ success: false, message: 'Error interno del servidor.' });
-        }
-      }
+      dispatch({ pathname, query, body, bytes });
     });
 
     return;
   }
 
   // Cada documento nuevo revoca la administración, incluso antes de ejecutar JavaScript.
-  const resetAdminForDocument = () => {
-    const auth = require('./src/services/authService');
-    const token = auth.readCookie(req, auth.COOKIE_NAMES.admin);
-    if (token) {
-      auth.logout(token);
-      auth.setSessionCookie(req, res, 'admin', '');
-    }
-  };
+  const resetAdminForDocument = async () => !req.headers.cookie?.includes('tec_qs_admin=') || dispatch({ kind: 'document' });
 
   // Servir archivos estáticos del frontend con prevención de caché antigua
   let filePath = path.join(config.PATHS.PUBLIC, pathname === '/' ? 'index.html' : pathname);
@@ -172,10 +169,10 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  fs.stat(filePath, (err, stats) => {
+  fs.stat(filePath, async (err, stats) => {
     if (err || !stats.isFile()) {
       // Fallback a index.html para Single Page Application
-      resetAdminForDocument();
+      if (!await resetAdminForDocument()) return;
       const indexPath = path.join(config.PATHS.PUBLIC, 'index.html');
       fs.readFile(indexPath, (readErr, content) => {
         if (readErr) {
@@ -193,7 +190,7 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    if (ext === '.html') resetAdminForDocument();
+    if (ext === '.html' && !await resetAdminForDocument()) return;
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
     res.writeHead(200, {
       'Content-Type': contentType,
@@ -210,7 +207,16 @@ const listenOptions = typeof config.PORT === 'number'
   ? { port: config.PORT, host: config.HOST }
   : { path: config.PORT };
 
-server.listen(listenOptions, () => {
+server.requestTimeout = 30000;
+server.headersTimeout = 15000;
+server.keepAliveTimeout = 5000;
+server.maxRequestsPerSocket = 100;
+server.on('close', () => dispatcher.close());
+process.once('SIGTERM', () => {
+  setTimeout(() => process.exit(0), 10000).unref();
+  server.close(async () => { await dispatcher.close(); process.exit(0); });
+});
+dispatcher.started.then(() => server.listen(listenOptions, () => {
   if (config.IS_AZURE) {
     console.log(`Contactos QS iniciado en Azure App Service (${process.version}).`);
     console.log(`Frontend: ${config.PATHS.PUBLIC}`);
@@ -249,6 +255,6 @@ server.listen(listenOptions, () => {
   console.log(`⚡ Modo Hot-Reload: ${config.HOT_RELOAD ? 'Activo' : 'Desactivado'}`);
   console.log(`📁 Directorio de Staging Drive: ${config.PATHS.DRIVE_STAGING}`);
   console.log(`================================================================`);
-});
+}));
 
 module.exports = server;

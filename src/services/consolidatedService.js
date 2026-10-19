@@ -20,6 +20,7 @@ function extractRows(buffer) {
       throw new Error(`La hoja «${sheet.name}» no contiene Escuela Proponente.`);
     }
     for (const raw of sheet.rows) {
+      if (rows.length >= config.MAX_IMPORT_ROWS) throw new Error(`Divida el consolidado en archivos de hasta ${config.MAX_IMPORT_ROWS} contactos.`);
       const fields = new Map(Object.entries(raw).map(([k, v]) => [normalize(k), String(v || '').trim()]));
       const pick = (...keys) => keys.map(k => fields.get(normalize(k))).find(Boolean) || '';
       const data = {

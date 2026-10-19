@@ -5,6 +5,11 @@ const App = {
   catalogs: null,
   activeTab: 'register',
   sidebarCollapsed: false,
+  suspended: false,
+  lastActivityAt: 0,
+  lastActivityRequest: 0,
+  lastActivityStored: 0,
+  activityKey: 'tec_qs_activity_at',
 
   async init() {
     this.initToastContainer();
@@ -117,6 +122,7 @@ const App = {
       });
       this.sessionVersion++;
       this.currentUser = result.user;
+      this.noteActivity(false);
       this.closeAdminLogin();
       this.updateRoleUI();
       this.navigate(this.activeTab);
@@ -152,6 +158,12 @@ const App = {
     }
     AdminModule.stats = null;
     AdminModule.driveStatus = null;
+    DirectoryModule.contacts = [];
+    DirectoryModule.selectedContact = null;
+    DirectoryModule.selectedIds.clear();
+    BulkUploadModule.selectedFile = null;
+    BulkUploadModule.fileBase64 = null;
+    BulkUploadModule.analysisResult = null;
   },
 
   async handleLogout() {
@@ -169,37 +181,111 @@ const App = {
   },
 
   startSessionMonitor() {
-    const check = async () => {
-      if (document.hidden || this.checkingSession || this.restoringSession) return;
-      this.checkingSession = true;
-      try {
-        const result = await API.get('/api/auth/me');
-        if (result.user.rol !== this.currentUser?.rol || result.user.id !== this.currentUser?.id) {
-          this.sessionVersion++;
-          this.currentUser = result.user;
-          this.clearAdminViews();
-          this.updateRoleUI();
-          this.navigate('register');
-        }
-      } catch (err) {
-        if (err.status === 401) {
-          try {
-            await this.restoreUserSession();
-            this.showToast('La sesión venció. Modo usuario activo.', 'info');
-          } catch (_) { /* Mantener las funciones administrativas bloqueadas. */ }
-        }
-      } finally { this.checkingSession = false; }
-    };
-    setInterval(check, 30000);
+    this.lastActivityRequest = Date.now();
+    this.noteActivity(false);
+    for (const event of ['pointerdown', 'keydown', 'input', 'wheel', 'touchstart']) {
+      document.addEventListener(event, event => {
+        if (event.isTrusted !== false) this.noteActivity();
+      }, { passive: true });
+    }
+    const check = () => { if (!this.suspended) this.scheduleIdleCheck(); };
     window.addEventListener('focus', check);
+    window.addEventListener('storage', event => { if (event.key === this.activityKey) check(); });
     window.addEventListener('pageshow', event => {
-      if (event.persisted) this.restoreUserSession();
+      if (this.suspended) return;
+      if (event.persisted && Date.now() - this.lastActivityAt < this.idleTimeoutMs) this.restoreUserSession();
       else check();
     });
     document.addEventListener('visibilitychange', check);
     document.getElementById('admin-login-dialog').addEventListener('close', () => {
       document.getElementById('admin-login-form').reset();
     });
+  },
+
+  noteActivity(notify = true) {
+    if (this.suspended || !this.currentUser) return;
+    this.idleTimeoutMs = this.currentUser.idle_timeout_ms || 15 * 60000;
+    this.lastActivityAt = Date.now();
+    if (this.lastActivityAt - this.lastActivityStored >= 2000 || !notify) {
+      try { localStorage.setItem(this.activityKey, String(this.lastActivityAt)); } catch (_) {}
+      this.lastActivityStored = this.lastActivityAt;
+    }
+    this.scheduleIdleCheck();
+    if (notify && !this.activityPending && Date.now() - this.lastActivityRequest >= 60000) {
+      this.lastActivityRequest = Date.now();
+      this.activityPending = true;
+      const version = this.sessionVersion;
+      API.post('/api/auth/activity').then(result => {
+        if (this.suspended || version !== this.sessionVersion) return;
+        if (result.user.id !== this.currentUser?.id || result.user.rol !== this.currentUser?.rol) {
+          this.sessionVersion++;
+          this.currentUser = result.user;
+          this.clearAdminViews();
+          this.updateRoleUI();
+          this.navigate('register');
+        }
+      }).catch(err => {
+        if (err.status === 401) this.suspendSession(false);
+      }).finally(() => { this.activityPending = false; });
+    }
+  },
+
+  scheduleIdleCheck() {
+    clearTimeout(this.idleTimer);
+    if (this.suspended) return;
+    try {
+      const shared = Number(localStorage.getItem(this.activityKey));
+      if (Number.isFinite(shared) && shared <= Date.now()) this.lastActivityAt = Math.max(this.lastActivityAt, shared);
+    } catch (_) {}
+    const remaining = this.lastActivityAt + this.idleTimeoutMs - Date.now();
+    if (remaining <= 0) { this.suspendSession(); return; }
+    this.idleTimer = setTimeout(() => this.scheduleIdleCheck(), remaining);
+  },
+
+  async suspendSession(notify = true) {
+    if (this.suspended) return;
+    if (this.activeTab === 'register') RegisterModule.captureDraft();
+    this.suspended = true;
+    clearTimeout(this.idleTimer);
+    this.sessionVersion++;
+    this.currentUser = null;
+    RegisterModule.resetReporter();
+    BulkUploadModule.resetReporter();
+    this.clearAdminViews();
+    document.getElementById('register-view')?.replaceChildren();
+    this.updateRoleUI();
+    document.getElementById('admin-login-dialog')?.close();
+    const overlay = document.createElement('div');
+    overlay.id = 'session-suspended';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#f1f5f9;display:grid;place-items:center;padding:24px';
+    overlay.innerHTML = `<div class="bg-white rounded-xl shadow p-8" role="dialog" aria-modal="true" aria-labelledby="idle-title">
+      <h2 id="idle-title" class="text-xl font-bold mb-3">Sesión suspendida por inactividad</h2>
+      <p class="mb-4">El borrador del contacto se conserva. Reanude para continuar; el acceso administrativo requiere autenticación.</p>
+      <p id="session-resume-error" class="text-red-700 mb-3"></p>
+      <button id="session-resume" class="btn btn-tec" type="button">Reanudar sesión</button></div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('session-resume').addEventListener('click', () => this.resumeSession());
+    document.getElementById('session-resume').focus();
+    if (notify) { try { await API.post('/api/auth/suspend'); } catch (_) {} }
+  },
+
+  async resumeSession() {
+    const button = document.getElementById('session-resume');
+    button.disabled = true;
+    try {
+      const result = await API.post('/api/auth/guest');
+      this.currentUser = result.user;
+      this.suspended = false;
+      this.sessionVersion++;
+      this.lastActivityRequest = Date.now();
+      this.noteActivity(false);
+      if (!this.catalogs) this.catalogs = await API.get('/api/catalogs');
+      document.getElementById('session-suspended')?.remove();
+      this.updateRoleUI();
+      this.navigate('register');
+    } catch (err) {
+      document.getElementById('session-resume-error').textContent = err.message;
+    } finally { button.disabled = false; }
   },
 
   // Actualiza la interfaz del menú lateral según el rol activo (2 únicos roles: Administrador y Usuario)
@@ -235,6 +321,7 @@ const App = {
   },
 
   navigate(tabName) {
+    if (this.suspended) return;
     if (['admin', 'export'].includes(tabName) && this.currentUser?.rol !== 'ADMIN') tabName = 'register';
     this.activeTab = tabName;
 

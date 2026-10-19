@@ -14,6 +14,106 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('lector XLSX conserva columnas vacías, atributos de filas, texto enriquecido y encabezados posteriores', () => {
+  const { generateMultiSheetXlsx, parseXlsx, parseXlsxSheets } = require(path.join(appRoot, 'src/services/excelService'));
+  const { readZip, createZip } = require(path.join(appRoot, 'src/utils/zip'));
+  const buffer = generateMultiSheetXlsx([{ name: 'Académicos', headers: ['First Name', 'Last Name', 'Email', '', 'Subject', 'Escuela Proponente'],
+    rows: [['María Elena', 'Ejemplo', 'maria@example.org', '', 'Matemáticas', 'Escuela de Matemática']] }]);
+  const files = readZip(buffer);
+  let xml = files.get('xl/worksheets/sheet1.xml').toString();
+  xml = xml.replace('<c r="D1" t="inlineStr"><is><t></t></is></c>', '<c r="D1" s="0"/>')
+    .replace('<c r="D2" t="inlineStr"><is><t></t></is></c>', '<c r="D2"/>')
+    .replace('<row r="2">', '<row customHeight="1" r="2">')
+    .replace('<is><t>María Elena</t></is>', '<is><r><t>Mar&#237;a</t></r><r><t> Elena</t></r></is>');
+  files.set('xl/worksheets/sheet1.xml', Buffer.from(xml));
+  const fixed = parseXlsx(createZip([...files].map(([name, data]) => ({ name, data }))));
+  assert.equal(fixed.headers[3], ''); assert.equal(fixed.headers[4], 'Subject');
+  assert.equal(fixed.rows[0]['First Name'], 'María Elena');
+  assert.equal(fixed.rows[0].Subject, 'Matemáticas');
+  assert.equal(fixed.rows[0]['Escuela Proponente'], 'Escuela de Matemática');
+  const prefixed = generateMultiSheetXlsx([{ name: 'Académicos', headers: [], rows: [['Reporte institucional'],
+    ['Nombre', 'Apellidos', 'Correo', 'Escuela Proponente'], ['Ana', 'Ejemplo', 'ana@example.org', 'Unidad A']] }]);
+  const parsed = parseXlsxSheets(prefixed, { headerMatch: cells => cells.includes('Correo') })[0];
+  assert.equal(parsed.headerRowNum, 2); assert.equal(parsed.rows[0]._rowNum, 3);
+  assert.equal(parsed.rows[0].Nombre, 'Ana');
+});
+
+test('consolidado revalida identidad, errores críticos, pendientes optativos y cambios posteriores al análisis', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-consolidated-validation-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const { generateMultiSheetXlsx } = require(path.join(appRoot, 'src/services/excelService'));
+  const { readZip, createZip } = require(path.join(appRoot, 'src/utils/zip'));
+  const headers = ['Tratamiento', 'Nombres', 'Apellidos', 'Cargo', 'Industria', 'Empresa', 'País', 'Correo', 'Escuela Proponente', 'Año de reporte', 'Autorización de contacto'];
+  const row = (name, email, school = 'Escuela Uno') => ['Mr', name, 'Prueba', 'Director', 'Software', `Empresa ${name}`, 'Costa Rica', email, school, '2024', 'si'];
+  const valid = row('Completo', 'completo@example.org');
+  const pending = row('Pendiente', 'pendiente@example.org'); pending[0] = '';
+  const negative = row('Negativa', 'negativa@example.org'); negative[10] = 'no';
+  const rows = [valid, pending, row('Inválido', 'correo-mal'), row('Interno', 'interno@itcr.ac.cr'),
+    row('SinEscuela', 'escuela@example.org', ''), valid, row('Conflicto', 'conflicto@example.org'),
+    row('Conflicto', 'conflicto@example.org', 'Escuela Dos'), row('MismaPersona', 'uno@example.org'),
+    row('MismaPersona', 'otro@example.org'), negative, row('Fórmula', 'formula@example.org')];
+  const files = readZip(generateMultiSheetXlsx([{ name: 'Resumen Empleadores 22-25', headers, rows },
+    { name: 'Instrucciones', headers: ['Notas'], rows: [['No importar']] }]));
+  files.set('xl/worksheets/sheet1.xml', Buffer.from(files.get('xl/worksheets/sheet1.xml').toString()
+    .replace('<c r="D13" t="inlineStr"><is><t>Director</t></is></c>', '<c r="D13" t="str"><f>"Director"</f><v>Director</v></c>')));
+  const body = { fileName: 'historico.xlsx', fileBase64: createZip([...files].map(([name, data]) => ({ name, data }))).toString('base64') };
+  const analyze = () => request(server, '/api/bulk/consolidated/analyze', 'POST', body, admin.cookies);
+  const preview = (await analyze()).json();
+  assert.equal(preview.summary.totalAnalizados, 12);
+  assert.equal(preview.summary.nuevosCompletos, 1);
+  assert.equal(preview.summary.pendientesRevision, 1);
+  assert.equal(preview.summary.conErrores, 7);
+  assert.equal(preview.summary.posiblesDuplicados, 2);
+  assert.equal(preview.summary.duplicadosExactos, 1);
+  assert.equal(preview.sheets[1].ignored, true);
+  assert.ok(preview.analyzedRows.find(r => r.rowNum === 13).errors.some(e => /fórmula/.test(e)));
+  assert.ok(preview.analyzedRows.find(r => r.data.email === 'interno@itcr.ac.cr').errors.some(e => /institucional/.test(e)));
+  const before = (await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count;
+  const committed = await request(server, '/api/bulk/consolidated/import', 'POST', { ...body, analysisHash: preview.analysisHash }, admin.cookies);
+  assert.equal(committed.status, 200, committed.text); assert.equal(committed.json().importedCount, 1);
+  const stale = await request(server, '/api/bulk/consolidated/import', 'POST', { ...body, analysisHash: preview.analysisHash, includePending: true }, admin.cookies);
+  assert.equal(stale.status, 409);
+  const current = (await analyze()).json();
+  const withPending = await request(server, '/api/bulk/consolidated/import', 'POST', { ...body, analysisHash: current.analysisHash, includePending: true }, admin.cookies);
+  assert.equal(withPending.status, 200, withPending.text); assert.equal(withPending.json().importedCount, 1);
+  const all = (await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json();
+  assert.equal(all.count, before + 2);
+  const person = all.contacts.find(c => c.email === 'pendiente@example.org');
+  assert.equal(person.estado, 'NUEVO'); assert.equal(person.recomienda_nombre, 'Administrador');
+  const detail = (await request(server, `/api/contacts/${person.id}`, 'GET', undefined, admin.cookies)).json();
+  assert.ok(detail.auditHistory.some(a => String(a.detalles).includes('2024')));
+  const otherEmail = generateMultiSheetXlsx([{ name: 'Empleadores', headers, rows: [row('Completo', 'diferente@example.org')] }]);
+  const other = await request(server, '/api/bulk/consolidated/analyze', 'POST', { fileName: 'identidad.xlsx', fileBase64: otherEmail.toString('base64') }, admin.cookies);
+  assert.equal(other.json().analyzedRows[0].status, 'POSIBLE_DUPLICADO');
+  const ambiguous = generateMultiSheetXlsx([{ name: 'Empleadores', headers: [...headers, 'Email'], rows: [[...valid, 'otro@example.org']] }]);
+  const rejected = await request(server, '/api/bulk/consolidated/analyze', 'POST', { fileName: 'columnas.xlsx', fileBase64: ambiguous.toString('base64') }, admin.cookies);
+  assert.equal(rejected.status, 400); assert.match(rejected.json().message, /ambiguas/);
+});
+
+test('vista consolidada muestra contadores cero, filtros, paginación, escape y confirmación optativa de pendientes', async () => {
+  const vm = require('node:vm'); const calls = []; let allow = false;
+  const base = { status: 'CORRECTO', sheet: 'Empleadores', rowNum: 2, escuela: 'Escuela Uno', data: { first_name: 'Nombre', last_name: 'Prueba', email: 'persona@example.org', tipo_contacto: 'EMPLEADOR' }, errors: [], warnings: [] };
+  const analysis = { summary: { totalAnalizados: 56, correctos: 56, nuevosCompletos: 55, nuevos: 56, pendientesRevision: 1, actualizaciones: 0, conErrores: 0, posiblesDuplicados: 0, duplicadosExactos: 0 },
+    analysisHash: 'a'.repeat(64), analyzedRows: [...Array.from({ length: 55 }, (_, i) => ({ ...base, rowNum: i + 2 })), { ...base, status: 'PENDIENTE_REVISION', rowNum: 57, errors: ['Falta título'], escuela: '<img src=x onerror=alert(1)>' }], sheets: [] };
+  const context = vm.createContext({ console, window: { confirm: () => allow }, document: { getElementById: () => ({ disabled: false }) }, App: { currentUser: { rol: 'ADMIN' }, showToast() {}, navigate() {} },
+    API: { post: async (route, body) => { calls.push({ route, body }); return { success: true }; }, get: async () => ({}) } });
+  vm.runInContext(fs.readFileSync(path.join(appRoot, 'public/js/bulkUpload.js'), 'utf8') + '\nglobalThis.bulk=BulkUploadModule', context);
+  const bulk = context.bulk; bulk.analysisResult = analysis; bulk.fileBase64 = 'base64'; bulk.selectedFile = { name: 'archivo.xlsx' }; bulk.tipoContacto = 'CONSOLIDADO';
+  bulk.render = () => {};
+  assert.equal(bulk.escapeReporterText(0), '0');
+  let html = bulk.renderConsolidatedAnalysisView();
+  assert.match(html, /Error crítico \(0\)/); assert.match(html, /Confirmar carga \(55\)/);
+  assert.equal((html.match(/persona@example.org/g) || []).length, 50);
+  bulk.filterConsolidated('status', 'PENDIENTE_REVISION'); html = bulk.renderConsolidatedAnalysisView();
+  assert.match(html, /Falta título/); assert.match(html, /&lt;img/); assert.doesNotMatch(html, /<img src=x/);
+  await bulk.confirmConsolidatedImport(); assert.equal(calls.length, 0);
+  allow = true; bulk.includeConsolidatedPending = true;
+  await bulk.confirmConsolidatedImport(); assert.equal(calls.length, 1);
+  assert.equal(calls[0].body.includePending, true); assert.equal(calls[0].body.analysisHash, analysis.analysisHash);
+});
+
 test('lotes QS: generación sin cambios, descarga íntegra, confirmación explícita e idempotente y versiones', async t => {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-batches-'));
   const server = await startServer(storage);
@@ -636,7 +736,7 @@ test('consolidado exclusivo del administrador: dos hojas, Escuela Proponente y a
   assert.equal(preview.json().summary.duplicadosExactos, 2);
   const before = (await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count;
   const imported = await request(server, '/api/bulk/consolidated/import', 'POST', {
-    ...body, rowsToImport: [{ escuela: 'Dato manipulado' }], departamento_id: 'dep-inter'
+    ...body, includePending: true, rowsToImport: [{ escuela: 'Dato manipulado' }], departamento_id: 'dep-inter'
   }, admin.cookies);
   assert.equal(imported.status, 200, imported.text);
   assert.equal(imported.json().importedCount, 3);

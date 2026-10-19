@@ -148,12 +148,13 @@ function handleApi(req, res, pathname, query, body, user) {
       const buffer = Buffer.from(body.fileBase64, 'base64');
       const service = require('../services/consolidatedService');
       if (pathname.endsWith('/analyze')) return res.json(service.analyzeConsolidated(buffer));
-      const result = service.importConsolidated(buffer, body.fileName, user);
+      if (body.includePending !== undefined && typeof body.includePending !== 'boolean') throw new Error('La opción de registros pendientes debe ser verdadera o falsa.');
+      const result = service.importConsolidated(buffer, body.fileName, user, { includePending: body.includePending, analysisHash: body.analysisHash });
       driveService.saveDocumentArchive(body.fileName, buffer, 'CONSOLIDADO_ADMIN')
         .catch(err => console.error('Error al archivar consolidado:', err.message));
       return res.json(result);
     } catch (err) {
-      return res.status(400).json({ success: false, message: err.message });
+      return res.status(err.statusCode || 400).json({ success: false, message: err.message });
     }
   }
 

@@ -28,6 +28,14 @@ Los registros previos a esta actualización quedan sin campaña asignada. Los nu
 
 Preparar un lote genera el Excel, su huella SHA-256 y el manifiesto de contactos y versiones. Descargarlo registra la recepción en el navegador, no garantiza que se haya guardado en disco. Solo después del envío externo, el administrador confirma que lo envió a QS. La aplicación no transmite el archivo a QS. Si un contacto cambió o fue eliminado desde la preparación, se rechaza la confirmación y se requiere un lote nuevo. Los estados históricos de contactos anteriores no se reinterpretan.
 
+## Revisión del consolidado institucional
+
+La carga consolidada es exclusiva de Administración y admite libros `.xlsx` con hojas identificadas como académicos o empleadores. Reconoce las columnas del archivo institucional, incluidos `mail`, `Country`, `Subject` y `Escuela Proponente`, admite equivalentes en español y detecta encabezados en las primeras veinte filas. Las celdas vacías no desplazan las columnas. Las columnas ambiguas bloquean el análisis; las fórmulas o errores de Excel en datos utilizados bloquean la fila y requieren convertir los datos a valores corregidos.
+
+La vista muestra las hojas y columnas reconocidas, contadores, filtros, búsqueda, diagnóstico por fila y páginas de cincuenta registros. Los filtros solo modifican la vista; la confirmación indica el alcance total de la operación. Por defecto se incorporan contactos completos y se actualizan procedencias existentes; los registros históricos incompletos requieren marcar una opción expresa y quedan en estado NUEVO, fuera de la exportación QS. Correos inválidos o del TEC, escuelas ausentes, negativas explícitas de autorización, conflictos de tipo y coincidencias ambiguas se omiten hasta corregirlos. Una celda sin autorización no se interpreta como aprobación.
+
+La procedencia queda como Administrador y cada fila conserva su Escuela Proponente para la agrupación institucional. El año, director y autorización originales quedan en la auditoría, sin inferir información ausente. Coincidencias de nombre y organización con correos diferentes requieren revisión, mientras que una actualización de procedencia conserva los datos del contacto existente. Al confirmar se vuelve a analizar el archivo dentro de la transacción; la vista envía una huella del análisis y, si cambió la clasificación o la versión de un contacto que se actualizaría, se rechaza la carga para solicitar un análisis nuevo.
+
 ## Incidencias e identidad institucional
 
 Los fallos internos de las operaciones nuevas y del despachador devuelven una referencia para soporte. El panel muestra las incidencias recientes; los archivos técnicos rotan con un límite aproximado de 4 MB y omiten cuerpos, contraseñas y mensajes crudos de las excepciones. Los errores de validación se presentan al usuario sin registrarlos como fallos técnicos.

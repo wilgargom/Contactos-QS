@@ -888,10 +888,10 @@ const BulkUploadModule = {
       <div class="flex gap-2 flex-wrap mb-4" role="group" aria-label="Filtrar por resultado">
         ${Object.entries(totals).map(([key, total]) => `<button type="button" class="btn btn-sm ${this.activeFilter === key ? 'btn-tec' : 'btn-outline'}" aria-pressed="${this.activeFilter === key}" onclick="BulkUploadModule.filterConsolidated('status','${key}')">${esc(labels[key] || 'Todos')} (${esc(total)})</button>`).join('')}
       </div><div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-      <div><label class="form-label" for="consolidated-sheet">Hoja del archivo</label><select id="consolidated-sheet" class="form-control" onchange="BulkUploadModule.filterConsolidated('sheet',this.value)"><option value="">Todas las hojas</option>
+      <div><label class="form-label block" for="consolidated-sheet">Hoja del archivo</label><select id="consolidated-sheet" class="form-control w-full" onchange="BulkUploadModule.filterConsolidated('sheet',this.value)"><option value="">Todas las hojas</option>
       ${sheets.filter(s => !s.ignored).map(s => `<option value="${esc(s.name)}" ${s.name === this.consolidatedSheet ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
-      <div><label class="form-label" for="consolidated-query">Buscar contacto, escuela o diagnóstico</label><input type="search" id="consolidated-query" class="form-control" value="${esc(this.consolidatedQuery)}" onchange="BulkUploadModule.filterConsolidated('query',this.value)"></div></div>
-      <div class="table-responsive max-h-96 overflow-y-auto"><table class="data-table"><thead><tr>
+      <div><label class="form-label block" for="consolidated-query">Buscar contacto, escuela o diagnóstico</label><input type="search" id="consolidated-query" class="form-control w-full" value="${esc(this.consolidatedQuery)}" onchange="BulkUploadModule.filterConsolidated('query',this.value)"></div></div>
+      <div class="table-responsive max-h-96 overflow-y-auto"><table class="data-table-fit" style="min-width:900px"><colgroup><col style="width:10%"><col style="width:13%"><col style="width:19%"><col style="width:15%"><col style="width:16%"><col style="width:27%"></colgroup><thead><tr>
         <th>Hoja / fila Excel</th><th>Estado</th><th>Contacto / correo</th><th>Institución / Empresa</th><th>Escuela Proponente</th><th>Diagnóstico / corrección</th>
       </tr></thead><tbody>${displayed.map(r => `<tr>
         <td>${esc(r.sheet)}<br><strong>#${esc(r.rowNum)}</strong><br><small>Año de reporte: ${esc(r.metadata?.year || 'Sin dato')}</small></td>

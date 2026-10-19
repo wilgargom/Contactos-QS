@@ -38,12 +38,13 @@ parentPort.on('message', task => {
     const { authenticate, handleApi } = require('./routes/api');
     authenticate(req, res, () => handleApi(req, res, task.pathname, task.query, task.body, req.user));
   } catch (err) {
+    const errorId = require('./services/errorService').recordError(err, task);
     const busy = /SQLITE_BUSY|database is locked/i.test(`${err.code} ${err.message}`);
     console.error('Operación API rechazada:', err.code || err.name);
     if (!sent) {
       if (busy) res.setHeader('Retry-After', '3');
       res.status(busy ? 503 : 500).json({ success: false,
-        message: busy ? 'La base está ocupada. Espere unos segundos antes de intentar nuevamente.' : 'Error interno del servidor.' });
+        message: busy ? 'La base está ocupada. Espere unos segundos antes de intentar nuevamente.' : 'Error interno del servidor.', errorId });
     }
   }
 });

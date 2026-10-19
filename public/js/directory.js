@@ -9,6 +9,8 @@ const DirectoryModule = {
     departamento_id: '',
     country_name: '',
     estado: '',
+    pendientes: '',
+    campania_id: '',
     fecha_inicio: '',
     fecha_fin: '',
     mis_registros_solamente: ''
@@ -99,6 +101,8 @@ const DirectoryModule = {
               <label class="form-label text-xs">Estado de Validación</label>
               <select class="form-control" id="dir-filter-estado">
                 <option value="">Todos los estados</option>
+                <option value="NUEVO">Incompleto / nuevo</option>
+                <option value="PENDIENTES">Todos los pendientes de revisión</option>
                 <option value="VALIDADO">Validado</option>
                 <option value="POSIBLE_DUPLICADO">Posible duplicado</option>
                 <option value="DUPLICADO">Duplicado</option>
@@ -126,6 +130,10 @@ const DirectoryModule = {
             </div>
 
             <!-- País -->
+            <div class="form-group"><label class="form-label text-xs" for="dir-filter-campaign">Campaña</label>
+              <select id="dir-filter-campaign" class="form-control"><option value="">Todas las campañas</option>
+              <option value="SIN_ASIGNAR">Sin campaña asignada</option>
+              ${(this.catalogs?.campanias || []).map(c => `<option value="${this.escapeSelectionText(c.id)}">${this.escapeSelectionText(c.nombre)}</option>`).join('')}</select></div>
             <div class="form-group sm:col-span-2">
               <label class="form-label text-xs">País</label>
               <select class="form-control" id="dir-filter-pais">
@@ -175,6 +183,8 @@ const DirectoryModule = {
     `;
 
     this.attachFilterEvents();
+    document.getElementById('dir-filter-estado').value = this.filters.pendientes === 'true' ? 'PENDIENTES' : this.filters.estado;
+    document.getElementById('dir-filter-campaign').value = this.filters.campania_id || '';
   },
 
   attachFilterEvents() {
@@ -209,6 +219,9 @@ const DirectoryModule = {
     this.filters.q = document.getElementById('dir-filter-q')?.value.trim() || '';
     this.filters.tipo_contacto = document.getElementById('dir-filter-tipo')?.value || '';
     this.filters.estado = document.getElementById('dir-filter-estado')?.value || '';
+    this.filters.pendientes = this.filters.estado === 'PENDIENTES' ? 'true' : '';
+    if (this.filters.pendientes) this.filters.estado = '';
+    this.filters.campania_id = document.getElementById('dir-filter-campaign')?.value || '';
     this.filters.sede_id = document.getElementById('dir-filter-sede')?.value || '';
     this.filters.departamento_id = document.getElementById('dir-filter-depto')?.value || '';
     this.filters.country_name = document.getElementById('dir-filter-pais')?.value || '';

@@ -22,7 +22,9 @@ const API = {
     if (response.ok && (contentType.includes('spreadsheetml') || contentType.includes('octet-stream'))) {
       return { isBlob: true, blob: await response.blob(), response };
     }
-    const data = await response.json();
+    let data;
+    try { data = await response.json(); }
+    catch (_) { throw new Error('El servicio devolvió una respuesta inesperada. Revise la conexión y el estado de Azure.'); }
     if (!endpoint.startsWith('/api/auth/') && sessionVersion !== App.sessionVersion) {
       throw new Error('La sesión cambió. Actualice la consulta.');
     }
@@ -30,7 +32,7 @@ const API = {
       if (response.status === 401 && !endpoint.startsWith('/api/auth/')) {
         await App.suspendSession(false);
       }
-      const error = new Error(data.message || 'Error en la solicitud');
+      const error = new Error((data.message || 'Error en la solicitud') + (data.errorId ? ` Referencia: ${data.errorId}` : ''));
       error.data = data;
       error.status = response.status;
       throw error;

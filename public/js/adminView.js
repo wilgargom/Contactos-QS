@@ -3,6 +3,10 @@ const AdminModule = {
   stats: null,
   driveStatus: null,
   catalogs: null,
+  storage: null,
+  errors: [],
+  campaigns: [],
+  backupBusy: false,
 
   init(catalogs) {
     this.catalogs = catalogs;
@@ -11,12 +15,14 @@ const AdminModule = {
 
   async loadData() {
     try {
-      const [statsRes, driveRes] = await Promise.all([
-        API.get('/api/stats'),
-        API.get('/api/drive/status')
-      ]);
-      this.stats = statsRes.stats;
-      this.driveStatus = driveRes.drive;
+      const overview = await API.get('/api/admin/overview');
+      if (App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
+      this.stats = overview.stats;
+      this.driveStatus = overview.drive;
+      this.storage = overview.storage;
+      this.errors = overview.errors;
+      this.campaigns = overview.campaigns;
+      this.catalogs.campanias = overview.campaigns;
       this.render();
     } catch (err) {
       App.showToast('Error al cargar panel de administración: ' + err.message, 'error');
@@ -149,7 +155,7 @@ const AdminModule = {
                 ${this.driveStatus.architectureNote}
               </p>
             </div>
-            <button class="btn btn-tec btn-sm" onclick="AdminModule.triggerBackup()">
+            <button id="admin-backup-create" class="btn btn-tec btn-sm" onclick="AdminModule.triggerBackup()">
               <i class="fa-solid fa-database"></i>
               Generar Respaldo (.sqlite) Ahora
             </button>
@@ -162,20 +168,96 @@ const AdminModule = {
             <div><strong>Copias Respaldo BD:</strong> <strong>${this.driveStatus.backupsCount}</strong> respaldos</div>
           </div>
         </div>
+        ${this.renderOperations()}
       </div>
     `;
   },
 
   async triggerBackup() {
+    if (this.backupBusy) return;
+    this.backupBusy = true;
+    const button = document.getElementById('admin-backup-create');
+    if (button) button.disabled = true;
     try {
       App.showToast('Creando copia de respaldo física de la base de datos...', 'info');
       const res = await API.post('/api/drive/backup', {});
       if (res.success) {
         App.showToast(`✅ Respaldo exitoso: ${res.backupFileName} (${(res.sizeBytes / 1024).toFixed(1)} KB)`, 'success');
-        this.loadData();
+        await this.loadData();
       }
     } catch (err) {
       App.showToast('Error al generar respaldo: ' + err.message, 'error');
-    }
+    } finally { this.backupBusy = false; if (button) button.disabled = false; }
+  },
+
+  renderOperations() {
+    const esc = value => DirectoryModule.escapeSelectionText(value);
+    const size = value => `${(Number(value || 0) / 1024 / 1024).toFixed(2)} MB`;
+    const backups = this.storage?.backups || [];
+    const candidates = this.storage?.cleanupCandidates || [];
+    return `<section class="mt-6 border border-slate-200 rounded-xl p-5">
+      <h3 class="font-bold text-slate-900 mb-3">Respaldos y almacenamiento de datos</h3>
+      <p class="text-sm mb-3">Datos contabilizados: ${esc(size(this.storage?.totalBytes))} · Base de datos: ${esc(size(this.storage?.databaseBytes))}.</p>
+      <p class="text-xs text-slate-600 mb-4">Descargue una copia y consérvela en el repositorio institucional autorizado, el archivo contiene información sensible.
+      La restauración se realiza con el servicio detenido siguiendo la guía del proyecto.</p>
+      <div class="table-responsive"><table class="data-table"><thead><tr><th>Respaldo</th><th>Tamaño</th><th>Acción</th></tr></thead><tbody>
+      ${backups.map(f => `<tr><td class="break-all">${esc(f.name)}<br>${esc(new Date(f.modifiedAt).toLocaleString())}</td><td>${esc(size(f.bytes))}</td>
+      <td><button type="button" class="btn btn-outline btn-xs" onclick="AdminModule.downloadBackup('${encodeURIComponent(f.name).replace(/'/g, '%27')}')">Descargar copia</button></td></tr>`).join('')}
+      </tbody></table></div>
+      <h4 class="font-semibold mt-5 mb-2">Archivos antiguos para revisión</h4>
+      <p class="text-xs text-slate-600 mb-3">Se conservan al menos los tres respaldos más recientes, los lotes oficiales y todos los registros de la base,
+      únicamente se ofrecen archivos de más de 30 días para eliminación manual.</p>
+      <div class="table-responsive"><table class="data-table"><thead><tr><th>Archivo / categoría</th><th>Tamaño</th><th>Acción</th></tr></thead><tbody>
+      ${candidates.map(f => `<tr><td class="break-all">${esc(f.name)}<br>${esc(f.category)}</td><td>${esc(size(f.bytes))}</td>
+      <td><button type="button" class="btn btn-outline btn-xs" onclick="AdminModule.removeOldFile('${f.id}')">Revisar eliminación</button></td></tr>`).join('')}
+      </tbody></table></div></section>
+      <section class="mt-6 border border-slate-200 rounded-xl p-5"><h3 class="font-bold mb-3">Campañas y revisión</h3>
+      <p class="text-sm mb-3">Campaña activa: <strong>${esc(this.campaigns.find(c => c.activa)?.nombre || 'Sin campaña activa')}</strong>.</p>
+      <form onsubmit="event.preventDefault(); AdminModule.createCampaign();" class="flex flex-wrap gap-3 mb-4">
+      <label class="text-sm" for="admin-campaign-name">Nueva campaña</label>
+      <input id="admin-campaign-name" class="form-control" minlength="3" maxlength="100" required placeholder="Nombre del período de recolección">
+      <button class="btn btn-outline" type="submit">Crear y activar campaña</button></form>
+      <button class="btn btn-outline" type="button" onclick="AdminModule.reviewPending()">Revisar contactos incompletos o posibles duplicados</button>
+      <p class="text-xs text-slate-600 mt-4">La identificación del reportante se consulta en el padrón, la comprobación del buzón requiere habilitar el acceso o envío institucional.</p></section>
+      <section class="mt-6 border border-slate-200 rounded-xl p-5"><h3 class="font-bold mb-3">Incidencias técnicas recientes</h3>
+      <div class="table-responsive"><table class="data-table"><thead><tr><th>Fecha / referencia</th><th>Operación</th><th>Código</th></tr></thead><tbody>
+      ${(this.errors || []).slice(0, 15).map(e => `<tr><td>${esc(e.fecha)}<br>${esc(e.id)}</td><td>${esc(e.operacion)}</td><td>${esc(e.codigo)}</td></tr>`).join('')}
+      </tbody></table></div></section>`;
+  },
+
+  async downloadBackup(encodedName) {
+    try {
+      const name = decodeURIComponent(encodedName);
+      const response = await API.get('/api/admin/backups/download', { name });
+      const url = window.URL.createObjectURL(response.blob);
+      const anchor = document.createElement('a'); anchor.href = url; anchor.download = name;
+      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+    } catch (err) { App.showToast(err.message, 'error'); }
+  },
+
+  async removeOldFile(id) {
+    const file = this.storage?.cleanupCandidates.find(f => f.id === id);
+    if (!file || !window.confirm(`¿Eliminar definitivamente ${file.name}? Conserve una copia externa si la necesita, la eliminación no se revierte.`)) return;
+    try {
+      await API.post('/api/admin/storage/delete', { id, confirmed: true });
+      App.showToast('Archivo antiguo eliminado.', 'success'); await this.loadData();
+    } catch (err) { App.showToast(err.message, 'error'); }
+  },
+
+  async createCampaign() {
+    const name = document.getElementById('admin-campaign-name').value.trim();
+    if (!window.confirm(`¿Activar la campaña «${name}» para los contactos nuevos?`)) return;
+    try {
+      await API.post('/api/admin/campaigns', { name, confirmed: true });
+      await this.loadData();
+      App.showToast('Campaña activada.', 'success');
+    } catch (err) { App.showToast(err.message, 'error'); }
+  },
+
+  reviewPending() {
+    DirectoryModule.filters.estado = '';
+    DirectoryModule.filters.pendientes = 'true';
+    App.navigate('directory');
   }
 };

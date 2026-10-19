@@ -6,8 +6,7 @@
   <title>Sistema de Gestión de Contactos QS | Tecnológico de Costa Rica</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo_tec.svg">
 
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="css/tailwind.css">
 
   <!-- Font Awesome 6 Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -15,23 +14,6 @@
   <!-- Estilos Personalizados e Institucionales -->
   <link rel="stylesheet" href="css/styles.css">
 
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            tec: {
-              primary: '#002855',
-              dark: '#001A35',
-              light: '#0B4182',
-              accent: '#D97706',
-              surface: '#F8FAFC'
-            }
-          }
-        }
-      }
-    }
-  </script>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased">
 
@@ -196,6 +178,13 @@
          ======================================================================= -->
     <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8" style="height: calc(100vh - 64px);">
       <div class="max-w-7xl mx-auto space-y-6">
+        <details class="bg-white border border-slate-200 rounded-xl p-4 text-xs text-slate-600">
+          <summary class="cursor-pointer font-semibold text-slate-800">Uso de la información y atención de consultas</summary>
+          <p class="mt-2">El Tecnológico de Costa Rica utiliza la información de esta aplicación para gestionar contactos académicos y empleadores,
+            identificar la dependencia reportante y preparar los archivos del proceso QS, las operaciones quedan registradas en una auditoría.</p>
+          <p class="mt-2">Ingrese datos exactos y comparta únicamente información autorizada para esta finalidad,
+            para solicitar una corrección o plantear consultas sobre el tratamiento de los datos, contacte a la persona administradora institucional del proceso.</p>
+        </details>
         
         <!-- Vistas Modulares -->
         <section id="register-view"></section>

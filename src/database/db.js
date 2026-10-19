@@ -38,6 +38,26 @@ function getDb() {
       WHEN NEW.version = OLD.version BEGIN
         UPDATE contactos SET version = OLD.version + 1 WHERE id = NEW.id;
       END;`);
+    dbInstance.exec(`CREATE TABLE IF NOT EXISTS campanias (
+      id TEXT PRIMARY KEY, nombre TEXT NOT NULL, activa INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_campania_activa ON campanias(activa) WHERE activa = 1;
+      INSERT INTO campanias (id, nombre, activa, created_at)
+        SELECT 'camp-vigente', 'Recolección vigente', 1, datetime('now') WHERE NOT EXISTS (SELECT 1 FROM campanias);
+      CREATE TABLE IF NOT EXISTS exportaciones (
+        id TEXT PRIMARY KEY, tipo TEXT NOT NULL, estado TEXT NOT NULL,
+        archivo TEXT NOT NULL, sha256 TEXT NOT NULL, manifiesto TEXT NOT NULL,
+        total INTEGER NOT NULL, excluidos INTEGER NOT NULL, created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL, recibido_at TEXT, confirmado_at TEXT);`);
+    if (!columns.some(c => c.name === 'campania_id')) {
+      dbInstance.exec('ALTER TABLE contactos ADD COLUMN campania_id TEXT REFERENCES campanias(id)');
+    }
+    // Solo los registros nuevos reciben la campaña vigente; los anteriores conservan su contexto.
+    dbInstance.exec(`CREATE INDEX IF NOT EXISTS idx_contactos_campania ON contactos(campania_id);
+      CREATE TRIGGER IF NOT EXISTS contactos_campania AFTER INSERT ON contactos
+      WHEN NEW.campania_id IS NULL BEGIN
+        UPDATE contactos SET campania_id = (SELECT id FROM campanias WHERE activa = 1) WHERE id = NEW.id;
+      END;`);
 
     // Auto-migraciones para columnas de trazabilidad institucional
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN recomienda_nombre TEXT;'); } catch (_) {}

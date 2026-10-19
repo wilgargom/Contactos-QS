@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const url = require('node:url');
 const os = require('node:os');
+const crypto = require('node:crypto');
 const config = require('./src/config');
 const { getDb } = require('./src/database/db');
 const { seedDatabase } = require('./src/database/seed');
@@ -26,6 +27,16 @@ getDb();
 seedDatabase();
 const dispatcher = new ApiDispatcher();
 let bufferedBytes = 0;
+const assetHashes = new Map();
+function assetHash(relative) {
+  if (!assetHashes.has(relative)) assetHashes.set(relative,
+    crypto.createHash('sha256').update(fs.readFileSync(path.join(config.PATHS.PUBLIC, relative))).digest('hex').slice(0, 20));
+  return assetHashes.get(relative);
+}
+function versionDocument(content) {
+  return content.toString('utf8').replace(/((?:src|href)=")((?:css|js|assets)\/[^"?]+)(")/g,
+    (_, prefix, relative, end) => `${prefix}/${relative}?v=${assetHash(relative)}${end}`);
+}
 
 // =========================================================================
 // SISTEMA DE RECARGA EN CALIENTE (HOT-RELOAD) PARA MEJORAS CONTINUAS
@@ -84,7 +95,8 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       if (!res.destroyed) {
         res.setHeader('Retry-After', '3');
-        res.status(503).json({ success: false, message: err.message });
+        const errorId = require('./src/services/errorService').recordError(err, task);
+        res.status(503).json({ success: false, message: 'El servicio está ocupado o temporalmente no disponible. Intente nuevamente.', errorId });
       }
       return false;
     }
@@ -185,20 +197,33 @@ const server = http.createServer(async (req, res) => {
           'Pragma': 'no-cache',
           'Expires': '0'
         });
-        res.end(content);
+        res.end(versionDocument(content));
       });
       return;
     }
 
     if (ext === '.html' && !await resetAdminForDocument()) return;
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    if (ext !== '.html') {
+      const relative = path.relative(config.PATHS.PUBLIC, filePath).split(path.sep).join('/');
+      const hash = assetHash(relative);
+      const etag = `"${hash}"`;
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('ETag', etag);
+      res.setHeader('Cache-Control', query.v === hash ? 'public, max-age=31536000, immutable' : 'no-cache');
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304); return res.end(); }
+      return fs.createReadStream(filePath).pipe(res);
+    }
     res.writeHead(200, {
       'Content-Type': contentType,
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
       'Expires': '0'
     });
-    fs.createReadStream(filePath).pipe(res);
+    fs.readFile(filePath, (readErr, content) => {
+      if (readErr) return res.end();
+      res.end(versionDocument(content));
+    });
   });
 });
 

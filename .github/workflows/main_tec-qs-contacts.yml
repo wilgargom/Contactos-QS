@@ -25,6 +25,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24.x'
+      - name: Install build dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Compile static styles
+        run: npm run build:css
       - name: Test startup, frontend, API and persistent storage
         run: npm test
       - name: Prepare runtime files at package root
@@ -50,7 +54,8 @@ jobs:
         with:
           name: node-app
           path: app
-      # Este proyecto no tiene dependencias npm externas. El paquete incluye
+      # La ejecución no requiere dependencias externas; los estilos se compilan en CI.
+      # El paquete incluye
       # server.js, web.config, package.json, src/ y public/ en su raíz.
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3

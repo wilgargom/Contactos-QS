@@ -73,6 +73,7 @@ function handleApi(req, res, pathname, query, body, user) {
 
   // Las funciones del tablero, Drive, exportación QS y padrón masivo son administrativas.
   const adminOnly = pathname === '/api/stats' || pathname.startsWith('/api/drive/') ||
+    pathname.startsWith('/api/admin/') ||
     pathname === '/api/contacts/bulk-delete' ||
     (pathname === '/api/funcionarios' && method !== 'GET') ||
     pathname.startsWith('/api/bulk/consolidated/') ||
@@ -80,6 +81,54 @@ function handleApi(req, res, pathname, query, body, user) {
     (pathname.startsWith('/api/bulk/') && body.tipo_contacto === 'FUNCIONARIOS');
   if (adminOnly && user.rol !== 'ADMIN') {
     return res.status(403).json({ success: false, message: 'Se requiere una sesión de administrador.' });
+  }
+
+  if (pathname.startsWith('/api/admin/')) {
+    try {
+      const storage = require('../services/storageService');
+      const campaigns = require('../services/campaignService');
+      if (pathname === '/api/admin/overview' && method === 'GET') {
+        return res.json({ success: true, stats: contactService.getStatistics(), drive: driveService.getStatus(),
+          storage: storage.status(), campaigns: campaigns.listCampaigns(), errors: require('../services/errorService').listErrors() });
+      }
+      if (pathname === '/api/admin/storage/delete' && method === 'POST') return res.json(storage.removeFile(body.id, body.confirmed));
+      if (pathname === '/api/admin/campaigns' && method === 'POST') return res.json(campaigns.createCampaign(body.name, user, body.confirmed));
+      if (pathname === '/api/admin/backups/download' && method === 'GET') {
+        const buffer = storage.readBackup(query.name);
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${query.name}"`);
+        return res.end(buffer);
+      }
+    } catch (err) {
+      const errorId = err.statusCode ? undefined : require('../services/errorService').recordError(err, { method, pathname });
+      return res.status(err.statusCode || 500).json({ success: false, message: err.statusCode ? err.message : 'No se logró completar la operación.', errorId });
+    }
+  }
+
+  if (pathname.startsWith('/api/export/')) {
+    try {
+      const service = require('../services/exportService');
+      if (pathname === '/api/export/lotes' && method === 'GET') return res.json({ success: true, batches: service.listBatches(user) });
+      if (pathname === '/api/export/prepare' && method === 'POST') {
+        if (typeof body.tipo !== 'string' || !body.filters || typeof body.filters !== 'object' || Array.isArray(body.filters) ||
+            Object.values(body.filters).some(v => typeof v !== 'string')) {
+          return res.status(400).json({ success: false, message: 'Indique un tipo y filtros válidos.' });
+        }
+        return res.json({ success: true, batch: service.prepareExport(body.tipo, body.filters, user) });
+      }
+      const route = pathname.match(/^\/api\/export\/lotes\/([a-f0-9-]+)\/(download|received|confirm)$/);
+      if (route && route[2] === 'download' && method === 'GET') {
+        const file = service.downloadBatch(route[1], user);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+        return res.end(file.buffer);
+      }
+      if (route && route[2] === 'received' && method === 'POST') return res.json({ success: true, batch: service.receiveBatch(route[1], user) });
+      if (route && route[2] === 'confirm' && method === 'POST') return res.json({ success: true, batch: service.confirmBatch(route[1], user, body.confirmed) });
+    } catch (err) {
+      const errorId = err.statusCode ? undefined : require('../services/errorService').recordError(err, { method, pathname });
+      return res.status(err.statusCode || 500).json({ success: false, message: err.statusCode ? err.message : 'No se logró preparar o confirmar el lote.', errorId });
+    }
   }
 
   if (pathname === '/api/contacts/bulk-delete' && method === 'POST') {
@@ -133,6 +182,7 @@ function handleApi(req, res, pathname, query, body, user) {
       areas_qs: QS_SUBJECTS,
       industrias_qs: QS_INDUSTRIES,
       limits: { max_import_rows: config.MAX_IMPORT_ROWS, max_file_bytes: 5 * 1024 * 1024 },
+      campanias: require('../services/campaignService').listCampaigns(),
       source_default: config.SOURCE_NAME
     });
   }
@@ -771,7 +821,8 @@ function handleApi(req, res, pathname, query, body, user) {
       });
 
     } catch (err) {
-      return res.status(err.statusCode || 500).json({ success: false, message: err.statusCode ? err.message : 'La importación falló; no se guardó ninguna fila.', validationErrors: err.validationErrors, row: err.row });
+      const errorId = err.statusCode ? undefined : require('../services/errorService').recordError(err, { method, pathname });
+      return res.status(err.statusCode || 500).json({ success: false, message: err.statusCode ? err.message : 'La importación falló; no se guardó ninguna fila.', validationErrors: err.validationErrors, row: err.row, errorId });
     }
 
     // Guardar archivo original en staging institucional / Google Drive
@@ -789,7 +840,7 @@ function handleApi(req, res, pathname, query, body, user) {
   }
 
   // 11. Exportación Oficial para QS
-  if (pathname.startsWith('/api/export/') && method === 'GET') {
+  if ((/^\/api\/export\/(ACADEMICO|EMPLEADOR)$/i).test(pathname) && method === 'GET') {
     const tipo = pathname.replace('/api/export/', '').toUpperCase();
     try {
       const exportResult = exportContactsToXlsx(tipo, query, user);
@@ -818,7 +869,8 @@ function handleApi(req, res, pathname, query, body, user) {
     driveService.createDatabaseBackup().then(result => {
       res.json(result);
     }).catch(err => {
-      res.status(500).json({ success: false, message: err.message });
+      const errorId = require('../services/errorService').recordError(err, { method, pathname });
+      res.status(500).json({ success: false, message: 'No se logró verificar el respaldo.', errorId });
     });
     return;
   }

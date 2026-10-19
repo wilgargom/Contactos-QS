@@ -3,6 +3,11 @@
    Sistema de Gestión de Contactos QS (Reputación Académica y Empleadores)
    ========================================================================== */
 
+/* Respetar la ocultación de controles aunque tengan clases como flex. */
+[hidden] {
+  display: none !important;
+}
+
 :root {
   --tec-primary: #002855;
   --tec-primary-dark: #001A35;

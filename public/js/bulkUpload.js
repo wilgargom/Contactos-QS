@@ -4,6 +4,13 @@ const BulkUploadModule = {
   fileBase64: null,
   analysisResult: null,
   activeFilter: 'TODOS',
+  consolidatedSheet: '',
+  consolidatedQuery: '',
+  consolidatedPage: 1,
+  includeConsolidatedPending: false,
+  analyzing: false,
+  consolidatedImporting: false,
+  analysisVersion: 0,
   tipoContacto: 'ACADEMICO',
   catalogs: null,
   selectedSedeId: '',
@@ -27,7 +34,7 @@ const BulkUploadModule = {
   },
 
   escapeReporterText(value) {
-    return String(value || '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+    return String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   },
 
   getRecomiendaPrefix() {
@@ -363,9 +370,10 @@ const BulkUploadModule = {
     }
     document.getElementById('bulk-rec-email-spinner')?.classList.toggle('hidden', !this.reporterLookupPending);
     const blocked = !['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !verified;
+    const consolidatedCount = this.analysisResult ? this.analysisResult.summary.correctos - (this.includeConsolidatedPending ? 0 : this.analysisResult.summary.pendientesRevision) : 0;
     for (const id of ['excel-file-input', 'bulk-file-select', 'btn-import-valid', 'btn-import-potential']) {
       const el = document.getElementById(id);
-      if (el) el.disabled = blocked || (this.tipoContacto === 'CONSOLIDADO' && id === 'btn-import-valid' && !this.analysisResult?.summary.correctos);
+      if (el) el.disabled = blocked || (this.tipoContacto === 'CONSOLIDADO' && id === 'btn-import-valid' && (!consolidatedCount || this.consolidatedImporting));
     }
   },
 
@@ -407,7 +415,7 @@ const BulkUploadModule = {
 
     container.innerHTML = `
       <div class="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 sm:p-8">
-        <div class="pb-6 border-b border-slate-100 mb-6 space-y-4">
+        <div class="pb-6 border-b border-slate-100 mb-6 space-y-4 ${this.tipoContacto === 'CONSOLIDADO' && this.analysisResult ? 'hidden' : ''}">
           <div>
             <h2 class="text-xl font-bold text-slate-900 flex items-center gap-2.5">
               <span class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-800 flex items-center justify-center text-sm border border-emerald-200/60 shadow-xs">
@@ -555,7 +563,7 @@ const BulkUploadModule = {
           </div>
         ` : ''}
 
-        ${this.tipoContacto === 'CONSOLIDADO' ? `<div class="alert alert-info mb-5">Procedencia TEC: <strong>Administrador</strong>, el tablero agrupará por <strong>Escuela Proponente</strong>, revise la vista previa antes de importar nuevos contactos o actualizar procedencias existentes.</div>` : ''}
+        ${this.tipoContacto === 'CONSOLIDADO' && !this.analysisResult ? `<div class="alert alert-info mb-5"><div>Procedencia TEC: <strong>Administrador</strong>, el tablero agrupará por <strong>Escuela Proponente</strong>, revise la vista previa antes de importar nuevos contactos o actualizar procedencias existentes.</div></div>` : ''}
         <!-- 2. Selección de Tipo de Contacto y Ubicación del Archivo -->
         ${!this.analysisResult ? `
           <div class="space-y-6">
@@ -624,7 +632,7 @@ const BulkUploadModule = {
                     </div>
 
                     <div class="flex-1 flex flex-col justify-around py-0.5">
-                      ${this.tipoContacto === 'CONSOLIDADO' ? `<p>Libro .xlsx con las hojas de empleadores y académicos, y Escuela Proponente en cada fila, la procedencia será Administrador, los registros incompletos quedarán pendientes de revisión.</p>` : this.tipoContacto === 'ACADEMICO' ? `
+                      ${this.tipoContacto === 'CONSOLIDADO' ? `<p>Libro .xlsx con hojas de empleadores y académicos, y Escuela Proponente en cada fila, la procedencia será Administrador, los registros incompletos solo se incorporarán como pendientes si marca la opción correspondiente.</p>` : this.tipoContacto === 'ACADEMICO' ? `
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-slate-700">
                           <div class="flex items-start gap-2">
                             <i class="fa-solid fa-check text-emerald-600 mt-0.5 shrink-0 text-[11px]"></i>
@@ -748,9 +756,10 @@ const BulkUploadModule = {
               </div>
 
               <p class="text-xs text-slate-500 mt-2">
-                Formatos permitidos: Hojas de cálculo Excel (.xlsx, .xls) o texto delimitado por comas (.csv).
+                ${this.tipoContacto === 'CONSOLIDADO' ? 'Formato permitido: libro Excel .xlsx con hojas de académicos y empleadores.' : 'Formatos permitidos: Hojas de cálculo Excel (.xlsx, .xls) o texto delimitado por comas (.csv).'}
                 Máximo 5 MB y ${this.catalogs?.limits?.max_import_rows || 2000} filas por carga.
               </p>
+              <p class="text-sm text-blue-900 mt-3" role="status" aria-live="polite">${this.analyzing ? 'Analizando hojas, columnas y registros, espere antes de confirmar la carga.' : ''}</p>
             </div>
           </div>
         ` : this.renderAnalysisView()}
@@ -784,6 +793,9 @@ const BulkUploadModule = {
     }
     const file = event.target.files[0];
     if (!file) return;
+    if (this.tipoContacto === 'CONSOLIDADO' && !/\.xlsx$/i.test(file.name)) {
+      App.showToast('Seleccione el consolidado en formato .xlsx.', 'warning'); event.target.value = ''; return;
+    }
     if (file.size > (this.catalogs?.limits?.max_file_bytes || 5 * 1024 * 1024)) {
       App.showToast('El archivo supera 5 MB. Divídalo en cargas menores.', 'warning');
       event.target.value = '';
@@ -791,6 +803,7 @@ const BulkUploadModule = {
     }
 
     this.selectedFile = file;
+    this.analysisVersion++;
     const sessionVersion = App.sessionVersion;
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -809,6 +822,12 @@ const BulkUploadModule = {
     }
     const reporterVersion = this.reporterLookupVersion;
     const selectedType = this.tipoContacto;
+    const selectedFile = this.selectedFile;
+    const analysisVersion = ++this.analysisVersion;
+    const sessionVersion = App.sessionVersion;
+    this.analyzing = true;
+    this.analysisResult = null;
+    this.render();
     App.showToast('🔍 Analizando archivo y verificando duplicados...', 'info');
 
     try {
@@ -819,52 +838,111 @@ const BulkUploadModule = {
         recomienda_email: this.recomiendaEmail
       });
 
-      if (selectedType !== this.tipoContacto || (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && reporterVersion !== this.reporterLookupVersion)) return;
+      if (analysisVersion !== this.analysisVersion || selectedFile !== this.selectedFile || App.suspended || sessionVersion !== App.sessionVersion || selectedType !== this.tipoContacto || (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && reporterVersion !== this.reporterLookupVersion)) return;
       this.analysisResult = response;
       this.activeFilter = 'TODOS';
+      this.consolidatedSheet = ''; this.consolidatedQuery = ''; this.consolidatedPage = 1; this.includeConsolidatedPending = false;
       this.render();
       App.showToast('✅ Análisis preliminar completado.', 'success');
     } catch (err) {
+      if (analysisVersion !== this.analysisVersion || selectedFile !== this.selectedFile || App.suspended || sessionVersion !== App.sessionVersion) return;
       App.showToast(err.message || 'Error al analizar el archivo Excel', 'error');
       this.selectedFile = null;
       this.fileBase64 = null;
       this.analysisResult = null;
       this.render();
-    }
+    } finally { if (analysisVersion === this.analysisVersion) { this.analyzing = false; if (!this.analysisResult) this.render(); } }
   },
 
   renderConsolidatedAnalysisView() {
-    const { summary, analyzedRows } = this.analysisResult;
+    const { summary, analyzedRows, sheets = [] } = this.analysisResult;
     const esc = value => this.escapeReporterText(value);
     const labels = { CORRECTO: 'Nuevo completo', PENDIENTE_REVISION: 'Nuevo pendiente de revisión',
-      ACTUALIZAR_PROCEDENCIA: 'Actualizar procedencia', ERROR: 'Revisar fila', DUPLICADO_EXACTO: 'Omitir duplicado' };
-    return `<div class="space-y-4">
-      <h3 class="text-lg font-bold text-slate-900">Vista previa del consolidado institucional</h3>
-      <p>Procedencia TEC: <strong>Administrador</strong>, agrupación por <strong>Escuela Proponente</strong>.</p>
-      <p>${this.escapeReporterText(summary.nuevos)} nuevos, ${this.escapeReporterText(summary.actualizaciones)} procedencias por actualizar, ${this.escapeReporterText(summary.pendientesRevision)} nuevos pendientes de revisión, ${this.escapeReporterText(summary.conErrores)} filas con errores y ${this.escapeReporterText(summary.duplicadosExactos)} repetidas u omitidas.</p>
-      <p class="text-sm text-amber-800">Los registros incompletos se guardan como NUEVO y quedan fuera de la exportación QS, las actualizaciones de procedencia conservan los datos del contacto y su historial.</p>
-      <div class="table-responsive max-h-96 overflow-y-auto"><table class="data-table"><thead><tr>
-        <th>Hoja / fila</th><th>Tipo / Contacto</th><th>Escuela Proponente</th><th>Acción</th><th>Detalle</th>
-      </tr></thead><tbody>${analyzedRows.map(r => `<tr>
-        <td>${esc(r.sheet)} · ${this.escapeReporterText(r.rowNum)}</td><td>${r.data.tipo_contacto === 'ACADEMICO' ? 'Académico' : 'Empleador'}<br>${esc(r.data.first_name)} ${esc(r.data.last_name)}<br>${esc(r.data.email)}</td>
-        <td>${esc(r.escuela || 'Sin Escuela Proponente')}</td><td>${esc(labels[r.status] || r.status)}</td><td>${esc(r.errors.join('; ') || 'Datos completos')}</td>
-      </tr>`).join('')}</tbody></table></div>
+      ACTUALIZAR_PROCEDENCIA: 'Actualizar procedencia', ERROR: 'Error crítico', POSIBLE_DUPLICADO: 'Posible duplicado', DUPLICADO_EXACTO: 'Ya existe / repetido' };
+    const totals = { TODOS: summary.totalAnalizados, CORRECTO: summary.nuevosCompletos,
+      PENDIENTE_REVISION: summary.pendientesRevision, ACTUALIZAR_PROCEDENCIA: summary.actualizaciones,
+      POSIBLE_DUPLICADO: summary.posiblesDuplicados, ERROR: summary.conErrores, DUPLICADO_EXACTO: summary.duplicadosExactos };
+    const filtered = analyzedRows.filter(r => (this.activeFilter === 'TODOS' || r.status === this.activeFilter) &&
+      (!this.consolidatedSheet || r.sheet === this.consolidatedSheet) &&
+      (!this.consolidatedQuery || [r.data.first_name, r.data.last_name, r.data.email, r.escuela, r.data.institution, r.data.company_name, ...r.errors].join(' ').toLocaleLowerCase().includes(this.consolidatedQuery.toLocaleLowerCase())));
+    const pages = Math.max(1, Math.ceil(filtered.length / 50));
+    this.consolidatedPage = Math.min(this.consolidatedPage, pages);
+    const displayed = filtered.slice((this.consolidatedPage - 1) * 50, this.consolidatedPage * 50);
+    const importable = summary.correctos - (this.includeConsolidatedPending ? 0 : summary.pendientesRevision);
+    return `<div class="space-y-5">
+      <h3 class="text-lg font-bold text-slate-900">Revisión del consolidado institucional</h3>
+      <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm"><strong>Procedencia TEC: Administrador</strong>
+      <p>Archivo: ${esc(this.selectedFile?.name || '')} · Escuela / Unidad: columna «Escuela Proponente» de cada fila.</p>
+      <p>Revise las hojas, filtre los problemas y confirme el alcance antes de guardar, el análisis todavía no modifica los contactos.</p></div>
+      <section><h4 class="font-bold mb-3">Hojas y columnas reconocidas</h4>
+      ${sheets.map(s => `<details class="border border-slate-200 rounded-xl p-3 mb-2"><summary class="cursor-pointer font-semibold">${esc(s.name)} · ${s.ignored ? 'Hoja omitida' : `${esc(s.total)} contactos, encabezados en fila ${esc(s.headerRow)}`}</summary>
+        ${s.ignored ? '<p class="text-sm">Solo se procesan hojas identificadas como académicos o empleadores.</p>' : `<p class="text-sm mt-2">${s.columns.map(c => `${esc(c.header)} → ${esc(c.label)}`).join('; ')}</p>
+        <p class="text-xs mt-2">Columnas no utilizadas: ${esc(s.ignoredColumns.join(', ') || 'Ninguna')}.</p>
+        ${s.warnings.map(w => `<p class="text-sm text-amber-800 mt-2">${esc(w)}</p>`).join('')}
+        <p class="text-xs mt-2">Completos: ${esc(s.counts.CORRECTO)}, pendientes: ${esc(s.counts.PENDIENTE_REVISION)}, actualizar: ${esc(s.counts.ACTUALIZAR_PROCEDENCIA)}, errores: ${esc(s.counts.ERROR)}, posibles duplicados: ${esc(s.counts.POSIBLE_DUPLICADO)}, omitidos: ${esc(s.counts.DUPLICADO_EXACTO)}.</p>`}</details>`).join('')}</section>
+      <section><h4 class="font-bold mb-3">Resultado de las validaciones · ${esc(summary.totalAnalizados)} registros analizados</h4>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      ${Object.entries(totals).filter(([key]) => key !== 'TODOS').map(([key, total]) => `<div class="kpi-card" style="border-top-color:${key === 'ERROR' ? 'var(--status-error)' : key === 'PENDIENTE_REVISION' || key === 'POSIBLE_DUPLICADO' ? 'var(--status-warning)' : key === 'CORRECTO' ? 'var(--status-success)' : 'var(--tec-primary)'}"><div class="kpi-title">${esc(labels[key])}</div><div class="kpi-value">${esc(total)}</div></div>`).join('')}
+      </div></section>
+      <section><h4 class="font-bold mb-3">Detalle y correcciones por fila</h4>
+      <div class="flex gap-2 flex-wrap mb-4" role="group" aria-label="Filtrar por resultado">
+        ${Object.entries(totals).map(([key, total]) => `<button type="button" class="btn btn-sm ${this.activeFilter === key ? 'btn-tec' : 'btn-outline'}" aria-pressed="${this.activeFilter === key}" onclick="BulkUploadModule.filterConsolidated('status','${key}')">${esc(labels[key] || 'Todos')} (${esc(total)})</button>`).join('')}
+      </div><div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+      <div><label class="form-label block" for="consolidated-sheet">Hoja del archivo</label><select id="consolidated-sheet" class="form-control w-full" onchange="BulkUploadModule.filterConsolidated('sheet',this.value)"><option value="">Todas las hojas</option>
+      ${sheets.filter(s => !s.ignored).map(s => `<option value="${esc(s.name)}" ${s.name === this.consolidatedSheet ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
+      <div><label class="form-label block" for="consolidated-query">Buscar contacto, escuela o diagnóstico</label><input type="search" id="consolidated-query" class="form-control w-full" value="${esc(this.consolidatedQuery)}" onchange="BulkUploadModule.filterConsolidated('query',this.value)"></div></div>
+      <div class="table-responsive max-h-96 overflow-y-auto"><table class="data-table-fit" style="min-width:900px"><colgroup><col style="width:10%"><col style="width:13%"><col style="width:19%"><col style="width:15%"><col style="width:16%"><col style="width:27%"></colgroup><thead><tr>
+        <th>Hoja / fila Excel</th><th>Estado</th><th>Contacto / correo</th><th>Institución / Empresa</th><th>Escuela Proponente</th><th>Diagnóstico / corrección</th>
+      </tr></thead><tbody>${displayed.map(r => `<tr>
+        <td>${esc(r.sheet)}<br><strong>#${esc(r.rowNum)}</strong><br><small>Año de reporte: ${esc(r.metadata?.year || 'Sin dato')}</small></td>
+        <td><span class="badge ${r.status === 'ERROR' ? 'badge-error' : r.status === 'CORRECTO' ? 'badge-validado' : 'badge-posible'}">${esc(labels[r.status] || r.status)}</span></td>
+        <td>${esc(r.data.first_name)} ${esc(r.data.last_name)}<br><code>${esc(r.data.email || 'Sin correo')}</code></td>
+        <td>${esc(r.data.institution || r.data.company_name || 'Sin dato')}</td><td>${esc(r.escuela || 'Sin Escuela Proponente')}</td>
+        <td>${r.errors.map(e => `<p>${esc(e)}</p>`).join('') || 'Datos completos, listo para incorporar.'}
+        ${(r.warnings || []).map(w => `<p class="text-xs text-amber-800">${esc(w)}</p>`).join('')}
+        <p class="text-xs mt-2 font-semibold">${r.status === 'ERROR' || r.status === 'POSIBLE_DUPLICADO' ? 'Corregir en el archivo y analizar nuevamente, esta fila no se guardará.' : r.status === 'PENDIENTE_REVISION' ? 'Completar los campos indicados o incorporar como pendiente mediante la opción expresa.' : r.status === 'ACTUALIZAR_PROCEDENCIA' ? 'Conservar los datos actuales y actualizar únicamente su procedencia.' : r.status === 'DUPLICADO_EXACTO' ? 'Se omite sin modificar el contacto.' : 'Se incorporará como contacto validado.'}</p></td>
+      </tr>`).join('') || '<tr><td colspan="6">No hay filas para estos filtros.</td></tr>'}</tbody></table></div>
+      <div class="flex flex-wrap justify-between gap-3 mt-3"><p class="text-sm" aria-live="polite">${esc(filtered.length)} filas filtradas · Página ${esc(this.consolidatedPage)} de ${esc(pages)} · 50 filas por página</p>
+      <div class="flex gap-2"><button type="button" class="btn btn-outline btn-sm" ${this.consolidatedPage <= 1 ? 'disabled' : ''} onclick="BulkUploadModule.pageConsolidated(-1)">Anterior</button><button type="button" class="btn btn-outline btn-sm" ${this.consolidatedPage >= pages ? 'disabled' : ''} onclick="BulkUploadModule.pageConsolidated(1)">Siguiente</button></div></div></section>
+      <section class="bg-slate-50 border border-slate-200 rounded-xl p-4"><h4 class="font-bold mb-3">Confirmación del alcance</h4>
+      <label class="flex items-start gap-3 mb-3"><input type="checkbox" ${this.includeConsolidatedPending ? 'checked' : ''} onchange="BulkUploadModule.includeConsolidatedPending=this.checked; BulkUploadModule.render();">
+      <span>Incluir también ${esc(summary.pendientesRevision)} registros históricos incompletos como pendientes de revisión, quedarán en estado NUEVO y fuera de la exportación QS.</span></label>
+      <p class="text-sm">Se procesarán <strong>${esc(importable)}</strong> filas: ${esc(summary.nuevosCompletos)} nuevos completos, ${esc(this.includeConsolidatedPending ? summary.pendientesRevision : 0)} nuevos pendientes y ${esc(summary.actualizaciones)} actualizaciones de procedencia, se omitirán ${esc(summary.totalAnalizados - importable)} filas.</p>
+      <p class="text-xs mt-2">Los filtros solo cambian la vista, la confirmación aplica al alcance completo indicado arriba, sin inventar países, disciplinas, escuelas ni autorizaciones ausentes.</p>
       <div class="flex flex-wrap gap-3">
-        <button class="btn btn-outline" onclick="BulkUploadModule.cancelAnalysis()">Cancelar y volver</button>
-        <button class="btn btn-tec" id="btn-import-valid" ${summary.correctos ? '' : 'disabled'} onclick="BulkUploadModule.confirmConsolidatedImport()">Importar nuevos y actualizar procedencias (${this.escapeReporterText(summary.correctos)})</button>
-      </div></div>`;
+        <button class="btn btn-outline" ${this.consolidatedImporting ? 'disabled' : ''} onclick="BulkUploadModule.cancelAnalysis()">Cancelar y volver</button>
+        <button class="btn btn-outline" ${this.consolidatedImporting ? 'disabled' : ''} onclick="BulkUploadModule.analyzeFile()">Analizar nuevamente</button>
+        <button class="btn btn-tec" id="btn-import-valid" ${importable && !this.consolidatedImporting ? '' : 'disabled'} onclick="BulkUploadModule.confirmConsolidatedImport()">Confirmar carga (${esc(importable)})</button>
+      </div></section></div>`;
   },
+
+  filterConsolidated(kind, value) {
+    if (kind === 'status') this.activeFilter = value;
+    else if (kind === 'sheet') this.consolidatedSheet = value;
+    else if (kind === 'query') this.consolidatedQuery = value.trim();
+    this.consolidatedPage = 1; this.render();
+  },
+
+  pageConsolidated(delta) { this.consolidatedPage = Math.max(1, this.consolidatedPage + delta); this.render(); },
 
   async confirmConsolidatedImport() {
     if (App.currentUser?.rol !== 'ADMIN') {
       App.showToast('La carga consolidada está reservada al administrador.', 'warning');
       return;
     }
-    if (!this.analysisResult || !this.fileBase64 || !this.analysisResult.summary.correctos) return;
+    if (this.consolidatedImporting || !this.analysisResult || !this.fileBase64) return;
+    const summary = this.analysisResult.summary;
+    const count = summary.correctos - (this.includeConsolidatedPending ? 0 : summary.pendientesRevision);
+    if (!count || !window.confirm(`¿Confirma procesar ${count} filas del consolidado? Incluye ${summary.actualizaciones} actualizaciones de procedencia y ${this.includeConsolidatedPending ? summary.pendientesRevision : 0} registros pendientes. Las filas con errores, posibles duplicados y repeticiones se omiten.`)) return;
+    this.consolidatedImporting = true;
+    const sessionVersion = App.sessionVersion;
+    const selectedFile = this.selectedFile;
     const button = document.getElementById('btn-import-valid');
     if (button) button.disabled = true;
     try {
-      const result = await API.post('/api/bulk/consolidated/import', { fileName: this.selectedFile.name, fileBase64: this.fileBase64 });
+      const result = await API.post('/api/bulk/consolidated/import', { fileName: this.selectedFile.name, fileBase64: this.fileBase64,
+        includePending: this.includeConsolidatedPending, analysisHash: this.analysisResult.analysisHash });
+      if (App.suspended || sessionVersion !== App.sessionVersion || selectedFile !== this.selectedFile) return;
       App.showToast(result.message, 'success');
       try { App.catalogs = await API.get('/api/catalogs'); } catch (_) { /* Los catálogos se actualizan al recargar. */ }
       this.cancelAnalysis();
@@ -872,7 +950,7 @@ const BulkUploadModule = {
     } catch (err) {
       App.showToast(err.message || 'Error al importar el consolidado', 'error');
       if (button) button.disabled = false;
-    }
+    } finally { this.consolidatedImporting = false; }
   },
 
   renderAnalysisView() {
@@ -1108,6 +1186,7 @@ const BulkUploadModule = {
   },
 
   cancelAnalysis() {
+    this.analysisVersion++;
     this.selectedFile = null;
     this.fileBase64 = null;
     this.analysisResult = null;

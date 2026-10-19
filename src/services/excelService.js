@@ -170,7 +170,7 @@ function generateXlsx(sheetName, headers, rows) {
  * Parsea un archivo XLSX desde un Buffer
  */
 // Leer las hojas por sus relaciones reales, sin asumir su orden o nombre de archivo.
-function parseXlsxSheets(buffer) {
+function parseXlsxSheets(buffer, options = {}) {
   const files = readZip(buffer);
   const workbook = files.get('xl/workbook.xml')?.toString('utf8') || '';
   const relationships = files.get('xl/_rels/workbook.xml.rels')?.toString('utf8') || '';
@@ -186,20 +186,20 @@ function parseXlsxSheets(buffer) {
   const sheets = [];
   for (const match of workbook.matchAll(/<sheet\b[^>]*\/?>/g)) {
     const target = targets.get(attr(match[0], 'r:id'));
-    if (target) sheets.push({ name: attr(match[0], 'name'), ...parseXlsx(buffer, target) });
+    if (target) sheets.push({ name: attr(match[0], 'name'), ...parseXlsx(buffer, target, { ...options, archive: files }) });
   }
   if (!sheets.length) throw new Error('No se encontraron hojas de datos en el libro.');
   return sheets;
 }
 
-function parseXlsx(buffer, sheetPath = null) {
-  const files = readZip(buffer);
+function parseXlsx(buffer, sheetPath = null, options = {}) {
+  const files = options.archive || readZip(buffer);
 
   // 1. Extraer Shared Strings si existen
   const sharedStrings = [];
   if (files.has('xl/sharedStrings.xml')) {
     const ssXml = files.get('xl/sharedStrings.xml').toString('utf8');
-    const siRegex = /<si>([\s\S]*?)<\/si>/g;
+    const siRegex = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
     let match;
     while ((match = siRegex.exec(ssXml)) !== null) {
       const siContent = match[1];
@@ -237,21 +237,25 @@ function parseXlsx(buffer, sheetPath = null) {
 
   // 3. Parsear filas y celdas
   const rowsMap = new Map(); // rowIndex (1-based) -> Array of values
-  const rowRegex = /<row\s+r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g;
+  const issuesMap = new Map();
+  const rowRegex = /<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g;
   let rowMatch;
 
   while ((rowMatch = rowRegex.exec(sheetXmlStr)) !== null) {
-    const rNum = parseInt(rowMatch[1], 10);
-    const rowContent = rowMatch[2];
+    const rowNumber = /\br="(\d+)"/.exec(rowMatch[1]);
+    if (!rowNumber) continue;
+    const rNum = Number(rowNumber[1]);
+    const rowContent = rowMatch[2] || '';
     const rowCells = [];
+    const issues = [];
 
     // Capturar celdas y sus atributos (r, t, etc.)
-    const cellRegex = /<c\b([^>]*)>([\s\S]*?)<\/c>/gi;
+    const cellRegex = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/gi;
     let cellMatch;
 
     while ((cellMatch = cellRegex.exec(rowContent)) !== null) {
       const attrsStr = cellMatch[1];
-      const cellBody = cellMatch[2];
+      const cellBody = cellMatch[2] || '';
 
       const rMatch = /\br="([A-Z]+)(\d+)"/i.exec(attrsStr);
       if (!rMatch) continue;
@@ -260,6 +264,7 @@ function parseXlsx(buffer, sheetPath = null) {
 
       const tMatch = /\bt="([a-zA-Z]+)"/i.exec(attrsStr);
       const cType = tMatch ? tMatch[1].toLowerCase() : 'n';
+      if (/<f\b/.test(cellBody) || cType === 'e') issues.push({ column: colIdx, kind: cType === 'e' ? 'ERROR' : 'FORMULA' });
 
       let val = '';
       if (cType === 's') {
@@ -269,10 +274,7 @@ function parseXlsx(buffer, sheetPath = null) {
           val = sharedStrings[sIdx] || '';
         }
       } else if (cType === 'inlinestr') {
-        const isMatch = /<is>[\s\S]*?<t(?: [^>]*)?>([\s\S]*?)<\/t>[\s\S]*?<\/is>/i.exec(cellBody);
-        if (isMatch) {
-          val = unescapeXml(isMatch[1]);
-        }
+        val = unescapeXml([...cellBody.matchAll(/<t\b[^>]*>([^<]*)<\/t>/gi)].map(m => m[1]).join(''));
       } else {
         const vMatch = /<v>([\s\S]*?)<\/v>/i.exec(cellBody);
         if (vMatch) {
@@ -284,6 +286,7 @@ function parseXlsx(buffer, sheetPath = null) {
     }
 
     rowsMap.set(rNum, rowCells);
+    issuesMap.set(rNum, issues);
   }
 
   const sortedRowNums = Array.from(rowsMap.keys()).sort((a, b) => a - b);
@@ -292,7 +295,9 @@ function parseXlsx(buffer, sheetPath = null) {
   }
 
   // Fila 1 son los encabezados
-  const headerRowCells = rowsMap.get(sortedRowNums[0]) || [];
+  const matchedHeader = options.headerMatch ? sortedRowNums.slice(0, 20).find(n => options.headerMatch(rowsMap.get(n))) : undefined;
+  const headerRowNum = matchedHeader ?? sortedRowNums[0];
+  const headerRowCells = rowsMap.get(headerRowNum) || [];
   const headers = headerRowCells.map(h => (h ? String(h).trim() : ''));
 
   const dataRows = [];
@@ -300,6 +305,7 @@ function parseXlsx(buffer, sheetPath = null) {
 
   for (let i = 1; i < sortedRowNums.length; i++) {
     const rNum = sortedRowNums[i];
+    if (rNum <= headerRowNum) continue;
     const cells = rowsMap.get(rNum) || [];
     
     // Si la fila está totalmente vacía, la omitimos del procesamiento principal pero mantenemos referencia
@@ -307,6 +313,7 @@ function parseXlsx(buffer, sheetPath = null) {
     if (!hasData) continue;
 
     const rowObj = { _rowNum: rNum };
+    if (issuesMap.get(rNum)?.length) rowObj._cellIssues = issuesMap.get(rNum);
     headers.forEach((h, idx) => {
       if (h) {
         rowObj[h] = (cells[idx] !== undefined) ? String(cells[idx]).trim() : '';
@@ -317,17 +324,18 @@ function parseXlsx(buffer, sheetPath = null) {
     rawRows.push({ rowNum: rNum, cells });
   }
 
-  return { headers, rows: dataRows, rawRows };
+  return { headers, rows: dataRows, rawRows, headerRowNum };
 }
 
 function unescapeXml(str) {
   if (!str) return '';
   return str
-    .replace(/&amp;/g, '&')
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, n) => { const code = n[0].toLowerCase() === 'x' ? parseInt(n.slice(1), 16) : Number(n); return code <= 0x10ffff ? String.fromCodePoint(code) : ''; })
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 /**

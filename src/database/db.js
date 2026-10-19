@@ -18,6 +18,13 @@ function getDb() {
     // Inicializar esquema si no existe
     const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
     dbInstance.exec(schemaSql);
+    const sessionColumns = dbInstance.prepare('PRAGMA table_info(sesiones)').all();
+    if (!sessionColumns.some(c => c.name === 'last_activity_at')) {
+      dbInstance.exec('ALTER TABLE sesiones ADD COLUMN last_activity_at TEXT');
+      dbInstance.exec('UPDATE sesiones SET last_activity_at = created_at WHERE last_activity_at IS NULL');
+    }
+    dbInstance.exec('CREATE INDEX IF NOT EXISTS idx_sesiones_expires ON sesiones(expires_at)');
+    dbInstance.exec('CREATE INDEX IF NOT EXISTS idx_contactos_owner_date ON contactos(created_by, created_at DESC)');
 
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN es_consolidado INTEGER NOT NULL DEFAULT 0;'); } catch (_) {}
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN escuela_proponente TEXT;'); } catch (_) {}

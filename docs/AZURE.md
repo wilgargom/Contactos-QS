@@ -167,3 +167,46 @@ la presencia de credenciales no equivale a una subida, la integración real con
 Drive, las pruebas de capacidad en Azure y una estrategia indexada para la
 comparación aproximada de duplicados siguen pendientes, la comparación actual
 recorre los registros sin cargar toda la tabla en memoria.
+
+## Operación con Azure F1
+
+La sesión se suspende después de 15 minutos sin actividad, el servidor rechaza
+el acceso inactivo aunque el navegador esté cerrado o sus temporizadores estén
+pausados, una consulta de estado no renueva el plazo, reanudar requiere una
+acción explícita y conserva la identidad de la sesión de usuario dentro de su
+vigencia absoluta de 12 horas, el administrador debe autenticarse de nuevo.
+El borrador del registro permanece en la sesión del navegador, las pestañas
+comparten la señal de actividad para evitar suspensiones mientras otra se usa.
+
+La aplicación dejó de consultar sesiones cada 30 segundos, solo comunica
+actividad cuando hay interacción y como máximo una vez por minuto, una página
+abandonada deja de generar consultas periódicas y permite el reposo de Azure.
+
+Un ejecutor de operaciones atiende SQLite y el procesamiento de Excel de forma
+secuencial fuera del hilo HTTP, las transacciones y el control de versiones
+protegen los registros mientras la página y el estado de salud siguen
+respondiendo, se mantiene un único proceso IISNode, el estado de salud no
+certifica que la cuota de CPU de Azure sea suficiente para la carga real.
+
+| Control | Valor predeterminado |
+| --- | --- |
+| Inactividad `QS_SESSION_IDLE_MINUTES` | 15 minutos, configurable de 1 a 60 |
+| Solicitudes API pendientes `QS_MAX_API_QUEUE` | 32, configurables de 1 a 128 |
+| Espera máxima antes de empezar una operación | 15 segundos, luego HTTP 503 sin ejecutarla |
+| Memoria de cuerpos de solicitudes recibidos y pendientes | 16 MB compartidos |
+| Tamaño del cuerpo JSON, incluyendo archivo en base64 | 8 MB por solicitud |
+| Filas por importación `QS_MAX_IMPORT_ROWS` | 2000, configurables de 1 a 5000 |
+| Tamaño total descomprimido de un Excel | 24 MB |
+
+Si la cola está llena, el servidor devuelve HTTP 503 y solicita esperar, una
+operación iniciada no se cancela por el tiempo de espera de la cola, las
+escrituras no se reintentan automáticamente, ante una conexión interrumpida se
+solicita consultar el directorio antes de repetir el guardado, los bloqueos
+externos de SQLite también se comunican como ocupación temporal.
+
+Las pruebas aisladas incluyen 20 sesiones guardando contactos simultáneamente,
+auditoría, aislamiento entre usuarios, expiración por inactividad, saturación
+de cola y respuesta HTTP con SQLite bloqueado, estos resultados no establecen
+la capacidad real de Azure F1 ni garantizan disponibilidad al agotar sus cuotas.
+F1 sigue limitado a cómputo compartido y 60 minutos de CPU por día, la cuota se
+administra desde Azure, estos cambios no modifican el plan ni sus límites.

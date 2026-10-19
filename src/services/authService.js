@@ -19,8 +19,8 @@ function createSession(userId) {
   const createdAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + config.SESSION_TTL_HOURS * 3600000).toISOString();
   db.prepare('DELETE FROM sesiones WHERE expires_at <= ?').run(createdAt);
-  db.prepare('INSERT INTO sesiones (token, usuario_id, expires_at, created_at) VALUES (?, ?, ?, ?)')
-    .run(token, userId, expiresAt, createdAt);
+  db.prepare('INSERT INTO sesiones (token, usuario_id, expires_at, created_at, last_activity_at) VALUES (?, ?, ?, ?, ?)')
+    .run(token, userId, expiresAt, createdAt, createdAt);
   return { success: true, token, user: getSessionUser(token), expiresAt };
 }
 
@@ -45,7 +45,7 @@ function createUserSession() {
   });
 }
 
-function getSessionUser(token) {
+function getSessionUser(token, { touch = false, resumeGuest = false } = {}) {
   if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token)) return null;
   const db = getDb();
   const session = db.prepare('SELECT * FROM sesiones WHERE token = ?').get(token);
@@ -59,6 +59,17 @@ function getSessionUser(token) {
   const isAdmin = user.id === adminCredentials.id && user.rol === 'ADMIN';
   const isGuest = user.id.startsWith('usr-guest-') && user.rol === 'USUARIO';
   if (!isAdmin && !isGuest) return null;
+  const lastActivity = Date.parse(session.last_activity_at || session.created_at);
+  const idle = !Number.isFinite(lastActivity) || Date.now() - lastActivity >= config.SESSION_IDLE_MS;
+  if (idle && !(resumeGuest && isGuest)) {
+    if (isAdmin) db.prepare('DELETE FROM sesiones WHERE token = ?').run(token);
+    return null;
+  }
+  // Las consultas de estado no prolongan sesiones abandonadas.
+  if ((touch && Date.now() - lastActivity >= 30000) || (idle && resumeGuest && isGuest)) {
+    session.last_activity_at = new Date().toISOString();
+    db.prepare('UPDATE sesiones SET last_activity_at = ? WHERE token = ?').run(session.last_activity_at, token);
+  }
   return {
     id: user.id,
     // La sesión de acceso no representa a un funcionario ni autocompleta su identidad.
@@ -69,7 +80,8 @@ function getSessionUser(token) {
     sede_nombre: '',
     departamento_id: null,
     departamento_nombre: '',
-    expires_at: session.expires_at
+    expires_at: session.expires_at,
+    idle_timeout_ms: config.SESSION_IDLE_MS
   };
 }
 

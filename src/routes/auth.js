@@ -38,7 +38,7 @@ function handleAuth(req, res, pathname, query, body) {
 
   if (pathname === '/api/auth/guest' && method === 'POST') {
     const token = authService.readCookie(req, authService.COOKIE_NAMES.user);
-    const user = authService.getSessionUser(token);
+    const user = authService.getSessionUser(token, { touch: true, resumeGuest: true });
     // Mantener los registros de la sesión de usuario al entrar/salir de administración.
     authService.logout(authService.readCookie(req, authService.COOKIE_NAMES.admin));
     authService.setSessionCookie(req, res, 'admin', '');
@@ -52,6 +52,24 @@ function handleAuth(req, res, pathname, query, body) {
     const user = authService.getSessionUser(authService.getRequestToken(req));
     if (!user) return res.status(401).json({ success: false, message: 'Sesión expirada o inválida.' });
     return res.json({ success: true, user });
+  }
+
+  if (pathname === '/api/auth/activity' && method === 'POST') {
+    const user = authService.getSessionUser(authService.getRequestToken(req), { touch: true });
+    if (!user) return res.status(401).json({ success: false, message: 'Sesión suspendida por inactividad.' });
+    if (user.rol === 'ADMIN') {
+      authService.getSessionUser(authService.readCookie(req, authService.COOKIE_NAMES.user), { touch: true, resumeGuest: true });
+    }
+    return res.json({ success: true, user });
+  }
+
+  if (pathname === '/api/auth/suspend' && method === 'POST') {
+    authService.logout(authService.readCookie(req, authService.COOKIE_NAMES.admin));
+    authService.setSessionCookie(req, res, 'admin', '');
+    const token = authService.readCookie(req, authService.COOKIE_NAMES.user);
+    require('../database/db').getDb().prepare('UPDATE sesiones SET last_activity_at = ? WHERE token = ?')
+      .run(new Date(0).toISOString(), token);
+    return res.json({ success: true });
   }
 
   if (pathname === '/api/auth/logout' && method === 'POST') {

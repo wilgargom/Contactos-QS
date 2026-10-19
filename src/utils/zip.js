@@ -120,6 +120,9 @@ function readZip(buf) {
   }
 
   const totalEntries = buf.readUInt16LE(eocdOffset + 10);
+  if (totalEntries > 256) throw new Error('El libro contiene demasiados componentes internos.');
+  const maxExpanded = 24 * 1024 * 1024;
+  let expanded = 0;
   const centralDirOffset = buf.readUInt32LE(eocdOffset + 16);
 
   let curOffset = centralDirOffset;
@@ -131,6 +134,7 @@ function readZip(buf) {
     const method = buf.readUInt16LE(curOffset + 10);
     const compressedSize = buf.readUInt32LE(curOffset + 20);
     const uncompressedSize = buf.readUInt32LE(curOffset + 24);
+    if (uncompressedSize > maxExpanded - expanded) throw new Error('El libro excede el tamaño máximo descomprimido (24 MB).');
     const nameLen = buf.readUInt16LE(curOffset + 28);
     const extraLen = buf.readUInt16LE(curOffset + 30);
     const commentLen = buf.readUInt16LE(curOffset + 32);
@@ -147,13 +151,15 @@ function readZip(buf) {
 
       let uncompressed;
       if (method === 8) {
-        uncompressed = zlib.inflateRawSync(rawCompressed);
+        uncompressed = zlib.inflateRawSync(rawCompressed, { maxOutputLength: maxExpanded - expanded });
       } else if (method === 0) {
         uncompressed = rawCompressed;
       } else {
         throw new Error(`Método de compresión no soportado en ZIP: ${method}`);
       }
 
+      expanded += uncompressed.length;
+      if (expanded > maxExpanded) throw new Error('El libro excede el tamaño máximo descomprimido (24 MB).');
       result.set(fileName, uncompressed);
     }
 

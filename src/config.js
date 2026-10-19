@@ -16,6 +16,10 @@ const UPLOADS_DIR = path.join(STORAGE_DIR, 'uploads');
 const EXPORTS_DIR = path.join(STORAGE_DIR, 'exports');
 const BACKUPS_DIR = path.join(STORAGE_DIR, 'backups');
 const DRIVE_STAGING_DIR = path.join(STORAGE_DIR, 'drive_staging');
+function bounded(name, fallback, min, max) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= min && value <= max ? Math.floor(value) : fallback;
+}
 
 // Asegurar directorios de almacenamiento
 for (const dir of [STORAGE_DIR, UPLOADS_DIR, EXPORTS_DIR, BACKUPS_DIR, DRIVE_STAGING_DIR]) {
@@ -34,6 +38,12 @@ module.exports = {
   SOURCE_NAME: 'Instituto Tecnológico de Costa Rica',
   SESSION_SECRET: process.env.SESSION_SECRET || 'tec-secret-key-qs-ranking-2026',
   SESSION_TTL_HOURS: 12,
+  SESSION_IDLE_MS: bounded('QS_SESSION_IDLE_MINUTES', 15, 1, 60) * 60000,
+  MAX_IMPORT_ROWS: bounded('QS_MAX_IMPORT_ROWS', 2000, 1, 5000),
+  MAX_BODY_BYTES: 8 * 1024 * 1024,
+  MAX_BUFFERED_BYTES: 16 * 1024 * 1024,
+  MAX_API_QUEUE: bounded('QS_MAX_API_QUEUE', 32, 1, 128),
+  MAX_QUEUE_WAIT_MS: 15000,
   PATHS: {
     ROOT: ROOT_DIR,
     STORAGE: STORAGE_DIR,

@@ -211,6 +211,9 @@ function listContacts(filters = {}, user = null, paginate = false) {
     WHERE 1=1
   `;
   const params = [];
+  if (filters.pendientes === 'true') sql += " AND c.estado IN ('NUEVO','POSIBLE_DUPLICADO')";
+  if (filters.campania_id === 'SIN_ASIGNAR') sql += ' AND c.campania_id IS NULL';
+  else if (filters.campania_id) { sql += ' AND c.campania_id = ?'; params.push(filters.campania_id); }
 
   // Requisito: El usuario estándar solo puede ver lo que ingresó por carga masiva o registro individual
   if (user && user.rol !== 'ADMIN') {

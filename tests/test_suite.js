@@ -14,6 +14,153 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('lotes QS: generación sin cambios, descarga íntegra, confirmación explícita e idempotente y versiones', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-batches-'));
+  const server = await startServer(storage);
+  let db;
+  t.after(async () => { if (db) db.close(); await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const { DatabaseSync } = require('node:sqlite');
+  db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  const snapshot = () => JSON.stringify(db.prepare('SELECT id,estado,version FROM contactos ORDER BY id').all());
+  const original = snapshot();
+  const prepare = () => request(server, '/api/export/prepare', 'POST', { tipo: 'ACADEMICO', filters: {} }, admin.cookies);
+  assert.equal((await request(server, '/api/export/prepare', 'POST', { tipo: 'ACADEMICO', filters: {} }, guest.cookies)).status, 403);
+  const prepared = await prepare();
+  assert.equal(prepared.status, 200, prepared.text);
+  const batch = prepared.json().batch;
+  assert.equal(batch.estado, 'GENERADO');
+  assert.equal(snapshot(), original);
+  assert.equal((await request(server, `/api/export/lotes/${batch.id}/confirm`, 'POST', { confirmed: true }, admin.cookies)).status, 409);
+  const downloaded = await request(server, batch.downloadUrl, 'GET', undefined, admin.cookies);
+  assert.equal(downloaded.status, 200);
+  const stored = db.prepare('SELECT * FROM exportaciones WHERE id=?').get(batch.id);
+  assert.equal(require('node:crypto').createHash('sha256').update(downloaded.buffer).digest('hex'), stored.sha256);
+  assert.equal(snapshot(), original);
+  assert.equal((await request(server, batch.downloadUrl, 'GET', undefined, guest.cookies)).status, 403);
+  await request(server, `/api/export/lotes/${batch.id}/received`, 'POST', {}, admin.cookies);
+  assert.equal((await request(server, `/api/export/lotes/${batch.id}/confirm`, 'POST', {}, admin.cookies)).status, 400);
+  const confirmed = await request(server, `/api/export/lotes/${batch.id}/confirm`, 'POST', { confirmed: true }, admin.cookies);
+  assert.equal(confirmed.status, 200, confirmed.text);
+  assert.equal(confirmed.json().batch.estado, 'CONFIRMADO_QS');
+  assert.equal(db.prepare("SELECT estado FROM contactos WHERE id='cnt-acad-01'").get().estado, 'EXPORTADO');
+  const auditCount = () => db.prepare("SELECT COUNT(*) AS n FROM auditoria WHERE accion='EXPORTACION'").get().n;
+  const audits = auditCount(); assert.ok(audits > 0);
+  await request(server, `/api/export/lotes/${batch.id}/confirm`, 'POST', { confirmed: true }, admin.cookies);
+  assert.equal(auditCount(), audits);
+  const stale = (await prepare()).json().batch;
+  await request(server, `/api/export/lotes/${stale.id}/received`, 'POST', {}, admin.cookies);
+  db.prepare("UPDATE contactos SET phone='99990000' WHERE id='cnt-acad-01'").run();
+  assert.equal((await request(server, `/api/export/lotes/${stale.id}/confirm`, 'POST', { confirmed: true }, admin.cookies)).status, 409);
+  assert.equal(auditCount(), audits);
+  const corrupt = (await prepare()).json().batch;
+  const file = db.prepare('SELECT archivo FROM exportaciones WHERE id=?').get(corrupt.id).archivo;
+  fs.appendFileSync(path.join(storage, 'exports', file), 'alterado');
+  assert.equal((await request(server, corrupt.downloadUrl, 'GET', undefined, admin.cookies)).status, 409);
+});
+
+test('respaldo descargable, recuperación aislada y limpieza manual protegen datos y archivos recientes', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-storage-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const created = await request(server, '/api/drive/backup', 'POST', {}, admin.cookies);
+  assert.equal(created.status, 200, created.text);
+  const name = created.json().backupFileName;
+  const route = '/api/admin/backups/download?name=' + encodeURIComponent(name);
+  assert.equal((await request(server, route, 'GET', undefined, guest.cookies)).status, 403);
+  assert.equal((await request(server, '/api/admin/backups/download?name=..%2Ftec_qs.sqlite', 'GET', undefined, admin.cookies)).status, 400);
+  const response = await request(server, route, 'GET', undefined, admin.cookies);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.buffer, fs.readFileSync(created.json().backupPath));
+  const output = path.join(storage, 'restored.sqlite');
+  const result = spawnSync(process.execPath, [path.join(appRoot, 'scripts/prepare-restore.js'), created.json().backupPath, output], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const { DatabaseSync } = require('node:sqlite');
+  const restored = new DatabaseSync(output, { readOnly: true });
+  assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM sesiones').get().n, 0);
+  assert.ok(restored.prepare('SELECT COUNT(*) AS n FROM contactos').get().n > 0);
+  restored.close();
+  assert.notEqual(spawnSync(process.execPath, [path.join(appRoot, 'scripts/prepare-restore.js'), created.json().backupPath, output]).status, 0);
+  const bad = path.join(storage, 'invalid.sqlite'); fs.writeFileSync(bad, 'invalid');
+  assert.notEqual(spawnSync(process.execPath, [path.join(appRoot, 'scripts/prepare-restore.js'), bad, path.join(storage, 'absent.sqlite')]).status, 0);
+  assert.equal(fs.existsSync(path.join(storage, 'absent.sqlite')), false);
+  for (let i = 0; i < 4; i++) {
+    const file = path.join(storage, 'backups', `tec_qs_backup_old${i}.sqlite`);
+    fs.writeFileSync(file, response.buffer);
+    const when = new Date(Date.now() - (40 + i) * 86400000); fs.utimesSync(file, when, when);
+  }
+  const old = path.join(storage, 'uploads', 'obsolete.xlsx'); fs.writeFileSync(old, 'old');
+  const when = new Date(Date.now() - 40 * 86400000); fs.utimesSync(old, when, when);
+  const protectedFile = path.join(storage, 'exports', 'lote_protected.xlsx'); fs.writeFileSync(protectedFile, 'official'); fs.utimesSync(protectedFile, when, when);
+  const overview = () => request(server, '/api/admin/overview', 'GET', undefined, admin.cookies);
+  const info = (await overview()).json().storage;
+  assert.equal(info.backups.length, 5);
+  assert.equal(info.cleanupCandidates.filter(f => f.category === 'RESPALDOS').length, 2);
+  assert.equal(info.cleanupCandidates.some(f => f.name === 'lote_protected.xlsx'), false);
+  const target = info.cleanupCandidates.find(f => f.name === 'obsolete.xlsx');
+  assert.ok(target);
+  assert.equal((await request(server, '/api/admin/storage/delete', 'POST', { id: target.id }, admin.cookies)).status, 400);
+  assert.equal(fs.existsSync(old), true);
+  assert.equal((await request(server, '/api/admin/storage/delete', 'POST', { id: target.id, confirmed: true }, guest.cookies)).status, 403);
+  fs.appendFileSync(old, 'changed');
+  assert.equal((await request(server, '/api/admin/storage/delete', 'POST', { id: target.id, confirmed: true }, admin.cookies)).status, 409);
+  fs.utimesSync(old, when, when);
+  const current = (await overview()).json().storage.cleanupCandidates.find(f => f.name === 'obsolete.xlsx');
+  assert.equal((await request(server, '/api/admin/storage/delete', 'POST', { id: current.id, confirmed: true }, admin.cookies)).status, 200);
+  assert.equal(fs.existsSync(old), false);
+  assert.equal(fs.existsSync(created.json().backupPath), true);
+});
+
+test('campañas preservan registros anteriores, filtros pendientes, incidencias sin secretos y recursos con versión', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-campaigns-'));
+  let server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  let admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  db.exec("UPDATE contactos SET campania_id=NULL WHERE id='cnt-acad-01'; UPDATE contactos SET estado='NUEVO' WHERE id='cnt-emp-01'");
+  db.close();
+  assert.equal((await request(server, '/api/admin/campaigns', 'POST', { name: 'Recolección nueva', confirmed: true }, guest.cookies)).status, 403);
+  const campaign = (await request(server, '/api/admin/campaigns', 'POST', { name: 'Recolección nueva', confirmed: true }, admin.cookies)).json().campaign;
+  assert.ok(campaign.id);
+  const unassigned = (await request(server, '/api/contacts?campania_id=SIN_ASIGNAR', 'GET', undefined, admin.cookies)).json();
+  assert.equal(unassigned.count, 1);
+  const pending = (await request(server, '/api/contacts?pendientes=true', 'GET', undefined, admin.cookies)).json();
+  assert.equal(pending.count, 1);
+  assert.equal(pending.contacts[0].id, 'cnt-emp-01');
+  assert.equal((await request(server, '/api/contacts?campania_id=' + campaign.id, 'GET', undefined, admin.cookies)).json().count, 0);
+  const writer = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  writer.exec(`INSERT INTO contactos (id,tipo_contacto,title,first_name,last_name,email,email_normalized,country_name,estado,metodo_ingreso,created_by,created_at)
+    VALUES ('new-campaign-contact','ACADEMICO','Dr','Nuevo','Contacto','new@example.org','new@example.org','Costa Rica','NUEVO','INDIVIDUAL','test',datetime('now'))`);
+  assert.equal(writer.prepare("SELECT campania_id FROM contactos WHERE id='new-campaign-contact'").get().campania_id, campaign.id);
+  writer.close();
+  assert.equal((await request(server, '/api/contacts?campania_id=' + campaign.id, 'GET', undefined, admin.cookies)).json().count, 1);
+  const html = await request(server, '/');
+  assert.match(html.headers['cache-control'], /no-store/);
+  assert.doesNotMatch(html.text, /cdn\.tailwindcss\.com/);
+  const cssUrl = html.text.match(/href="(\/css\/tailwind\.css\?v=[a-f0-9]+)"/)[1];
+  const css = await request(server, cssUrl);
+  assert.match(css.headers['cache-control'], /immutable/);
+  assert.match(css.text, /002855|0 40 85/);
+  assert.equal((await request(server, cssUrl, 'GET', undefined, undefined, { 'If-None-Match': css.headers.etag })).status, 304);
+  const secret = 'test-secret-must-not-appear@example.org';
+  const error = spawnSync(process.execPath, ['-e', "require('./src/services/errorService').recordError(new Error(process.env.TEST_SECRET), {method:'POST',pathname:'/api/export/prepare'})"],
+    { cwd: appRoot, env: { ...process.env, STORAGE_DIR: storage, TEST_SECRET: secret }, encoding: 'utf8' });
+  assert.equal(error.status, 0, error.stderr);
+  assert.doesNotMatch(fs.readFileSync(path.join(storage, 'technical-errors.jsonl'), 'utf8'), new RegExp(secret));
+  const overview = await request(server, '/api/admin/overview', 'GET', undefined, admin.cookies);
+  assert.equal(overview.json().errors.length, 1);
+  assert.equal((await request(server, '/api/admin/overview', 'GET', undefined, guest.cookies)).status, 403);
+  await server.stop();
+  server = await startServer(storage);
+  admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  assert.equal((await request(server, '/api/contacts?campania_id=SIN_ASIGNAR', 'GET', undefined, admin.cookies)).json().count, 1);
+});
+
 async function startServer(storage, port = '0', azure = true, overrides = {}) {
   const child = spawn(process.execPath, ['-e', `
     const server = require('./server');
@@ -68,12 +215,11 @@ function request(server, route, method = 'GET', body, cookie, extraHeaders = {})
     const req = http.request({ ...connection, path: route, method, agent: false,
       headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...extraHeaders }
     }, res => {
-      let text = '';
-      res.setEncoding('utf8');
-      res.on('data', chunk => { text += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text,
+      const chunks = [];
+      res.on('data', chunk => { chunks.push(chunk); });
+      res.on('end', () => { const buffer = Buffer.concat(chunks); const text = buffer.toString('utf8'); resolve({ status: res.statusCode, headers: res.headers, text, buffer,
         cookies: (res.headers['set-cookie'] || []).filter(c => !c.includes('Max-Age=0')).map(c => c.split(';')[0]).join('; '),
-        json: () => JSON.parse(text) }));
+        json: () => JSON.parse(text) }); });
     });
     req.setTimeout(5000, () => req.destroy(new Error('Tiempo de respuesta agotado')));
     req.on('error', reject);
@@ -1078,7 +1224,7 @@ test('sesión inactiva deja de consultar y reanuda solo por acción explícita, 
     document: { getElementById: node, addEventListener: (event, cb) => { events[event] = cb; },
       createElement: () => node('session-suspended'), body: { appendChild() {} } },
     RegisterModule: { captureDraft() { captured++; }, resetReporter() {} },
-    BulkUploadModule: { resetReporter() {} }, DirectoryModule: { selectedIds: new Set() }, AdminModule: {},
+    BulkUploadModule: { resetReporter() {} }, DirectoryModule: { selectedIds: new Set() }, AdminModule: {}, ExportModule: {},
     API: { post: async endpoint => { calls.push(endpoint); return { user: { id: 'same-guest', rol: 'USUARIO', idle_timeout_ms: 60000 } }; } }
   });
   vm.runInContext(fs.readFileSync(path.join(appRoot, 'public/js/app.js'), 'utf8') + '\nglobalThis.app = App;', context);

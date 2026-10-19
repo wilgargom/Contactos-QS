@@ -5,7 +5,7 @@ const root = path.resolve(__dirname, '..');
 const output = path.join(root, 'build', 'azure');
 
 // Lista explícita: no publicar ejecutables locales, ZIP, credenciales ni datos.
-const runtimeFiles = ['server.js', 'package.json', 'web.config', 'src', 'public'];
+const runtimeFiles = ['server.js', 'package.json', 'web.config', 'src', 'public', 'scripts/prepare-restore.js'];
 for (const name of runtimeFiles) {
   if (!fs.existsSync(path.join(root, name))) {
     throw new Error(`Falta un archivo de ejecución: ${name}`);
@@ -14,6 +14,7 @@ for (const name of runtimeFiles) {
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 for (const name of runtimeFiles) {
+  fs.mkdirSync(path.dirname(path.join(output, name)), { recursive: true });
   fs.cpSync(path.join(root, name), path.join(output, name), { recursive: true });
 }
 // La aplicación actual solo utiliza módulos integrados de Node.js 24.

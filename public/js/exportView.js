@@ -2,6 +2,9 @@
 const ExportModule = {
   currentTipo: 'ACADEMICO',
   catalogs: null,
+  batches: [],
+  pendingBatch: null,
+  busy: false,
 
   init(catalogs) {
     this.catalogs = catalogs;
@@ -74,6 +77,10 @@ const ExportModule = {
             Filtros de Período y Alcance (Opcional)
           </h4>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+            <div class="form-group sm:col-span-2"><label for="exp-campaign" class="form-label text-xs">Campaña</label>
+              <select id="exp-campaign" class="form-control"><option value="">Todas las campañas</option>
+              <option value="SIN_ASIGNAR">Sin campaña asignada</option>
+              ${(this.catalogs?.campanias || []).map(c => `<option value="${DirectoryModule.escapeSelectionText(c.id)}">${DirectoryModule.escapeSelectionText(c.nombre)}</option>`).join('')}</select></div>
             <div class="form-group">
               <label class="form-label text-xs">Fecha Desde</label>
               <input type="date" class="form-control" id="exp-fecha-inicio">
@@ -94,12 +101,16 @@ const ExportModule = {
           <div class="flex justify-end">
             <button class="btn btn-tec" id="btn-export-download" onclick="ExportModule.triggerExport()">
               <i class="fa-solid fa-file-arrow-down"></i>
-              Descargar Archivo Oficial XLSX para QS
+              Preparar archivo y revisar
             </button>
           </div>
         </div>
+        <div id="exp-result" class="mb-6" aria-live="polite"></div>
+        <h3 class="font-bold text-slate-800 mb-3">Lotes preparados y confirmados</h3>
+        <div id="exp-history" class="table-responsive"></div>
       </div>
     `;
+    this.loadBatches();
   },
 
   setTipo(tipo) {
@@ -108,37 +119,84 @@ const ExportModule = {
   },
 
   async triggerExport() {
+    if (this.busy) return;
+    this.busy = true;
     const btn = document.getElementById('btn-export-download');
     if (btn) btn.disabled = true;
 
     const fechaInicio = document.getElementById('exp-fecha-inicio')?.value || '';
     const fechaFin = document.getElementById('exp-fecha-fin')?.value || '';
 
-    const params = new URLSearchParams();
-    if (fechaInicio) params.append('fecha_inicio', fechaInicio);
-    if (fechaFin) params.append('fecha_fin', fechaFin);
+    const filters = {};
+    if (fechaInicio) filters.fecha_inicio = fechaInicio;
+    if (fechaFin) filters.fecha_fin = fechaFin;
+    const campaign = document.getElementById('exp-campaign')?.value;
+    if (campaign) filters.campania_id = campaign;
 
     try {
       App.showToast('Generando archivo consolidado...', 'info');
-      const url = `/api/export/${this.currentTipo}?${params.toString()}`;
-      const response = await API.get(url);
-
-      if (response.isBlob) {
-        const downloadUrl = window.URL.createObjectURL(response.blob);
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = `TEC_QS_${this.currentTipo}_${new Date().toISOString().slice(0, 10)}.xlsx`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(downloadUrl);
-
-        App.showToast('✅ Archivo Excel descargado exitosamente y archivado en evidencias.', 'success');
-      }
+      const response = await API.post('/api/export/prepare', { tipo: this.currentTipo, filters });
+      this.pendingBatch = response.batch;
+      const esc = value => DirectoryModule.escapeSelectionText(value);
+      document.getElementById('exp-result').innerHTML = `<div class="alert alert-info"><div>
+        <strong>Lote preparado:</strong> ${esc(response.batch.total)} contactos completos y ${esc(response.batch.excluidos)} excluidos.
+        <p>Descargue y revise el archivo, realice el envío a QS y registre la confirmación desde la tabla.</p>
+        ${(response.batch.inconsistencias || []).map(row => `<p class="text-xs">Registro ${esc(row.id)}: ${esc(Object.values(row.errors).join('; '))}</p>`).join('')}
+        </div></div>`;
+      await this.loadBatches();
     } catch (err) {
       App.showToast(err.message || 'Error al exportar contactos', 'error');
     } finally {
+      this.busy = false;
       if (btn) btn.disabled = false;
     }
+  },
+
+  async loadBatches() {
+    try {
+      const result = await API.get('/api/export/lotes');
+      if (App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
+      this.batches = result.batches;
+      const target = document.getElementById('exp-history');
+      if (!target) return;
+      const esc = value => DirectoryModule.escapeSelectionText(value);
+      const labels = { GENERADO: 'Archivo preparado', RECIBIDO_NAVEGADOR: 'Recibido por el navegador', CONFIRMADO_QS: 'Envío a QS confirmado' };
+      target.innerHTML = `<table class="data-table"><thead><tr><th>Fecha / lote</th><th>Tipo y contactos</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
+        ${this.batches.map(b => `<tr><td>${esc(new Date(b.created_at).toLocaleString())}<br><small>${esc(b.id)}</small></td>
+        <td>${esc(b.tipo)} · ${esc(b.total)}</td><td>${esc(labels[b.estado] || b.estado)}</td><td>
+        <button type="button" class="btn btn-outline btn-xs" onclick="ExportModule.downloadBatch('${b.id}')">Descargar</button>
+        ${b.estado === 'RECIBIDO_NAVEGADOR' ? `<button type="button" class="btn btn-tec btn-xs" onclick="ExportModule.confirmExport('${b.id}')">Confirmar envío a QS</button>` : ''}</td></tr>`).join('')}
+        </tbody></table>`;
+    } catch (err) { App.showToast(err.message, 'error'); }
+  },
+
+  async downloadBatch(id) {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const batch = this.batches.find(b => b.id === id);
+      if (!batch) return;
+      const response = await API.get(batch.downloadUrl);
+      const url = window.URL.createObjectURL(response.blob);
+      const anchor = document.createElement('a');
+      anchor.href = url; anchor.download = batch.filename;
+      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+      await API.post(`/api/export/lotes/${id}/received`);
+      App.showToast('Archivo recibido por el navegador. Confirme el envío únicamente después de realizarlo.', 'info');
+      await this.loadBatches();
+    } catch (err) { App.showToast(err.message, 'error'); }
+    finally { this.busy = false; }
+  },
+
+  async confirmExport(id) {
+    if (this.busy || !window.confirm('¿Confirma que ya envió a QS el archivo de este lote? Los contactos se marcarán como exportados.')) return;
+    this.busy = true;
+    try {
+      await API.post(`/api/export/lotes/${id}/confirm`, { confirmed: true });
+      App.showToast('Confirmación de envío registrada con auditoría por contacto.', 'success');
+      await this.loadBatches();
+    } catch (err) { App.showToast(err.message, 'error'); }
+    finally { this.busy = false; }
   }
 };

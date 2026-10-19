@@ -158,6 +158,10 @@ const App = {
     }
     AdminModule.stats = null;
     AdminModule.driveStatus = null;
+    AdminModule.storage = null;
+    AdminModule.errors = [];
+    ExportModule.batches = [];
+    ExportModule.pendingBatch = null;
     DirectoryModule.contacts = [];
     DirectoryModule.selectedContact = null;
     DirectoryModule.selectedIds.clear();

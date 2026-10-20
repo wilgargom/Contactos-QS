@@ -329,14 +329,14 @@ const App = {
     const navPersonal = document.getElementById('nav-item-personal');
     if (navPersonal) navPersonal.style.display = isAdmin ? 'none' : 'block';
     const navDirectory = document.getElementById('nav-item-directory');
-    if (navDirectory) navDirectory.style.display = isAdmin || !this.catalogs?.institutional_auth_enabled ? 'block' : 'none';
+    if (navDirectory) navDirectory.style.display = isAdmin ? 'block' : 'none';
   },
 
   navigate(tabName) {
     if (this.suspended) return;
     if (['admin', 'export'].includes(tabName) && this.currentUser?.rol !== 'ADMIN') tabName = 'register';
     if (tabName === 'personal' && this.currentUser?.rol === 'ADMIN') tabName = 'admin';
-    if (tabName === 'directory' && this.currentUser?.rol !== 'ADMIN' && this.catalogs?.institutional_auth_enabled) tabName = 'personal';
+    if (tabName === 'directory' && this.currentUser?.rol !== 'ADMIN') tabName = 'personal';
     this.activeTab = tabName;
 
     // Actualizar estilos activos en el menú lateral izquierdo

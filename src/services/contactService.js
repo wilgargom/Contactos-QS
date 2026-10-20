@@ -4,7 +4,7 @@ const { validateContact, normalizeEmail } = require('../utils/validator');
 const { checkDuplicate } = require('./duplicateDetector');
 
 function canManage(contact, user) {
-  return Boolean(user && (user.rol === 'ADMIN' || (user.institutional_funcionario_id ? !contact.es_consolidado && contact.reportante_funcionario_id === user.institutional_funcionario_id : contact.created_by === user.id)));
+  return Boolean(user && (user.rol === 'ADMIN' || contact.created_by === user.id));
 }
 
 function logAudit(trx, contactoId, usuario, accion, detalles) {
@@ -216,10 +216,7 @@ function listContacts(filters = {}, user = null, paginate = false) {
   else if (filters.campania_id) { sql += ' AND c.campania_id = ?'; params.push(filters.campania_id); }
 
   // Requisito: El usuario estándar solo puede ver lo que ingresó por carga masiva o registro individual
-  if (user?.institutional_funcionario_id && user.rol !== 'ADMIN') {
-    sql += ' AND c.es_consolidado = 0 AND c.reportante_funcionario_id = ?';
-    params.push(user.institutional_funcionario_id);
-  } else if (user && user.rol !== 'ADMIN') {
+  if (user && user.rol !== 'ADMIN') {
     sql += " AND (c.created_by = ? OR (? <> '' AND LOWER(c.recomienda_email) = LOWER(?)))";
     params.push(user.id, (user.email || '').trim(), (user.email || '').trim());
   } else if ((filters.mis_registros_solamente === 'true' || filters.mis_registros_solamente === '1' || filters.mis_registros_solamente === true) && user) {

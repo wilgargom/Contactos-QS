@@ -53,7 +53,7 @@ function getFuncionarioByEmail(email) {
     FROM funcionarios f
     LEFT JOIN sedes s ON f.sede_id = s.id
     LEFT JOIN departamentos d ON f.departamento_id = d.id
-    WHERE f.email_normalized = ?
+    WHERE f.email_normalized = ? AND f.activo = 1
   `).get(norm);
 
   if (!f) return null;
@@ -68,12 +68,12 @@ function searchFuncionarios(term = '', limit = 10) {
   const db = getDb();
   const clean = (term || '').trim();
   if (!clean) {
-    return db.prepare('SELECT * FROM funcionarios ORDER BY nombre ASC LIMIT ?').all(limit);
+    return db.prepare('SELECT * FROM funcionarios WHERE activo = 1 ORDER BY nombre ASC LIMIT ?').all(limit);
   }
   const likeTerm = `%${clean}%`;
   return db.prepare(`
     SELECT * FROM funcionarios
-    WHERE nombre LIKE ? OR email LIKE ? OR dependencia LIKE ?
+    WHERE activo = 1 AND (nombre LIKE ? OR email LIKE ? OR dependencia LIKE ?)
     ORDER BY nombre ASC
     LIMIT ?
   `).all(likeTerm, likeTerm, likeTerm, limit);
@@ -183,7 +183,7 @@ function bulkImportFuncionarios(rows) {
 
 function listFuncionarios() {
   const db = getDb();
-  return db.prepare('SELECT * FROM funcionarios ORDER BY nombre ASC').all();
+  return db.prepare('SELECT * FROM funcionarios WHERE activo = 1 ORDER BY nombre ASC').all();
 }
 
 // Validación común de la persona reportante para registro individual y carga de contactos.

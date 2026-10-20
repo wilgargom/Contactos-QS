@@ -80,6 +80,19 @@ function getDb() {
         CREATE INDEX IF NOT EXISTS idx_funcionarios_email_norm ON funcionarios(email_normalized);
       `);
     } catch (_) {}
+    const funcionarioColumns = dbInstance.prepare('PRAGMA table_info(funcionarios)').all();
+    for (const [name, definition] of [['cargo', "TEXT NOT NULL DEFAULT ''"], ['activo', 'INTEGER NOT NULL DEFAULT 1'], ['version', 'INTEGER NOT NULL DEFAULT 1']]) {
+      if (!funcionarioColumns.some(c => c.name === name)) dbInstance.exec('ALTER TABLE funcionarios ADD COLUMN ' + name + ' ' + definition);
+    }
+    dbInstance.exec(`CREATE TRIGGER IF NOT EXISTS funcionarios_version AFTER UPDATE ON funcionarios
+      WHEN NEW.version = OLD.version BEGIN
+        UPDATE funcionarios SET version = OLD.version + 1 WHERE id = NEW.id;
+      END;
+      CREATE TABLE IF NOT EXISTS funcionarios_historial (
+        id TEXT PRIMARY KEY, funcionario_id TEXT NOT NULL REFERENCES funcionarios(id),
+        usuario_id TEXT NOT NULL, usuario_nombre TEXT NOT NULL, accion TEXT NOT NULL,
+        detalles TEXT NOT NULL, created_at TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS idx_funcionarios_historial ON funcionarios_historial(funcionario_id, created_at DESC);`);
   }
   return dbInstance;
 }

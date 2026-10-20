@@ -1,5 +1,124 @@
 // Módulo de Administración, Métricas KPI y Google Drive
 const AdminModule = {
+
+  funcionariosRequest: 0,
+  funcionariosPage: 1,
+  funcionariosQuery: '',
+  funcionariosEstado: 'todos',
+  funcionarioEditing: null,
+  funcionariosBusy: false,
+
+  closeFuncionarios() {
+    this.funcionariosRequest++;
+    this.funcionarioEditing = null;
+    document.getElementById('admin-funcionarios-dialog')?.close();
+    const content = document.getElementById('admin-funcionarios-content');
+    if (content) content.replaceChildren();
+  },
+
+  openFuncionarios() {
+    if (App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
+    this.funcionariosPage = 1;
+    this.funcionariosQuery = '';
+    this.funcionariosEstado = 'todos';
+    document.getElementById('admin-funcionarios-dialog').showModal();
+    this.loadFuncionarios();
+  },
+
+  async loadFuncionarios(page = this.funcionariosPage) {
+    if (App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
+    const seq = ++this.funcionariosRequest, session = App.sessionVersion;
+    const host = document.getElementById('admin-funcionarios-content');
+    if (!host) return;
+    this.funcionarioEditing = null;
+    host.textContent = 'Cargando padrón…';
+    try {
+      const data = await API.get('/api/admin/funcionarios', { q: this.funcionariosQuery, estado: this.funcionariosEstado, page: String(page) });
+      if (seq !== this.funcionariosRequest || session !== App.sessionVersion || App.currentUser?.rol !== 'ADMIN' || App.suspended || !host.isConnected) return;
+      this.funcionariosPage = page;
+      if (!data.funcionarios.length && page > 1) return this.loadFuncionarios(page - 1);
+      const esc = value => DirectoryModule.escapeSelectionText(value);
+      host.innerHTML = '<p class="text-sm text-slate-600 mb-4">Los cambios se aplican a los nuevos reportes. Los contactos existentes conservan la procedencia registrada. Un funcionario inactivo no se identifica como reportante.</p>' +
+        '<form id="funcionarios-search" class="flex flex-wrap gap-3 mb-4"><label for="funcionarios-query">Buscar</label><input id="funcionarios-query" class="form-control" maxlength="200" placeholder="Nombre, correo, cargo o dependencia" value="' + esc(this.funcionariosQuery) + '">' +
+        '<label for="funcionarios-estado">Estado</label><select id="funcionarios-estado" class="form-control">' +
+        [['todos','Todos'],['activos','Activos'],['inactivos','Inactivos']].map(([v,t]) => '<option value="'+v+'" '+(v===this.funcionariosEstado?'selected':'')+'>'+t+'</option>').join('') +
+        '</select><button type="submit" class="btn btn-outline">Buscar</button><button type="button" class="btn btn-tec" id="funcionario-new">Agregar funcionario</button></form>' +
+        '<p role="status" class="mb-3">' + data.total + ' funcionarios · Página ' + page + ' de ' + Math.max(1,Math.ceil(data.total / data.pageSize)) + '</p>' +
+        '<div class="table-responsive"><table class="data-table"><thead><tr><th>Nombre / correo</th><th>Cargo</th><th>Dependencia / sede</th><th>Estado</th><th>Acción</th></tr></thead><tbody>' +
+        data.funcionarios.map((f,i) => '<tr><td>'+esc(f.nombre)+'<br>'+esc(f.email)+'</td><td>'+esc(f.cargo || 'Sin especificar')+'</td><td>'+esc(f.dependencia)+'<br>'+esc(f.sede)+'</td><td>'+(f.activo?'Activo':'Inactivo')+'</td><td><button type="button" class="btn btn-outline btn-sm" data-funcionario-index="'+i+'">Editar ficha</button></td></tr>').join('') +
+        (data.total ? '' : '<tr><td colspan="5">No se encontraron funcionarios.</td></tr>') +
+        '</tbody></table></div><div class="flex gap-3 mt-4"><button type="button" id="funcionarios-prev" class="btn btn-outline" '+(page<=1?'disabled':'')+'>Anterior</button><button type="button" id="funcionarios-next" class="btn btn-outline" '+(page*data.pageSize>=data.total?'disabled':'')+'>Siguiente</button></div>';
+      document.getElementById('funcionarios-search').onsubmit = event => {
+        event.preventDefault(); this.funcionariosQuery = document.getElementById('funcionarios-query').value.trim();
+        this.funcionariosEstado = document.getElementById('funcionarios-estado').value; this.loadFuncionarios(1);
+      };
+      document.getElementById('funcionario-new').onclick = () => this.editFuncionario();
+      document.getElementById('funcionarios-prev').onclick = () => this.loadFuncionarios(page - 1);
+      document.getElementById('funcionarios-next').onclick = () => this.loadFuncionarios(page + 1);
+      host.querySelectorAll('[data-funcionario-index]').forEach(button => {
+        button.onclick = () => this.editFuncionario(data.funcionarios[Number(button.dataset.funcionarioIndex)].id);
+      });
+    } catch (err) {
+      if (seq !== this.funcionariosRequest || session !== App.sessionVersion || !host.isConnected) return;
+      host.textContent = err.message;
+    }
+  },
+
+  async editFuncionario(id = null) {
+    if (App.currentUser?.rol !== 'ADMIN' || App.suspended || this.funcionariosBusy) return;
+    const seq = ++this.funcionariosRequest, session = App.sessionVersion;
+    const host = document.getElementById('admin-funcionarios-content');
+    try {
+      const data = id ? await API.get('/api/admin/funcionarios/' + encodeURIComponent(id)) : { funcionario: { activo: 1 }, history: [] };
+      // Refrescar catálogos: una carga reciente del padrón puede haber creado dependencias.
+      const catalogs = await API.get('/api/catalogs');
+      if (seq !== this.funcionariosRequest || session !== App.sessionVersion || App.currentUser?.rol !== 'ADMIN' || App.suspended || !host?.isConnected) return;
+      const f = data.funcionario, esc = value => DirectoryModule.escapeSelectionText(value);
+      this.funcionarioEditing = f;
+      const input = (key,label,type='text',required=true) => '<label class="block mb-3">'+label+'<input class="form-control" id="funcionario-'+key+'" type="'+type+'" maxlength="'+(key==='email'?254:200)+'" '+(required?'required':'')+' value="'+esc(f[key]||'')+'"></label>';
+      const options = (rows,selected) => '<option value="">Seleccione</option>' + rows.map(r => '<option value="'+esc(r.id)+'" '+(r.id===selected?'selected':'')+'>'+esc(r.nombre)+'</option>').join('');
+      host.innerHTML = '<h4 class="font-bold mb-3">'+(id?'Actualizar ficha':'Agregar funcionario')+'</h4><form id="funcionario-form">' +
+        input('nombre','Nombre completo')+input('email','Correo institucional','email')+input('cargo','Cargo / puesto (opcional)','text',false)+
+        '<label class="block mb-3">Sede<select id="funcionario-sede_id" class="form-control" required>'+options(catalogs.sedes,f.sede_id)+'</select></label>'+
+        '<label class="block mb-3">Escuela / Unidad<select id="funcionario-departamento_id" class="form-control" required></select></label>'+
+        '<label class="block mb-3"><input type="checkbox" id="funcionario-activo" '+(f.activo?'checked':'')+'> Activo para reportar contactos</label>'+
+        '<p class="text-sm text-slate-600 mb-3">La desactivación conserva la ficha y sus contactos anteriores. El correo debe ser único en el padrón.</p>'+
+        '<p id="funcionario-error" role="alert" class="text-red-600 mb-3"></p><div class="flex gap-3"><button type="submit" id="funcionario-save" class="btn btn-tec">Guardar cambios</button><button type="button" id="funcionario-cancel" class="btn btn-outline">Volver al padrón</button></div></form>'+
+        '<h4 class="font-bold mt-6 mb-3">Historial de cambios</h4><div class="table-responsive"><table class="data-table"><thead><tr><th>Fecha / administrador</th><th>Acción</th><th>Cambios</th></tr></thead><tbody>'+
+        data.history.map(h => {
+          let changes; try { changes = JSON.parse(h.detalles).map(c => c.campo + ': ' + (c.anterior ?? 'Vacío') + ' → ' + c.nuevo).join('; '); } catch (_) { changes = h.detalles; }
+          return '<tr><td>'+esc(new Date(h.created_at).toLocaleString())+'<br>'+esc(h.usuario_nombre)+'</td><td>'+esc(h.accion)+'</td><td>'+esc(changes)+'</td></tr>';
+        }).join('')+(data.history.length?'':'<tr><td colspan="3">Sin cambios registrados desde la habilitación de esta gestión.</td></tr>')+'</tbody></table></div>';
+      const sede = document.getElementById('funcionario-sede_id'), depto = document.getElementById('funcionario-departamento_id');
+      const refresh = selected => { depto.innerHTML = options(catalogs.departamentos.filter(d => !d.sede_id || d.sede_id === sede.value), selected); };
+      refresh(f.departamento_id); sede.onchange = () => refresh('');
+      document.getElementById('funcionario-cancel').onclick = () => this.loadFuncionarios();
+      document.getElementById('funcionario-form').onsubmit = event => { event.preventDefault(); this.saveFuncionario(); };
+    } catch (err) { if (seq === this.funcionariosRequest && session === App.sessionVersion) App.showToast(err.message, 'error'); }
+  },
+
+  async saveFuncionario() {
+    const f = this.funcionarioEditing;
+    if (!f || this.funcionariosBusy || App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
+    const data = {};
+    for (const k of ['nombre','email','cargo','sede_id','departamento_id']) data[k] = document.getElementById('funcionario-'+k).value.trim();
+    data.activo = document.getElementById('funcionario-activo').checked;
+    if (f.activo && !data.activo && !window.confirm('¿Desactivar al funcionario? Ya no se identificará para registrar o cargar nuevos contactos. Sus contactos anteriores se conservarán.')) return;
+    if (f.id) data.version = f.version;
+    this.funcionariosBusy = true;
+    const session = App.sessionVersion, seq = this.funcionariosRequest;
+    const button = document.getElementById('funcionario-save'), error = document.getElementById('funcionario-error');
+    button.disabled = true; error.textContent = '';
+    try {
+      if (f.id) await API.put('/api/admin/funcionarios/'+encodeURIComponent(f.id), data);
+      else await API.post('/api/admin/funcionarios', data);
+      if (session !== App.sessionVersion || seq !== this.funcionariosRequest || App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
+      App.showToast('Ficha del funcionario guardada.', 'success');
+      await this.loadFuncionarios();
+    } catch (err) { if (session === App.sessionVersion && seq === this.funcionariosRequest) error.textContent = err.message; }
+    finally { this.funcionariosBusy = false; button.disabled = false; }
+  },
+
   stats: null,
   driveStatus: null,
   catalogs: null,
@@ -68,6 +187,16 @@ const AdminModule = {
           </button>
         </div>
 
+        <section class="bg-slate-50 border border-slate-200 rounded-xl p-5 mb-6">
+          <h3 class="font-bold text-slate-900 mb-2">Padrón de funcionarios</h3>
+          <p class="text-sm text-slate-600 mb-3">Actualice el cargo y la dependencia institucional o desactive a quienes ya no deban reportar contactos.</p>
+          <button type="button" class="btn btn-tec" onclick="AdminModule.openFuncionarios()">Gestionar funcionarios</button>
+        </section>
+        <dialog id="admin-funcionarios-dialog" class="rounded-xl p-6" style="width:min(1100px,95vw);max-height:90vh">
+          <div class="flex items-center justify-between gap-4 mb-4"><h3 class="text-lg font-bold">Gestión de funcionarios</h3>
+          <button type="button" class="btn btn-outline" onclick="AdminModule.closeFuncionarios()">Cerrar</button></div>
+          <div id="admin-funcionarios-content"></div>
+        </dialog>
         <!-- Tarjetas KPI -->
         <div class="kpi-grid mb-6">
           <div class="kpi-card" style="border-top-color: var(--tec-primary);">

@@ -85,6 +85,12 @@ function handleApi(req, res, pathname, query, body, user) {
 
   if (pathname.startsWith('/api/admin/')) {
     try {
+      const funcionarios = require('../services/adminFuncionariosService');
+      if (pathname === '/api/admin/funcionarios' && method === 'GET') return res.json({ success: true, ...funcionarios.list(query) });
+      if (pathname === '/api/admin/funcionarios' && method === 'POST') return res.json({ success: true, ...funcionarios.save(null, body, user) });
+      const funcionarioRoute = pathname.match(/^\/api\/admin\/funcionarios\/([a-zA-Z0-9-]+)$/);
+      if (funcionarioRoute && method === 'GET') return res.json({ success: true, ...funcionarios.detail(funcionarioRoute[1]) });
+      if (funcionarioRoute && method === 'PUT') return res.json({ success: true, ...funcionarios.save(funcionarioRoute[1], body, user) });
       const storage = require('../services/storageService');
       const campaigns = require('../services/campaignService');
       if (pathname === '/api/admin/overview' && method === 'GET') {

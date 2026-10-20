@@ -1351,3 +1351,112 @@ test('sesión inactiva deja de consultar y reanuda solo por acción explícita, 
   assert.equal(app.currentUser.rol, 'USUARIO');
   assert.deepEqual(calls, ['/api/auth/suspend', '/api/auth/guest']);
 });
+
+
+test('gestión del padrón exige administrador, valida catálogos y registra cambios con control de versión', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-manage-funcionarios-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const endpoint = '/api/admin/funcionarios';
+  assert.equal((await request(server, endpoint, 'GET', undefined, guest.cookies)).status, 403);
+  assert.equal((await request(server, endpoint, 'POST', {}, guest.cookies)).status, 403);
+  const catalogs = (await request(server, '/api/catalogs', 'GET', undefined, admin.cookies)).json();
+  const depto = catalogs.departamentos.find(d => catalogs.sedes.some(s => !d.sede_id || s.id === d.sede_id));
+  const sede = catalogs.sedes.find(s => !depto.sede_id || s.id === depto.sede_id);
+  const body = { nombre: 'Funcionario Gestión', email: 'gestion.padron@itcr.ac.cr', cargo: 'Coordinador',
+    sede_id: sede.id, departamento_id: depto.id, activo: true };
+  for (const invalid of [{ ...body, email: 'externo@example.org' }, { ...body, sede_id: 'inexistente' },
+    { ...body, departamento_id: 'inexistente' }, { ...body, activo: 'true' }, { ...body, nombre: {} }]) {
+    assert.equal((await request(server, endpoint, 'POST', invalid, admin.cookies)).status, 400);
+  }
+  const create = await request(server, endpoint, 'POST', body, admin.cookies);
+  assert.equal(create.status, 200, create.text);
+  const f = create.json().funcionario;
+  assert.equal(f.version, 1);
+  assert.equal(create.json().history.length, 1);
+  assert.equal((await request(server, endpoint, 'POST', body, admin.cookies)).status, 409);
+  assert.equal((await request(server, endpoint+'/'+f.id, 'GET', undefined, guest.cookies)).status, 403);
+  assert.equal((await request(server, endpoint+'/'+f.id, 'PUT', { ...body, version: f.version }, guest.cookies)).status, 403);
+  const changed = await request(server, endpoint+'/'+f.id, 'PUT',
+    { ...body, cargo: 'Director', email: 'gestion.nueva@tec.ac.cr', version: f.version }, admin.cookies);
+  assert.equal(changed.status, 200, changed.text);
+  assert.equal(changed.json().funcionario.version, 2);
+  assert.equal(changed.json().history.length, 2);
+  const changes = JSON.parse(changed.json().history[0].detalles);
+  assert.ok(changes.some(c => c.campo === 'cargo' && c.anterior === 'Coordinador' && c.nuevo === 'Director'));
+  assert.equal((await request(server, endpoint+'/'+f.id, 'PUT', { ...body, version: f.version }, admin.cookies)).status, 409);
+  assert.equal((await request(server, '/api/funcionarios/by-email?email='+body.email, 'GET', undefined, guest.cookies)).json().exists, false);
+  assert.equal((await request(server, '/api/funcionarios/by-email?email=gestion.nueva@tec.ac.cr', 'GET', undefined, guest.cookies)).json().exists, true);
+  const search = (await request(server, endpoint+'?q=Director', 'GET', undefined, admin.cookies)).json();
+  assert.ok(search.funcionarios.some(row => row.id === f.id));
+  assert.ok(search.funcionarios.length <= 25);
+  assert.equal((await request(server, endpoint+'?page=-1', 'GET', undefined, admin.cookies)).status, 400);
+});
+
+test('cambiar dependencia conserva contactos anteriores y la desactivación impide reportes individuales y masivos', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-funcionario-history-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const endpoint = '/api/admin/funcionarios';
+  const catalogs = (await request(server, '/api/catalogs', 'GET', undefined, admin.cookies)).json();
+  const deps = catalogs.departamentos.filter(d => catalogs.sedes.some(s => !d.sede_id || s.id === d.sede_id));
+  assert.ok(deps.length > 1);
+  const assignment = d => ({ sede_id: catalogs.sedes.find(s => !d.sede_id || s.id === d.sede_id).id, departamento_id: d.id });
+  let body = { nombre: 'Funcionario Histórico', email: 'historico@itcr.ac.cr', cargo: '', activo: true, ...assignment(deps[0]) };
+  let f = (await request(server, endpoint, 'POST', body, admin.cookies)).json().funcionario;
+  const contact = { tipo_contacto: 'EMPLEADOR', title: 'Mr', first_name: 'Historia', last_name: 'Inicial',
+    email: 'historia.inicial@example.org', position: 'Director', company_name: 'Empresa Histórica', industry: 'Servicios',
+    country_name: 'Costa Rica', recomienda_email: body.email, allow_duplicate_override: true };
+  const saved = await request(server, '/api/contacts', 'POST', contact, guest.cookies);
+  assert.equal(saved.status, 201, saved.text);
+  const initial = (await request(server, '/api/contacts?q=historia.inicial', 'GET', undefined, admin.cookies)).json().contacts[0];
+  body = { ...body, ...assignment(deps[1]) };
+  const update = await request(server, endpoint+'/'+f.id, 'PUT', { ...body, version: f.version }, admin.cookies);
+  assert.equal(update.status, 200, update.text); f = update.json().funcionario;
+  const old = (await request(server, '/api/contacts/'+initial.id, 'GET', undefined, admin.cookies)).json().contact;
+  assert.equal(old.departamento_id, deps[0].id);
+  const next = await request(server, '/api/contacts', 'POST', { ...contact, first_name: 'Nueva', last_name: 'Dependencia',
+    company_name: 'Empresa Nueva', email: 'historia.nueva@example.org' }, guest.cookies);
+  assert.equal(next.status, 201, next.text);
+  assert.equal((await request(server, '/api/contacts?q=historia.nueva', 'GET', undefined, admin.cookies)).json().contacts[0].departamento_id, deps[1].id);
+  const disabled = await request(server, endpoint+'/'+f.id, 'PUT', { ...body, activo: false, version: f.version }, admin.cookies);
+  assert.equal(disabled.status, 200, disabled.text); f = disabled.json().funcionario;
+  assert.equal((await request(server, '/api/funcionarios/by-email?email='+body.email, 'GET', undefined, guest.cookies)).json().exists, false);
+  assert.ok(!(await request(server, '/api/funcionarios?q=historico@itcr.ac.cr', 'GET', undefined, guest.cookies)).json().funcionarios.some(r => r.id === f.id));
+  assert.equal((await request(server, '/api/contacts', 'POST', { ...contact, email: 'bloqueado@example.org' }, guest.cookies)).status, 422);
+  assert.equal((await request(server, '/api/bulk/import', 'POST', { tipo_contacto: 'EMPLEADOR', recomienda_email: body.email,
+    rowsToImport: [{ ...contact, email: 'masivo.bloqueado@example.org' }] }, guest.cookies)).status, 422);
+  assert.ok((await request(server, endpoint+'?estado=inactivos', 'GET', undefined, admin.cookies)).json().funcionarios.some(r => r.id === f.id));
+  assert.equal((await request(server, endpoint+'/'+f.id, 'PUT', { ...body, activo: true, version: f.version }, admin.cookies)).status, 200);
+  assert.equal((await request(server, '/api/funcionarios/by-email?email='+body.email, 'GET', undefined, guest.cookies)).json().exists, true);
+});
+
+test('ventana de funcionarios escapa textos y descarta respuestas al cerrar sesión', async () => {
+  const vm = require('node:vm'), nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) nodes.set(id, { innerHTML: '', textContent: '', isConnected: true, value: '', querySelectorAll: () => [],
+      showModal() {}, close() {}, replaceChildren() {} });
+    return nodes.get(id);
+  };
+  const attack = '<img src=x onerror=alert(1)>';
+  let resolveRequest;
+  const app = { currentUser: { rol: 'ADMIN' }, sessionVersion: 1, suspended: false, showToast() {} };
+  const context = vm.createContext({ console, document: { getElementById: node }, App: app,
+    DirectoryModule: { escapeSelectionText: s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;') },
+    API: { get: async () => ({ funcionarios: [{ id: 'f-1', nombre: attack, email: attack, cargo: attack, dependencia: attack, sede: attack, activo: 1 }], total: 1, pageSize: 25 }) } });
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/adminView.js'),'utf8')+'\nglobalThis.mod=AdminModule;', context);
+  await context.mod.loadFuncionarios(1);
+  assert.doesNotMatch(node('admin-funcionarios-content').innerHTML, /<img/);
+  assert.match(node('admin-funcionarios-content').innerHTML, /&lt;img/);
+  context.API.get = () => new Promise(resolve => { resolveRequest = resolve; });
+  const pending = context.mod.loadFuncionarios(1);
+  app.currentUser = null; app.sessionVersion++;
+  node('admin-funcionarios-content').innerHTML = '';
+  resolveRequest({ funcionarios: [{ nombre: attack }], total: 1, pageSize: 25 });
+  await pending;
+  assert.equal(node('admin-funcionarios-content').innerHTML, '');
+});

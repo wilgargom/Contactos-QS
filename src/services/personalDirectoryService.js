@@ -1,7 +1,7 @@
 const { getDb } = require('../database/db');
 function fail(message) { throw Object.assign(new Error(message), { statusCode: 400 }); }
-function list(identity, query = {}) {
-  const db = getDb(), f = identity.funcionario;
+function list(reporter, query = {}) {
+  const db = getDb(), f = reporter.funcionario;
   if (Object.keys(query).some(k => !['origen', 'q', 'tipo_contacto', 'metodo', 'director_id', 'departamento_id', 'page'].includes(k))) fail('La consulta contiene filtros no admitidos.');
   if (Object.values(query).some(v => typeof v !== 'string')) fail('Filtros inválidos.');
   const origen = query.origen || 'actuales';
@@ -10,7 +10,7 @@ function list(identity, query = {}) {
   if (query.metodo && !['INDIVIDUAL','CARGA_MASIVA'].includes(query.metodo)) fail('Método inválido.');
   const page = Number(query.page || 1);
   if (!Number.isSafeInteger(page) || page < 1 || page > 100000 || (query.q || '').length > 200) fail('Revise la búsqueda o la página.');
-  // La identidad proviene de Microsoft + padrón, nunca de un correo o dependencia enviados por el navegador.
+  // El correo ingresado identifica una ficha activa del padrón. El servidor toma de esa ficha el identificador y la dependencia; los filtros no cambian ese alcance.
   const own = 'c.es_consolidado = 0 AND c.reportante_funcionario_id = ?';
   const consolidated = 'c.es_consolidado = 1 AND c.departamento_id = ? AND c.director_funcionario_id IS NOT NULL';
   const base = origen === 'actuales' ? own : consolidated, args = [origen === 'actuales' ? f.id : f.departamento_id];

@@ -102,7 +102,6 @@ function getDb() {
     if (!contactColumns.some(c => c.name === 'reportante_funcionario_id')) dbInstance.exec("UPDATE contactos SET reportante_funcionario_id = (SELECT f.id FROM funcionarios f WHERE f.email_normalized = LOWER(TRIM(contactos.recomienda_email))) WHERE es_consolidado = 0");
     dbInstance.exec("CREATE TRIGGER IF NOT EXISTS contactos_reportante AFTER INSERT ON contactos WHEN NEW.es_consolidado = 0 AND NEW.reportante_funcionario_id IS NULL BEGIN UPDATE contactos SET reportante_funcionario_id = (SELECT f.id FROM funcionarios f WHERE f.email_normalized = LOWER(TRIM(NEW.recomienda_email))) WHERE id = NEW.id; END;");
     dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_contactos_consolidado_departamento ON contactos(es_consolidado, departamento_id, director_funcionario_id)");
-    dbInstance.exec("CREATE TABLE IF NOT EXISTS identidades_funcionarios (tenant_id TEXT NOT NULL, object_id TEXT NOT NULL, funcionario_id TEXT NOT NULL UNIQUE REFERENCES funcionarios(id), created_at TEXT NOT NULL, PRIMARY KEY (tenant_id, object_id))");
   }
   return dbInstance;
 }

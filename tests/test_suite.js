@@ -582,8 +582,10 @@ test('ambas cargas exigen correo en padrón y guardan los datos oficiales del re
   // La confirmación vuelve a consultar el padrón, aunque se haya analizado antes.
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
-  db.prepare('DELETE FROM funcionarios WHERE email_normalized = ?').run('psolis@itcr.ac.cr');
-  db.close();
+  try {
+    assert.throws(() => db.prepare('DELETE FROM funcionarios WHERE email_normalized = ?').run('psolis@itcr.ac.cr'), /FOREIGN KEY/);
+    db.prepare('UPDATE funcionarios SET activo = 0 WHERE email_normalized = ?').run('psolis@itcr.ac.cr');
+  } finally { db.close(); }
   const blocked = await request(server, '/api/bulk/import', 'POST', {
     tipo_contacto: 'ACADEMICO', recomienda_email: 'psolis@itcr.ac.cr', rowsToImport: [contact]
   }, admin.cookies);
@@ -1465,9 +1467,9 @@ test('ventana de funcionarios escapa textos y descarta respuestas al cerrar sesi
 
 
 const institutionalTenant = '11111111-1111-4111-8111-111111111111';
-function microsoftHeaders(upn, objectId = '22222222-2222-4222-8222-222222222222', tenant = institutionalTenant) {
+function microsoftHeaders(upn, objectId = '22222222-2222-4222-8222-222222222222', tenant = institutionalTenant, account = '0') {
   return { 'x-ms-client-principal': Buffer.from(JSON.stringify({ auth_typ: 'aad', claims: [
-    { typ: 'tid', val: tenant }, { typ: 'oid', val: objectId }, { typ: 'preferred_username', val: upn },
+    { typ: 'tid', val: tenant }, { typ: 'oid', val: objectId }, { typ: 'acct', val: account }, { typ: 'preferred_username', val: upn },
     { typ: 'iss', val: 'https://login.microsoftonline.com/'+tenant+'/v2.0' }
   ] })).toString('base64') };
 }
@@ -1522,6 +1524,7 @@ test('consulta institucional separa cargas propias y consolidado de la dependenc
   assert.equal((await request(server, endpoint, 'GET', undefined, guest.cookies)).status, 403);
   assert.equal((await request(server, endpoint, 'GET', undefined, admin.cookies, headers)).status, 403);
   assert.equal((await request(server, endpoint, 'GET', undefined, guest.cookies, microsoftHeaders('cbrenes@itcr.ac.cr', undefined, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'))).status, 403);
+  assert.equal((await request(server, endpoint, 'GET', undefined, guest.cookies, microsoftHeaders('cbrenes@itcr.ac.cr', undefined, undefined, '1'))).status,403);
   const own = (await request(server, endpoint, 'GET', undefined, guest.cookies, headers)).json();
   assert.deepEqual(own.counts, { actuales: 2, consolidado: 2 });
   assert.equal(own.contacts.length, 2);

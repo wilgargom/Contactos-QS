@@ -22,6 +22,7 @@ function resolve(req) {
     if (values.some(v => typeof v !== 'string') || values.length > 1) fail('Los datos de identidad institucional son ambiguos.');
     return values[0] || '';
   };
+  if (claim(['acct']) !== '0') fail('La cuenta debe ser miembro del directorio institucional; no se admiten cuentas invitadas.');
   const tenant = claim(['tid', 'http://schemas.microsoft.com/identity/claims/tenantid']).toLowerCase();
   const objectId = claim(['oid', 'http://schemas.microsoft.com/identity/claims/objectidentifier']).toLowerCase();
   const issuer = claim(['iss']);

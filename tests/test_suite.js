@@ -1609,3 +1609,22 @@ test('consulta personal escapa contenido y descarta respuestas tras cambiar la s
   resolve(data); await pending;
   assert.equal(node('personal-view').innerHTML,'');
 });
+
+
+test('nueva carga con Correo director propone conservar incompletos y confirma explícitamente su alcance', async () => {
+  const vm = require('node:vm');
+  const calls = [], confirmations = [];
+  const analysis = { summary: { correctos:2, pendientesRevision:1, actualizaciones:0 },
+    sheets:[{columns:[{field:'director_email'}]}], analyzedRows:[], analysisHash:'hash-control' };
+  const context = vm.createContext({console, setTimeout, clearTimeout,
+    document:{getElementById:()=>({disabled:false})}, window:{confirm:text=>{confirmations.push(text);return true;}},
+    App:{currentUser:{rol:'ADMIN'},sessionVersion:1,suspended:false,showToast(){},navigate(){}},
+    API:{post:async(route,payload)=>{calls.push({route,payload});return route.endsWith('/analyze')?analysis:{success:true,importedCount:2,updatedCount:0};}}});
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/bulkUpload.js'),'utf8')+'\nglobalThis.mod=BulkUploadModule;',context);
+  const mod=context.mod; mod.tipoContacto='CONSOLIDADO'; mod.selectedFile={name:'nuevo.xlsx'}; mod.fileBase64='archivo'; mod.render=()=>{};
+  await mod.analyzeFile();
+  assert.equal(mod.includeConsolidatedPending,true);
+  await mod.confirmConsolidatedImport();
+  assert.equal(calls[1].payload.includePending,true);
+  assert.match(confirmations[0],/1 registros pendientes/);
+});

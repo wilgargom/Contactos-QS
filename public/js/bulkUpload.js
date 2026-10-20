@@ -841,7 +841,8 @@ const BulkUploadModule = {
       if (analysisVersion !== this.analysisVersion || selectedFile !== this.selectedFile || App.suspended || sessionVersion !== App.sessionVersion || selectedType !== this.tipoContacto || (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && reporterVersion !== this.reporterLookupVersion)) return;
       this.analysisResult = response;
       this.activeFilter = 'TODOS';
-      this.consolidatedSheet = ''; this.consolidatedQuery = ''; this.consolidatedPage = 1; this.includeConsolidatedPending = false;
+      this.consolidatedSheet = ''; this.consolidatedQuery = ''; this.consolidatedPage = 1;
+      this.includeConsolidatedPending = selectedType === 'CONSOLIDADO' && (response.sheets || []).some(s => (s.columns || []).some(c => c.field === 'director_email'));
       this.render();
       App.showToast('✅ Análisis preliminar completado.', 'success');
     } catch (err) {

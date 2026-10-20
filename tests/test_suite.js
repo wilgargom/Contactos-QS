@@ -1497,6 +1497,11 @@ test('consulta institucional separa cargas propias y consolidado de la dependenc
   const another = await request(server, '/api/contacts', 'POST', { ...contact, first_name: 'Ajeno', last_name: 'Homónimo',
     email: 'otro.individual@example.org', company_name: 'Empresa Ajena', recomienda_email: 'homonimo@itcr.ac.cr' }, guest.cookies, otherHeaders);
   assert.equal(another.status, 201, another.text);
+  const lookup = await request(server, '/api/contacts/check-email?email=otro.individual@example.org', 'GET', undefined, guest.cookies, headers);
+  assert.equal(lookup.json().exists,true); assert.equal(lookup.json().contact,null);
+  const duplicate = await request(server,'/api/contacts','POST',{...contact,email:'otro.individual@example.org'},guest.cookies,headers);
+  assert.equal(duplicate.status,409);
+  assert.equal(duplicate.json().duplicateDetails.existingContact.id,undefined);
   const mismatch = await request(server, '/api/contacts', 'POST', { ...contact, email: 'suplantado@example.org', recomienda_email: 'homonimo@itcr.ac.cr' }, guest.cookies, headers);
   assert.equal(mismatch.status, 422);
   const bulk = await request(server, '/api/bulk/import', 'POST', { tipo_contacto: 'EMPLEADOR', recomienda_email: 'cbrenes@itcr.ac.cr',

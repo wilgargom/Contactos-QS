@@ -19,7 +19,7 @@ const config = require('../config');
 const { verifyReporter } = require('../services/funcionarioService');
 
 function visibleDuplicate(info, user) {
-  if (!info?.existingContact || user.rol === 'ADMIN' || info.existingContact.created_by === user.id) return info;
+  if (!info?.existingContact || user.rol === 'ADMIN' || (user.institutional_funcionario_id ? !info.existingContact.es_consolidado && info.existingContact.reportante_funcionario_id === user.institutional_funcionario_id : info.existingContact.created_by === user.id)) return info;
   return { ...info, explanation: 'Existe una coincidencia con un contacto registrado. Solicite revisión administrativa.',
     existingContact: { first_name: 'Registro', last_name: 'existente', institution: 'Datos reservados', tipo_contacto: info.existingContact.tipo_contacto } };
 }
@@ -255,7 +255,7 @@ function handleApi(req, res, pathname, query, body, user) {
 
     const db = getDb();
     const existing = db.prepare(`
-      SELECT id, first_name, last_name, email, institution, company_name, tipo_contacto, created_by, created_by_name, created_at
+      SELECT id, first_name, last_name, email, institution, company_name, tipo_contacto, created_by, created_by_name, created_at, es_consolidado, reportante_funcionario_id
       FROM contactos
       WHERE email_normalized = ?
       LIMIT 1
@@ -265,7 +265,7 @@ function handleApi(req, res, pathname, query, body, user) {
       success: true,
       exists: !!existing,
       isTecDomain: false,
-      contact: existing && (user.rol === 'ADMIN' || existing.created_by === user.id) ? existing : null
+      contact: existing && (user.rol === 'ADMIN' || (user.institutional_funcionario_id ? !existing.es_consolidado && existing.reportante_funcionario_id === user.institutional_funcionario_id : existing.created_by === user.id)) ? existing : null
     });
   }
 

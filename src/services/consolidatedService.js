@@ -3,6 +3,7 @@ const { getDb, runTransaction } = require('../database/db');
 const { parseXlsxSheets } = require('./excelService');
 const { validateContact } = require('../utils/validator');
 const config = require('../config');
+const { verifyReporter } = require('./funcionarioService');
 
 const normalize = value => String(value || '').trim().toLowerCase().normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
@@ -16,8 +17,19 @@ const aliases = {
   position: ['Position', 'Cargo', 'Puesto'], industry: ['Industry', 'Industria', 'Industria / Sector'],
   company_name: ['Company Name', 'Empresa', 'Nombre de empresa'], escuela: ['Escuela Proponente', 'Escuela / Unidad proponente'],
   reportedType: ['Tipo de contacto'], year: ['Año de reporte', 'Año'], director: ['Director', 'Director (a)'],
-  authorization: ['Autorización de contacto']
+  director_email: ['Correo director', 'Correo del director', 'Correo electrónico director', 'Correo electrónico del director', 'Email director', 'Director email'],
+  authorization: ['Autorización de contacto', 'Autorización', 'Autoriza contacto']
 };
+function resolveDirector(email, school) {
+  const normalized = String(email || '').trim().toLowerCase();
+  if (!/^[a-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(normalized)) return { error: 'Indique un Correo director institucional válido.' };
+  const director = verifyReporter(normalized);
+  if (!director) return { error: 'Correo director no corresponde a un funcionario activo del padrón.' };
+  const db = getDb();
+  const dep = db.prepare('SELECT * FROM departamentos WHERE id = ? AND activo = 1').get(director.departamento_id);
+  if (!dep || normalize(dep.nombre) !== normalize(school)) return { error: 'Escuela Proponente no coincide exactamente con la dependencia del director en el padrón; revise la asignación antes de compartir el contacto.' };
+  return { id: director.id, email: director.email_normalized, nombre: director.nombre, departamento_id: dep.id, sede_id: director.sede_id, version: director.version };
+}
 const missing = value => !String(value || '').trim() || /^(?:definir|por definir|pendiente|n\/a|sin datos|sin informacion|no disponible|-)$/i.test(normalize(value));
 const fullKey = c => c.first_name && c.last_name && (c.institution || c.company_name)
   ? [c.first_name, c.last_name, c.institution || c.company_name].map(normalize).join('|') : '';
@@ -43,6 +55,7 @@ function extractRows(buffer) {
     const absent = required.filter(k => !mapping[k]);
     if (absent.length) throw new Error(`La hoja «${sheet.name}» no contiene las columnas ${absent.map(k => aliases[k][0]).join(', ')}.`);
     const optional = ['title', 'country_name', ...(type === 'ACADEMICO' ? ['subject_area', 'department_unit', 'job_title'] : ['industry', 'position'])];
+    if (!mapping.director_email) warnings.push('No se encontró Correo director: estas filas no se compartirán en la consulta de funcionarios hasta vincularlas mediante una nueva carga.');
     for (const k of optional) if (!mapping[k]) warnings.push(`No se encontró ${aliases[k][0]}; los contactos sin este dato quedarán pendientes.`);
     const info = { name: sheet.name, type, headerRow: sheet.headerRowNum, total: 0, ignored: false, warnings,
       columns: Object.entries(mapping).map(([field, header]) => ({ field, header, label: aliases[field][0] })),
@@ -56,7 +69,7 @@ function extractRows(buffer) {
         if (missing(value) && value) notes.push(`${aliases[field][0]}: «${value}» se trata como dato faltante.`);
       }
       const data = { tipo_contacto: type, source: config.SOURCE_NAME };
-      for (const field of Object.keys(aliases).filter(k => !['escuela', 'reportedType', 'year', 'director', 'authorization'].includes(k))) {
+      for (const field of Object.keys(aliases).filter(k => !['escuela', 'reportedType', 'year', 'director', 'director_email', 'authorization'].includes(k))) {
         data[field] = missing(original[field]) ? '' : original[field];
       }
       data.email = data.email.toLowerCase();
@@ -67,6 +80,10 @@ function extractRows(buffer) {
       const fieldSource = { country: 'country_name', department: 'department_unit', subject: 'subject_area' };
       const invalidFields = Object.keys(validation.errors).filter(k => !missing(data[fieldSource[k] || k]));
       const blockers = invalidFields.map(k => validation.errors[k]);
+      const director = mapping.director_email ? resolveDirector(original.director_email, original.escuela) : null;
+      if (director?.error) blockers.push(director.error);
+      if (director && !director.error && original.director && normalize(original.director) !== normalize(director.nombre)) notes.push('El nombre del director difiere del padrón; la vinculación utiliza su correo, nunca el nombre.');
+      if (!mapping.director_email) notes.push('Sin vinculación por Correo director; visible únicamente para administración.');
       if (original.reportedType && headerKey(original.reportedType) !== headerKey(type)) blockers.push('El tipo indicado en la fila no corresponde a la hoja.');
       if (String(original.escuela || '').length > 180) blockers.push('Escuela Proponente no debe superar 180 caracteres.');
       if (/^(no|no autoriza|rechazado|rechazada)$/i.test(normalize(original.authorization))) blockers.push('La autorización de contacto indica una negativa; la fila no se incorporará.');
@@ -76,7 +93,8 @@ function extractRows(buffer) {
       info.total++;
       rows.push({ key: `${sheet.name}:${raw._rowNum}`, sheet: sheet.name, rowNum: raw._rowNum,
         escuela: missing(original.escuela) ? '' : original.escuela, data: { ...data, ...validation.sanitized },
-        metadata: { year: original.year || '', director: original.director || '', authorization: original.authorization || '' },
+        director: director && !director.error ? director : null,
+        metadata: { director_email: original.director_email?.toLowerCase() || '', year: original.year || '', director: original.director || '', authorization: original.authorization || '' },
         errors: Object.values(validation.errors), fieldErrors: validation.errors, blockers,
         warnings: [...notes, ...Object.values(validation.warnings)], complete: validation.isValid });
     }
@@ -88,7 +106,7 @@ function extractRows(buffer) {
 function analyzeConsolidated(buffer) {
   const { rows, sheets } = extractRows(buffer);
   const db = getDb();
-  const existing = db.prepare('SELECT id,email_normalized,first_name,last_name,institution,company_name,tipo_contacto,metodo_ingreso,version FROM contactos').all();
+  const existing = db.prepare('SELECT id,email_normalized,first_name,last_name,institution,company_name,tipo_contacto,metodo_ingreso,es_consolidado,version FROM contactos').all();
   const versions = new Map(existing.map(c => [c.id, c.version]));
   const emails = new Map(), names = new Map(), batch = new Map(), batchNames = new Map();
   const add = (map, key, value) => { if (key) map.set(key, [...(map.get(key) || []), value]); };
@@ -110,8 +128,9 @@ function analyzeConsolidated(buffer) {
       r.status = 'ERROR';
       r.errors.unshift(!r.escuela ? 'Falta Escuela Proponente.' : 'Falta correo o nombre completo con organización para identificar el contacto.');
     } else if (new Set(peers.map(p => normalize(p.escuela))).size > 1 ||
-        new Set(peers.map(p => p.data.tipo_contacto)).size > 1) {
-      r.status = 'ERROR'; r.errors.unshift('El contacto figura con escuelas o tipos diferentes en el archivo; requiere revisión.');
+        new Set(peers.map(p => p.data.tipo_contacto)).size > 1 ||
+        new Set(peers.map(p => p.director?.id || '')).size > 1) {
+      r.status = 'ERROR'; r.errors.unshift('El contacto figura con escuelas, directores o tipos diferentes en el archivo; requiere revisión.');
     } else if (new Set((batchNames.get(fullKey(d)) || []).map(p => p.data.email).filter(Boolean)).size > 1) {
       r.status = 'POSIBLE_DUPLICADO'; r.errors.unshift('El mismo nombre y organización aparecen con correos diferentes en el archivo; revise la identidad.');
     } else if (new Set(peers.map(p => JSON.stringify(Object.fromEntries(Object.entries(p.data).map(([k, v]) => [k, normalize(v)]))))).size > 1) {
@@ -122,12 +141,12 @@ function analyzeConsolidated(buffer) {
       r.status = 'ERROR'; r.errors.unshift('Coincidencia ambigua o conflicto de tipo con contactos existentes.');
     } else if (matches.length && d.email && normalize(matches[0].email_normalized) !== d.email) {
       r.status = 'POSIBLE_DUPLICADO'; r.errors.unshift('Coincide el nombre y la organización, pero el correo es diferente; se omite hasta revisar la identidad.');
-    } else if (matches.length && matches[0].metodo_ingreso !== 'CARGA_MASIVA') {
-      r.status = 'DUPLICADO_EXACTO'; r.errors = ['Ya registrado individualmente; se conserva su procedencia.'];
+    } else if (matches.length && !matches[0].es_consolidado) {
+      r.status = 'DUPLICADO_EXACTO'; r.errors = ['Ya registrado por un funcionario; se conservan su autoría y procedencia.'];
     } else if (matches.length) {
       r.existingId = matches[0].id;
       r.status = 'ACTUALIZAR_PROCEDENCIA';
-      r.errors = ['Se actualizarán únicamente la procedencia administrativa y Escuela Proponente.'];
+      r.errors = ['Se actualizarán únicamente la procedencia administrativa, Escuela Proponente y vinculación del director.'];
       summary.actualizaciones++;
     } else {
       r.status = r.complete ? 'CORRECTO' : 'PENDIENTE_REVISION';
@@ -143,7 +162,7 @@ function analyzeConsolidated(buffer) {
   }
   for (const sheet of sheets) sheet.counts = Object.fromEntries(['CORRECTO', 'PENDIENTE_REVISION', 'ACTUALIZAR_PROCEDENCIA', 'ERROR', 'POSIBLE_DUPLICADO', 'DUPLICADO_EXACTO'].map(status => [status, rows.filter(r => r.sheet === sheet.name && r.status === status).length]));
   const analysisHash = crypto.createHash('sha256').update(buffer).update(JSON.stringify(rows.map(r =>
-    [r.key, r.status, r.existingId || null, r.existingId ? versions.get(r.existingId) : null]))).digest('hex');
+    [r.key, r.status, r.existingId || null, r.existingId ? versions.get(r.existingId) : null, r.director?.id, r.director?.version, r.director?.departamento_id]))).digest('hex');
   return { success: true, summary, sheets, analysisHash, analyzedRows: rows, errorDetails: rows.filter(r => r.errors.length).map(r => ({ sheet: r.sheet, rowNum: r.rowNum, errors: r.errors })) };
 }
 
@@ -175,23 +194,25 @@ function importConsolidated(buffer, fileName, user, options = {}) {
     const columns = ['id', 'tipo_contacto', 'source', 'title', 'first_name', 'last_name', 'email', 'email_normalized',
       'phone', 'country_name', 'sede_id', 'departamento_id', 'job_title', 'department_unit', 'institution',
       'subject_area', 'position', 'industry', 'company_name', 'estado', 'metodo_ingreso', 'lote_id',
-      'recomienda_nombre', 'recomienda_email', 'created_by', 'created_by_name', 'created_at', 'es_consolidado', 'escuela_proponente'];
+      'recomienda_nombre', 'recomienda_email', 'created_by', 'created_by_name', 'created_at', 'es_consolidado', 'escuela_proponente', 'director_email', 'director_funcionario_id', 'autorizacion_contacto'];
     const insert = db.prepare(`INSERT INTO contactos (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
     for (const row of rows) {
-      const dep = schoolDepartment(db, row.escuela), id = row.existingId || crypto.randomUUID();
+      const dep = row.director ? db.prepare('SELECT * FROM departamentos WHERE id = ?').get(row.director.departamento_id) : schoolDepartment(db, row.escuela), id = row.existingId || crypto.randomUUID();
       let previous = null;
       if (row.existingId) {
         previous = db.prepare('SELECT * FROM contactos WHERE id = ?').get(id);
         db.prepare(`UPDATE contactos SET es_consolidado = 1, escuela_proponente = ?, departamento_id = ?,
-          sede_id = ?, recomienda_nombre = 'Administrador', recomienda_email = '', updated_by = ?,
+          sede_id = ?, director_email = ?, director_funcionario_id = ?, autorizacion_contacto = ?, recomienda_nombre = 'Administrador', recomienda_email = '', updated_by = ?,
           updated_by_name = 'Administrador', updated_at = ? WHERE id = ?`)
-          .run(row.escuela, dep.id, dep.sede_id || null, user.id, now, id);
+          .run(row.escuela, dep.id, dep.sede_id || null, row.director?.email || (previous.departamento_id === dep.id ? previous.director_email : '') || '', row.director?.id || (previous.departamento_id === dep.id ? previous.director_funcionario_id : null) || null,
+            row.metadata.authorization || previous.autorizacion_contacto || '', user.id, now, id);
         updatedCount++;
       } else {
         const c = { ...row.data, id, email_normalized: row.data.email || '', sede_id: dep.sede_id || null,
           departamento_id: dep.id, estado: row.complete ? 'VALIDADO' : 'NUEVO', metodo_ingreso: 'CARGA_MASIVA',
           lote_id: loteId, recomienda_nombre: 'Administrador', recomienda_email: '', created_by: user.id,
-          created_by_name: 'Administrador', created_at: now, es_consolidado: 1, escuela_proponente: row.escuela };
+          created_by_name: 'Administrador', created_at: now, es_consolidado: 1, escuela_proponente: row.escuela,
+          director_email: row.director?.email || '', director_funcionario_id: row.director?.id || null, autorizacion_contacto: row.metadata.authorization };
         insert.run(...columns.map(key => Object.hasOwn(c, key) ? c[key] : ''));
         importedCount++;
       }

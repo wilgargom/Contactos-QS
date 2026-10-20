@@ -105,11 +105,18 @@
           </div>
 
           <!-- 3. DIRECTORIO Y CONSULTA -->
-          <div class="sidebar-item" data-tooltip="Directorio de Contactos">
+          <div class="sidebar-item" data-tooltip="Directorio de Contactos" id="nav-item-directory">
             <button onclick="App.navigate('directory')" id="nav-btn-directory"
                     class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors group">
               <i class="fa-solid fa-address-book w-5 text-center text-slate-400 group-hover:text-blue-800 text-base"></i>
               <span class="sidebar-text truncate">Directorio Contactos</span>
+            </button>
+          </div>
+
+          <div class="sidebar-item" data-tooltip="Mis contactos por funcionario" id="nav-item-personal">
+            <button onclick="App.navigate('personal')" id="nav-btn-personal" class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100">
+              <i class="fa-solid fa-user-check w-5 text-center text-slate-400"></i>
+              <span class="sidebar-text truncate">Mis contactos TEC</span>
             </button>
           </div>
 
@@ -190,6 +197,7 @@
         <section id="register-view"></section>
         <section id="bulk-upload-view" style="display: none;"></section>
         <section id="directory-view" style="display: none;"></section>
+        <section id="personal-view" style="display: none;"></section>
         <section id="export-view" style="display: none;"></section>
         <section id="admin-view" style="display: none;"></section>
 
@@ -226,6 +234,7 @@
   <script src="js/register.js"></script>
   <script src="js/bulkUpload.js"></script>
   <script src="js/directory.js"></script>
+  <script src="js/personalDirectory.js"></script>
   <script src="js/exportView.js"></script>
   <script src="js/adminView.js"></script>
   <script src="js/app.js"></script>

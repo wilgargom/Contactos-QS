@@ -24,7 +24,11 @@ function visibleDuplicate(info, user) {
     existingContact: { first_name: 'Registro', last_name: 'existente', institution: 'Datos reservados', tipo_contacto: info.existingContact.tipo_contacto } };
 }
 
-function requireReporter(body, res) {
+function requireReporter(body, res, user) {
+  if (user?.institutional_funcionario_id && (typeof body.recomienda_email !== 'string' || body.recomienda_email.trim().toLowerCase() !== user.institutional_email)) {
+    res.status(422).json({ success: false, field: 'recomienda_email', message: 'El reportante debe corresponder a la cuenta Microsoft autenticada.' });
+    return null;
+  }
   const reporter = verifyReporter(body.recomienda_email);
   if (!reporter) {
     res.status(422).json({ success: false, code: 'REPORTER_NOT_VERIFIED', field: 'recomienda_email',
@@ -81,6 +85,32 @@ function handleApi(req, res, pathname, query, body, user) {
     (pathname.startsWith('/api/bulk/') && body.tipo_contacto === 'FUNCIONARIOS');
   if (adminOnly && user.rol !== 'ADMIN') {
     return res.status(403).json({ success: false, message: 'Se requiere una sesión de administrador.' });
+  }
+
+  const identityService = require('../services/institutionalIdentityService');
+  if (pathname.startsWith('/api/personal/')) {
+    if (user.rol !== 'USUARIO') return res.status(403).json({ success: false, message: 'Esta consulta corresponde al rol Usuario.' });
+    if (pathname === '/api/personal/identity' && method === 'GET' && !identityService.configured()) return res.json({ success: true, configured: false });
+    try {
+      const identity = identityService.resolve(req), f = identity.funcionario;
+      if (pathname === '/api/personal/identity' && method === 'GET') return res.json({ success: true, configured: true,
+        funcionario: { nombre: f.nombre, email: f.email_normalized, dependencia: f.dependencia, sede: f.sede } });
+      if (pathname === '/api/personal/contacts' && method === 'GET') return res.json({ success: true, ...require('../services/personalDirectoryService').list(identity, query) });
+      return res.status(404).json({ success: false, message: 'Consulta no encontrada.' });
+    } catch (err) {
+      const errorId = err.statusCode ? undefined : require('../services/errorService').recordError(err, { method, pathname });
+      return res.status(err.statusCode || 500).json({ success: false, code: err.code,
+        message: err.statusCode ? err.message : 'No se logró consultar los contactos.', errorId });
+    }
+  }
+  if (user.rol !== 'ADMIN' && identityService.configured() &&
+      (pathname.startsWith('/api/contacts') || pathname.startsWith('/api/bulk/'))) {
+    try {
+      const identity = identityService.resolve(req);
+      user = { ...user, institutional_email: identity.funcionario.email_normalized, institutional_funcionario_id: identity.funcionario.id };
+    } catch (err) {
+      return res.status(err.statusCode || 403).json({ success: false, code: err.code, message: err.statusCode ? err.message : 'No se logró identificar la cuenta institucional.' });
+    }
   }
 
   if (pathname.startsWith('/api/admin/')) {
@@ -168,8 +198,8 @@ function handleApi(req, res, pathname, query, body, user) {
   const contactRoute = pathname.match(/^\/api\/contacts\/([^/]+)(?:\/resolve-duplicate)?$/);
   const reserved = ['check-email', 'export-directory'];
   if (contactRoute && !reserved.includes(contactRoute[1]) && user.rol !== 'ADMIN') {
-    const contact = getDb().prepare('SELECT created_by FROM contactos WHERE id = ?').get(contactRoute[1]);
-    if (contact && contact.created_by !== user.id) {
+    const contact = getDb().prepare('SELECT created_by, es_consolidado, reportante_funcionario_id FROM contactos WHERE id = ?').get(contactRoute[1]);
+    if (contact && (user.institutional_funcionario_id ? (contact.es_consolidado || contact.reportante_funcionario_id !== user.institutional_funcionario_id) : contact.created_by !== user.id)) {
       return res.status(403).json({ success: false, message: 'No tiene acceso a este contacto.' });
     }
   }
@@ -190,6 +220,7 @@ function handleApi(req, res, pathname, query, body, user) {
       industrias_qs: QS_INDUSTRIES,
       limits: { max_import_rows: config.MAX_IMPORT_ROWS, max_file_bytes: 5 * 1024 * 1024 },
       campanias: require('../services/campaignService').listCampaigns(),
+      institutional_auth_enabled: require('../services/institutionalIdentityService').configured(),
       source_default: config.SOURCE_NAME
     });
   }
@@ -324,7 +355,7 @@ function handleApi(req, res, pathname, query, body, user) {
 
   // 5. Creación individual de contacto
   if (pathname === '/api/contacts' && method === 'POST') {
-    const reporter = requireReporter(body, res);
+    const reporter = requireReporter(body, res, user);
     if (!reporter) return;
     const allowOverride = body.allow_duplicate_override === true;
     const result = contactService.createContact({ ...body, recomienda_nombre: reporter.nombre,
@@ -403,7 +434,7 @@ function handleApi(req, res, pathname, query, body, user) {
     let fileBuffer;
     let fileName = body.fileName || 'archivo_carga.xlsx';
     const tipoContacto = (body.tipo_contacto || 'ACADEMICO').toUpperCase();
-    if (tipoContacto !== 'FUNCIONARIOS' && !requireReporter(body, res)) return;
+    if (tipoContacto !== 'FUNCIONARIOS' && !requireReporter(body, res, user)) return;
 
     if (tipoContacto === 'FUNCIONARIOS' && user.rol !== 'ADMIN') {
       return res.status(403).json({
@@ -744,7 +775,7 @@ function handleApi(req, res, pathname, query, body, user) {
     }
     let importedCount = 0;
 
-    const reporter = requireReporter(body, res);
+    const reporter = requireReporter(body, res, user);
     if (!reporter) return;
     const reporterName = reporter.nombre;
     const reporterEmail = reporter.email_normalized;

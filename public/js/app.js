@@ -48,6 +48,7 @@ const App = {
 
     // 3. Actualizar interfaz según rol y cargar vista inicial
     this.updateRoleUI();
+    if (new URLSearchParams(window.location.search).get('vista') === 'personal') this.activeTab = 'personal';
     this.navigate(this.activeTab);
   },
 
@@ -153,9 +154,10 @@ const App = {
   },
 
   clearAdminViews() {
-    for (const id of ['admin-view', 'export-view', 'directory-view', 'bulk-upload-view']) {
-      document.getElementById(id).replaceChildren();
+    for (const id of ['admin-view', 'export-view', 'directory-view', 'bulk-upload-view', 'personal-view']) {
+      document.getElementById(id)?.replaceChildren();
     }
+    if (typeof PersonalDirectoryModule !== 'undefined') PersonalDirectoryModule.reset();
     AdminModule.funcionariosRequest = (AdminModule.funcionariosRequest || 0) + 1;
     AdminModule.funcionarioEditing = null;
     AdminModule.stats = null;
@@ -324,11 +326,17 @@ const App = {
     if (navBulk) navBulk.style.display = 'block';
     if (navExport) navExport.style.display = isAdmin ? 'block' : 'none';
     if (navAdmin) navAdmin.style.display = isAdmin ? 'block' : 'none';
+    const navPersonal = document.getElementById('nav-item-personal');
+    if (navPersonal) navPersonal.style.display = isAdmin ? 'none' : 'block';
+    const navDirectory = document.getElementById('nav-item-directory');
+    if (navDirectory) navDirectory.style.display = isAdmin || !this.catalogs?.institutional_auth_enabled ? 'block' : 'none';
   },
 
   navigate(tabName) {
     if (this.suspended) return;
     if (['admin', 'export'].includes(tabName) && this.currentUser?.rol !== 'ADMIN') tabName = 'register';
+    if (tabName === 'personal' && this.currentUser?.rol === 'ADMIN') tabName = 'admin';
+    if (tabName === 'directory' && this.currentUser?.rol !== 'ADMIN' && this.catalogs?.institutional_auth_enabled) tabName = 'personal';
     this.activeTab = tabName;
 
     // Actualizar estilos activos en el menú lateral izquierdo
@@ -336,6 +344,7 @@ const App = {
       register: document.getElementById('nav-btn-register'),
       bulk: document.getElementById('nav-btn-bulk'),
       directory: document.getElementById('nav-btn-directory'),
+      personal: document.getElementById('nav-btn-personal'),
       export: document.getElementById('nav-btn-export'),
       admin: document.getElementById('nav-btn-admin')
     };
@@ -374,7 +383,7 @@ const App = {
     }
 
     // Ocultar todas las vistas de contenido
-    const views = ['register-view', 'bulk-upload-view', 'directory-view', 'export-view', 'admin-view'];
+    const views = ['register-view', 'bulk-upload-view', 'directory-view', 'export-view', 'admin-view', 'personal-view'];
     views.forEach(v => {
       const el = document.getElementById(v);
       if (el) el.style.display = 'none';
@@ -387,6 +396,7 @@ const App = {
     if (tabName === 'register') RegisterModule.init(this.catalogs);
     else if (tabName === 'bulk') BulkUploadModule.init(this.catalogs);
     else if (tabName === 'directory') DirectoryModule.init(this.catalogs);
+    else if (tabName === 'personal') PersonalDirectoryModule.init();
     else if (tabName === 'export') ExportModule.init(this.catalogs);
     else if (tabName === 'admin') AdminModule.init(this.catalogs);
   },

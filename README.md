@@ -158,3 +158,33 @@ tec-qs-contacts/
 └── tests/
     └── test_suite.js        # Pruebas de integración de arranque y despliegue
 ```
+
+
+### Consulta institucional de contactos y columna Correo director
+
+El apartado **Mis contactos TEC**, exclusivo del rol Usuario, separa los registros individuales y masivos atribuidos a su ficha del padrón de los contactos consolidados asignados a su dependencia vigente. Los filtros de este apartado no cambian el alcance autorizado ni afectan los filtros administrativos. El acceso es de consulta; no permite editar ni eliminar contactos compartidos.
+
+El consolidado reconoce **Correo director**, **Correo del director** y sus variantes con “electrónico”. La identidad del director se busca por correo institucional y se conserva mediante el identificador de su ficha; el nombre no decide la asignación. Escuela Proponente debe coincidir con el nombre oficial de la dependencia asociada al director en el padrón. Ante correo ausente, desconocido, inactivo o dependencia incompatible en archivos que incluyen la columna, se muestra un error crítico y no se comparte ni importa esa fila. Las filas incompletas sin errores críticos se incorporan únicamente con la opción explícita de pendientes, conservando sus campos disponibles y la autorización declarada en el archivo, sin completar valores por inferencia.
+
+Los archivos anteriores sin Correo director todavía admiten carga administrativa, pero los contactos sin vinculación permanecen fuera de la consulta compartida. Volver a cargar un consolidado vincula contactos que ya eran consolidados; los registros individuales o masivos de funcionarios no se convierten a consolidados ni cambian de autor. Un libro con menos filas no elimina contactos previamente existentes.
+
+La procedencia de los consolidados continúa como Administrador; Escuela Proponente define el departamento de cada fila. Para la consulta compartida se usa el departamento asignado y la vinculación explícita del director; los movimientos posteriores del funcionario consultante se resuelven contra el padrón vigente. Las fichas desactivadas no acceden. Se mantienen identificadores internos para conservar la relación si cambia el correo o el nombre.
+
+#### Activación de Microsoft institucional en Azure
+
+La integración usa **Azure App Service Authentication (Easy Auth)** y está desactivada de forma predeterminada. Requiere una aplicación de **Microsoft Entra en el tenant institucional del TEC**, no el tenant personal de la suscripción de estudiante. Solicitar al responsable institucional la configuración o autorización correspondiente.
+
+En Azure App Service → Authentication, agregar Microsoft como proveedor **single tenant**, habilitar HTTPS y el almacén de tokens y configurar **Allow unauthenticated requests** para conservar la página pública y el acceso administrativo existente. La aplicación aplica los permisos en sus API. Configurar el emisor y las audiencias admitidas para esta aplicación; no usar common ni habilitar cualquier tenant. La URI de retorno de Microsoft es el dominio de la aplicación seguido de **/.auth/login/aad/callback**.
+
+El token debe exponer **tid**, **oid** y **preferred_username** o el claim opcional **upn** (incluirlo en la configuración de tokens ID de Entra si no está disponible). El identificador de inicio de sesión debe coincidir con un correo institucional activo del padrón; no se utilizan el nombre visible ni un correo ingresado por el visitante como prueba de identidad. El primer acceso vincula tenant + oid con la ficha y rechaza reasignaciones automáticas a otra identidad; cualquier cambio de cuenta institucional requiere revisión administrativa de la vinculación.
+
+**Solo después de verificar que Easy Auth está activo y que Azure controla los encabezados de identidad**, agregar a la configuración de App Service:
+
+- QS_MICROSOFT_AUTH = azure-easy-auth
+- QS_ENTRA_TENANT_ID = el GUID del tenant institucional aprobado
+
+Nunca activar estas variables en un servidor que acepte cabeceras de identidad suministradas por los clientes. No se proporciona un modo alternativo por correo o nombre, ni un simulador de identidad para producción. La integración no requiere guardar secretos de Microsoft en el JavaScript ni modifica la autenticación de administradores.
+
+Con el acceso activado, los registros individuales y las cargas masivas de usuarios exigen la cuenta Microsoft y que el reportante elegido corresponda a esa cuenta. Los contactos actuales se consultan por la ficha del reportante y los consolidados por la dependencia vigente; cambiar un filtro o enviar otro correo no amplía permisos. Los contactos anteriores sin reportante identificable quedan reservados a administración. Las sesiones mantienen la suspensión por inactividad existente.
+
+Referencias oficiales: https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-user-identities y https://learn.microsoft.com/en-us/azure/app-service/app-service-authentication-overview .

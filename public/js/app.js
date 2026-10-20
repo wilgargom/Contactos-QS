@@ -156,6 +156,8 @@ const App = {
     for (const id of ['admin-view', 'export-view', 'directory-view', 'bulk-upload-view']) {
       document.getElementById(id).replaceChildren();
     }
+    AdminModule.funcionariosRequest = (AdminModule.funcionariosRequest || 0) + 1;
+    AdminModule.funcionarioEditing = null;
     AdminModule.stats = null;
     AdminModule.driveStatus = null;
     AdminModule.storage = null;

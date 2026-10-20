@@ -93,6 +93,16 @@ function getDb() {
         usuario_id TEXT NOT NULL, usuario_nombre TEXT NOT NULL, accion TEXT NOT NULL,
         detalles TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_funcionarios_historial ON funcionarios_historial(funcionario_id, created_at DESC);`);
+    const contactColumns = dbInstance.prepare('PRAGMA table_info(contactos)').all();
+    for (const [name, definition] of [['director_email', "TEXT NOT NULL DEFAULT ''"], ['director_funcionario_id', 'TEXT REFERENCES funcionarios(id)'],
+      ['autorizacion_contacto', "TEXT NOT NULL DEFAULT ''"], ['reportante_funcionario_id', 'TEXT REFERENCES funcionarios(id)']]) {
+      if (!contactColumns.some(c => c.name === name)) dbInstance.exec('ALTER TABLE contactos ADD COLUMN ' + name + ' ' + definition);
+    }
+    dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_contactos_reportante_origen ON contactos(reportante_funcionario_id, es_consolidado, created_at DESC)");
+    if (!contactColumns.some(c => c.name === 'reportante_funcionario_id')) dbInstance.exec("UPDATE contactos SET reportante_funcionario_id = (SELECT f.id FROM funcionarios f WHERE f.email_normalized = LOWER(TRIM(contactos.recomienda_email))) WHERE es_consolidado = 0");
+    dbInstance.exec("CREATE TRIGGER IF NOT EXISTS contactos_reportante AFTER INSERT ON contactos WHEN NEW.es_consolidado = 0 AND NEW.reportante_funcionario_id IS NULL BEGIN UPDATE contactos SET reportante_funcionario_id = (SELECT f.id FROM funcionarios f WHERE f.email_normalized = LOWER(TRIM(NEW.recomienda_email))) WHERE id = NEW.id; END;");
+    dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_contactos_consolidado_departamento ON contactos(es_consolidado, departamento_id, director_funcionario_id)");
+    dbInstance.exec("CREATE TABLE IF NOT EXISTS identidades_funcionarios (tenant_id TEXT NOT NULL, object_id TEXT NOT NULL, funcionario_id TEXT NOT NULL UNIQUE REFERENCES funcionarios(id), created_at TEXT NOT NULL, PRIMARY KEY (tenant_id, object_id))");
   }
   return dbInstance;
 }

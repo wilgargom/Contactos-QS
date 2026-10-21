@@ -20,19 +20,19 @@ const aliases = {
   director_email: ['Correo director', 'Correo del director', 'Correo electrónico director', 'Correo electrónico del director', 'Email director', 'Director email'],
   authorization: ['Autorización de contacto', 'Autorización', 'Autoriza contacto']
 };
-function resolveDirector(email, school) {
+function resolveDirector(email) {
   const normalized = String(email || '').trim().toLowerCase();
   if (!/^[a-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(normalized)) return { error: 'Indique un Correo director institucional válido.' };
   const director = verifyReporter(normalized);
   if (!director) return { error: 'Correo director no corresponde a un funcionario activo del padrón.' };
-  const db = getDb();
-  const dep = db.prepare('SELECT * FROM departamentos WHERE id = ? AND activo = 1').get(director.departamento_id);
-  if (!dep || normalize(dep.nombre) !== normalize(school)) return { error: 'Escuela Proponente no coincide exactamente con la dependencia del director en el padrón; revise la asignación antes de compartir el contacto.' };
-  return { id: director.id, email: director.email_normalized, nombre: director.nombre, departamento_id: dep.id, sede_id: director.sede_id, version: director.version };
+  // Un director conserva su identidad aunque el libro le asigne varias dependencias.
+  // Escuela Proponente determina cada asignación, sin cambiar su ficha del padrón.
+  return { id: director.id, email: director.email_normalized, nombre: director.nombre, departamento_id: director.departamento_id, version: director.version };
 }
 const missing = value => !String(value || '').trim() || /^(?:definir|por definir|pendiente|n\/a|sin datos|sin informacion|no disponible|-)$/i.test(normalize(value));
 const fullKey = c => c.first_name && c.last_name && (c.institution || c.company_name)
   ? [c.first_name, c.last_name, c.institution || c.company_name].map(normalize).join('|') : '';
+const identityKey = c => c.tipo_contacto + ':' + (c.email ? 'email:' + c.email : 'name:' + fullKey(c));
 const eligible = new Set(['CORRECTO', 'PENDIENTE_REVISION', 'ACTUALIZAR_PROCEDENCIA']);
 
 function extractRows(buffer) {
@@ -62,9 +62,10 @@ function extractRows(buffer) {
       ignoredColumns: sheet.headers.filter(h => h && !Object.values(mapping).includes(h)) };
     sheets.push(info);
     for (const raw of sheet.rows) {
-      const original = {}, notes = [];
+      const original = {}, sourceValues = {}, notes = [];
       for (const [field, header] of Object.entries(mapping)) {
-        const value = String(raw[header] ?? '').trim().replace(/\s+/g, ' ');
+        sourceValues[header] = String(raw[header] ?? '');
+        const value = sourceValues[header].trim().replace(/\s+/g, ' ');
         original[field] = value;
         if (missing(value) && value) notes.push(`${aliases[field][0]}: «${value}» se trata como dato faltante.`);
       }
@@ -78,10 +79,20 @@ function extractRows(buffer) {
       if (rows.length >= config.MAX_IMPORT_ROWS) throw new Error(`Divida el consolidado en archivos de hasta ${config.MAX_IMPORT_ROWS} contactos.`);
       const validation = validateContact(data, type);
       const fieldSource = { country: 'country_name', department: 'department_unit', subject: 'subject_area' };
-      const invalidFields = Object.keys(validation.errors).filter(k => !missing(data[fieldSource[k] || k]));
+      // Conservar el histórico como pendiente sin aplicar las exigencias de exportación QS.
+      // Un correo mal formado sigue requiriendo corrección, pero un correo TEC es un dato real.
+      const invalidFields = Object.keys(validation.errors).filter(k => k === 'email' && !missing(data.email) && !/@(?:itcr|tec)\.ac\.cr$/i.test(data.email));
       const blockers = invalidFields.map(k => validation.errors[k]);
-      const director = mapping.director_email ? resolveDirector(original.director_email, original.escuela) : null;
-      if (director?.error) blockers.push(director.error);
+      const director = mapping.director_email ? resolveDirector(original.director_email) : null;
+      const review = Object.entries(validation.errors).map(([field, message]) => missing(data[fieldSource[field] || field])
+        ? `${aliases[fieldSource[field] || field]?.[0] || field}: sin dato, se conserva vacío.`
+        : field === 'email' && /@(?:itcr|tec)\.ac\.cr$/i.test(data.email)
+          ? 'Correo institucional del TEC: se conserva en el histórico como pendiente, no es un par externo para la exportación QS.'
+          : `${message} Se conserva el valor original como pendiente de revisión.`);
+      if (director?.error) review.push(director.error + ' Se conserva el correo del archivo y su vinculación queda pendiente.');
+      const literalMarkup = [original.escuela, ...Object.values(data)].some(value => /[<>]|[\"'`]\s+[a-z][\w-]*\s*=/i.test(String(value)));
+      if (literalMarkup) review.push('Los caracteres y etiquetas se conservan como texto literal, sin ejecutarse como HTML.');
+      if (Object.values(data).some(value => String(value).length > 500)) blockers.push('Un campo supera 500 caracteres; revise su longitud.');
       if (director && !director.error && original.director && normalize(original.director) !== normalize(director.nombre)) notes.push('El nombre del director difiere del padrón; la vinculación utiliza su correo, nunca el nombre.');
       if (!mapping.director_email) notes.push('Sin vinculación por Correo director; visible únicamente para administración.');
       if (original.reportedType && headerKey(original.reportedType) !== headerKey(type)) blockers.push('El tipo indicado en la fila no corresponde a la hoja.');
@@ -94,9 +105,9 @@ function extractRows(buffer) {
       rows.push({ key: `${sheet.name}:${raw._rowNum}`, sheet: sheet.name, rowNum: raw._rowNum,
         escuela: missing(original.escuela) ? '' : original.escuela, data: { ...data, ...validation.sanitized },
         director: director && !director.error ? director : null,
-        metadata: { director_email: original.director_email?.toLowerCase() || '', year: original.year || '', director: original.director || '', authorization: original.authorization || '' },
-        errors: Object.values(validation.errors), fieldErrors: validation.errors, blockers,
-        warnings: [...notes, ...Object.values(validation.warnings)], complete: validation.isValid });
+        metadata: { director_email: original.director_email?.toLowerCase() || '', year: original.year || '', director: original.director || '', authorization: original.authorization || '', director_column_present: Boolean(mapping.director_email), source_values: sourceValues },
+        errors: review, fieldErrors: validation.errors, blockers,
+        warnings: [...notes, ...Object.values(validation.warnings)], complete: validation.isValid && !literalMarkup && !director?.error });
     }
   }
   if (!rows.length) throw new Error('No se encontraron contactos en hojas de académicos o empleadores.');
@@ -110,19 +121,18 @@ function analyzeConsolidated(buffer) {
   const versions = new Map(existing.map(c => [c.id, c.version]));
   const emails = new Map(), names = new Map(), batch = new Map(), batchNames = new Map();
   const add = (map, key, value) => { if (key) map.set(key, [...(map.get(key) || []), value]); };
-  for (const c of existing) { add(emails, normalize(c.email_normalized), c); add(names, fullKey(c), c); }
-  for (const r of rows) { add(batch, r.data.email ? `email:${r.data.email}` : `name:${fullKey(r.data)}`, r); add(batchNames, fullKey(r.data), r); }
+  for (const c of existing) { add(emails, c.tipo_contacto + ':' + normalize(c.email_normalized), c); add(names, fullKey(c) ? c.tipo_contacto + ':' + fullKey(c) : '', c); }
+  for (const r of rows) { add(batch, identityKey(r.data), r); add(batchNames, fullKey(r.data) ? r.data.tipo_contacto + ':' + fullKey(r.data) : '', r); }
   const seen = new Set();
   const summary = { totalAnalizados: rows.length, correctos: 0, nuevos: 0, nuevosCompletos: 0, actualizaciones: 0,
     pendientesRevision: 0, conErrores: 0, posiblesDuplicados: 0, duplicadosExactos: 0 };
   for (const r of rows) {
     const d = r.data;
-    const identity = d.email ? `email:${d.email}` : `name:${fullKey(d)}`;
+    const identity = identityKey(d);
     const peers = batch.get(identity) || [];
-    const matches = d.email && emails.has(d.email) ? emails.get(d.email) : names.get(fullKey(d)) || [];
-    if ([r.escuela, ...Object.values(d)].some(value => /[<>]|[\"'`]\s+[a-z][\w-]*\s*=/i.test(String(value)))) {
-      r.status = 'ERROR'; r.errors.unshift('Revise el contenido con etiquetas o atributos HTML antes de importar.');
-    } else if (r.blockers.length) {
+    const emailKey = d.tipo_contacto + ':' + d.email, nameKey = d.tipo_contacto + ':' + fullKey(d);
+    const matches = d.email && emails.has(emailKey) ? emails.get(emailKey) : (fullKey(d) ? names.get(nameKey) : []) || [];
+    if (r.blockers.length) {
       r.status = 'ERROR'; r.errors = [...new Set([...r.blockers, ...r.errors])];
     } else if (!r.escuela || (!d.email && !fullKey(d))) {
       r.status = 'ERROR';
@@ -131,7 +141,7 @@ function analyzeConsolidated(buffer) {
         new Set(peers.map(p => p.data.tipo_contacto)).size > 1 ||
         new Set(peers.map(p => p.director?.id || '')).size > 1) {
       r.status = 'ERROR'; r.errors.unshift('El contacto figura con escuelas, directores o tipos diferentes en el archivo; requiere revisión.');
-    } else if (new Set((batchNames.get(fullKey(d)) || []).map(p => p.data.email).filter(Boolean)).size > 1) {
+    } else if (new Set((batchNames.get(nameKey) || []).map(p => p.data.email).filter(Boolean)).size > 1) {
       r.status = 'POSIBLE_DUPLICADO'; r.errors.unshift('El mismo nombre y organización aparecen con correos diferentes en el archivo; revise la identidad.');
     } else if (new Set(peers.map(p => JSON.stringify(Object.fromEntries(Object.entries(p.data).map(([k, v]) => [k, normalize(v)]))))).size > 1) {
       r.status = 'POSIBLE_DUPLICADO'; r.errors.unshift('El mismo contacto tiene datos diferentes en el archivo; corrija o unifique las filas antes de importar.');
@@ -197,14 +207,15 @@ function importConsolidated(buffer, fileName, user, options = {}) {
       'recomienda_nombre', 'recomienda_email', 'created_by', 'created_by_name', 'created_at', 'es_consolidado', 'escuela_proponente', 'director_email', 'director_funcionario_id', 'autorizacion_contacto'];
     const insert = db.prepare(`INSERT INTO contactos (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
     for (const row of rows) {
-      const dep = row.director ? db.prepare('SELECT * FROM departamentos WHERE id = ?').get(row.director.departamento_id) : schoolDepartment(db, row.escuela), id = row.existingId || crypto.randomUUID();
+      const dep = schoolDepartment(db, row.escuela), id = row.existingId || crypto.randomUUID();
       let previous = null;
       if (row.existingId) {
         previous = db.prepare('SELECT * FROM contactos WHERE id = ?').get(id);
+        const keepDirector = !row.metadata.director_column_present && previous.departamento_id === dep.id;
         db.prepare(`UPDATE contactos SET es_consolidado = 1, escuela_proponente = ?, departamento_id = ?,
           sede_id = ?, director_email = ?, director_funcionario_id = ?, autorizacion_contacto = ?, recomienda_nombre = 'Administrador', recomienda_email = '', updated_by = ?,
           updated_by_name = 'Administrador', updated_at = ? WHERE id = ?`)
-          .run(row.escuela, dep.id, dep.sede_id || null, row.director?.email || (previous.departamento_id === dep.id ? previous.director_email : '') || '', row.director?.id || (previous.departamento_id === dep.id ? previous.director_funcionario_id : null) || null,
+          .run(row.escuela, dep.id, dep.sede_id || null, row.director?.email || (row.metadata.director_column_present ? row.metadata.director_email : keepDirector ? previous.director_email : '') || '', row.director?.id || (keepDirector ? previous.director_funcionario_id : null) || null,
             row.metadata.authorization || previous.autorizacion_contacto || '', user.id, now, id);
         updatedCount++;
       } else {
@@ -212,7 +223,7 @@ function importConsolidated(buffer, fileName, user, options = {}) {
           departamento_id: dep.id, estado: row.complete ? 'VALIDADO' : 'NUEVO', metodo_ingreso: 'CARGA_MASIVA',
           lote_id: loteId, recomienda_nombre: 'Administrador', recomienda_email: '', created_by: user.id,
           created_by_name: 'Administrador', created_at: now, es_consolidado: 1, escuela_proponente: row.escuela,
-          director_email: row.director?.email || '', director_funcionario_id: row.director?.id || null, autorizacion_contacto: row.metadata.authorization };
+          director_email: row.director?.email || row.metadata.director_email || '', director_funcionario_id: row.director?.id || null, autorizacion_contacto: row.metadata.authorization };
         insert.run(...columns.map(key => Object.hasOwn(c, key) ? c[key] : ''));
         importedCount++;
       }

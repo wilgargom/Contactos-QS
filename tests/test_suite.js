@@ -63,8 +63,8 @@ test('consolidado revalida identidad, errores críticos, pendientes optativos y 
   const preview = (await analyze()).json();
   assert.equal(preview.summary.totalAnalizados, 12);
   assert.equal(preview.summary.nuevosCompletos, 1);
-  assert.equal(preview.summary.pendientesRevision, 1);
-  assert.equal(preview.summary.conErrores, 7);
+  assert.equal(preview.summary.pendientesRevision, 2);
+  assert.equal(preview.summary.conErrores, 6);
   assert.equal(preview.summary.posiblesDuplicados, 2);
   assert.equal(preview.summary.duplicadosExactos, 1);
   assert.equal(preview.sheets[1].ignored, true);
@@ -77,9 +77,9 @@ test('consolidado revalida identidad, errores críticos, pendientes optativos y 
   assert.equal(stale.status, 409);
   const current = (await analyze()).json();
   const withPending = await request(server, '/api/bulk/consolidated/import', 'POST', { ...body, analysisHash: current.analysisHash, includePending: true }, admin.cookies);
-  assert.equal(withPending.status, 200, withPending.text); assert.equal(withPending.json().importedCount, 1);
+  assert.equal(withPending.status, 200, withPending.text); assert.equal(withPending.json().importedCount, 2);
   const all = (await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json();
-  assert.equal(all.count, before + 2);
+  assert.equal(all.count, before + 3);
   const person = all.contacts.find(c => c.email === 'pendiente@example.org');
   assert.equal(person.estado, 'NUEVO'); assert.equal(person.recomienda_nombre, 'Administrador');
   const detail = (await request(server, `/api/contacts/${person.id}`, 'GET', undefined, admin.cookies)).json();
@@ -1532,7 +1532,7 @@ test('consulta por correo funciona sin Microsoft y separa fichas homónimas, car
   assert.equal(moved.status,200,moved.text);
   assert.equal((await request(server,query('cbrenes@itcr.ac.cr'),'GET',undefined,guest.cookies)).status,422);
   const current=(await request(server,query('carlos.nuevo@itcr.ac.cr'),'GET',undefined,guest.cookies)).json();
-  assert.deepEqual(current.counts,{actuales:2,consolidado:1});
+  assert.deepEqual(current.counts,{actuales:2,consolidado:3});
   assert.equal((await request(server,'/api/admin/funcionarios/func-01','PUT',{...update,activo:false,version:moved.json().funcionario.version},admin.cookies)).status,200);
   assert.equal((await request(server,query('carlos.nuevo@itcr.ac.cr'),'GET',undefined,guest.cookies)).status,422);
 });
@@ -1614,4 +1614,75 @@ test('nueva carga con Correo director propone conservar incompletos y confirma e
   await mod.confirmConsolidatedImport();
   assert.equal(calls[1].payload.includePending,true);
   assert.match(confirmations[0],/1 registros pendientes/);
+});
+
+test('consolidado histórico conserva faltantes, texto literal, correos TEC y el mismo correo en categorías distintas', async t => {
+  const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-historico-relaciones-'));
+  const server=await startServer(storage);
+  t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
+  const admin=await request(server,'/api/auth/login','POST',{username:testUsername,password:testPassword});
+  const guest=await request(server,'/api/auth/guest','POST');
+  const {generateMultiSheetXlsx}=require(path.join(appRoot,'src/services/excelService'));
+  const academicHeaders=['Title','First Name','Last Name','Job Title','Department','Institution','Country','mail','Subject','Escuela Proponente','Correo Director','Autorización de contacto'];
+  const employerHeaders=['Title','First Name','Last Name','Position','Industry','Company Name','Country','mail','Escuela Proponente','Correo Director','Autorización de contacto'];
+  const attack='Apellido <> <img src=x onerror="alert(1)">';
+  const payload={fileName:'historico.xlsx',fileBase64:generateMultiSheetXlsx([
+    {name:'Resumen Académicos',headers:academicHeaders,rows:[
+      ['Dr','Ana',attack,'-','','Universidad Uno','España','historico.dual@example.org','','Centro Uno','cbrenes@itcr.ac.cr','si'],
+      ['','Persona','Interna','','','Universidad Dos','','historico.interno@itcr.ac.cr','-','Centro Dos','cbrenes@itcr.ac.cr','si'],
+      ['Dr','Contacto','SinFicha','Profesor','Física','Universidad Tres','Costa Rica','sin.ficha@example.org','Física','Centro Dos','pendiente.director@itcr.ac.cr','si']
+    ]},
+    {name:'Resumen Empleadores',headers:employerHeaders,rows:[
+      ['Mr','Ana',attack,'Directora','Servicios','Empresa Uno','Spain','historico.dual@example.org','Centro Dos','cbrenes@itcr.ac.cr','si']
+    ]}
+  ]).toString('base64')};
+  const analyze=(await request(server,'/api/bulk/consolidated/analyze','POST',payload,admin.cookies)).json();
+  assert.equal(analyze.summary.totalAnalizados,4);assert.equal(analyze.summary.correctos,4);
+  assert.equal(analyze.summary.conErrores,0);assert.equal(analyze.summary.posiblesDuplicados,0);
+  assert.equal(analyze.summary.pendientesRevision,4);
+  const imported=await request(server,'/api/bulk/consolidated/import','POST',{...payload,includePending:true,analysisHash:analyze.analysisHash},admin.cookies);
+  assert.equal(imported.status,200,imported.text);assert.equal(imported.json().importedCount,4);
+  const all=(await request(server,'/api/contacts','GET',undefined,admin.cookies)).json().contacts.filter(c=>c.es_consolidado);
+  assert.equal(all.length,4);assert.equal(all.filter(c=>c.email==='historico.dual@example.org').length,2);
+  const academic=all.find(c=>c.email==='historico.dual@example.org'&&c.tipo_contacto==='ACADEMICO');
+  assert.equal(academic.last_name,attack);assert.equal(academic.job_title,'');assert.equal(academic.subject_area,'');
+  assert.equal(academic.country_name,'Spain');assert.equal(academic.escuela_proponente,'Centro Uno');
+  const internal=all.find(c=>c.email==='historico.interno@itcr.ac.cr');
+  assert.equal(internal.country_name,'');assert.equal(internal.title,'');assert.equal(internal.estado,'NUEVO');
+  const detail=(await request(server,'/api/contacts/'+academic.id,'GET',undefined,admin.cookies)).json();
+  const audit=JSON.parse(detail.auditHistory.find(a=>a.accion==='CREACION').detalles);
+  assert.equal(audit.origen_consolidado.source_values['Job Title'],'-');
+  assert.equal(audit.origen_consolidado.source_values.Country,'España');
+  assert.equal(audit.origen_consolidado.source_values['Last Name'],attack);
+  // La ficha sigue con su dependencia principal, mientras la consulta recupera ambas asignaciones del libro.
+  const f=(await request(server,'/api/funcionarios/by-email?email=cbrenes@itcr.ac.cr','GET',undefined,admin.cookies)).json().funcionario;
+  assert.equal(f.departamento_id,'dep-comp');
+  const query='/api/personal/contacts?email=cbrenes@itcr.ac.cr&origen=consolidado';
+  const assigned=(await request(server,query,'GET',undefined,guest.cookies)).json();
+  assert.equal(assigned.total,3);assert.equal(assigned.departments.length,2);
+  assert.equal((await request(server,query+'&departamento_id=dep-ind','GET',undefined,guest.cookies)).json().total,0);
+  const firstDepartment=all.find(c=>c.id===academic.id).departamento_id;
+  assert.equal((await request(server,query+'&departamento_id='+firstDepartment,'GET',undefined,guest.cookies)).json().total,1);
+  assert.equal((await request(server,'/api/personal/contacts?email=rmendez@itcr.ac.cr&origen=consolidado','GET',undefined,guest.cookies)).json().total,0);
+  // Ningún dato pendiente se convierte automáticamente en un contacto listo para exportar a QS.
+  assert.equal((await request(server,'/api/export/prepare','POST',{tipo:'ACADEMICO',filters:{departamento_id:firstDepartment}},admin.cookies)).status,422);
+  const again=(await request(server,'/api/bulk/consolidated/import','POST',{...payload,includePending:true},admin.cookies)).json();
+  assert.equal(again.importedCount,0);assert.equal(again.updatedCount,4);
+  // Cambiar explícitamente a un director sin ficha no conserva la vinculación con el director anterior.
+  const replacement={fileName:'cambio.xlsx',fileBase64:generateMultiSheetXlsx([{name:'Académicos',headers:academicHeaders,rows:[
+    ['Dr','Ana',attack,'-','','Universidad Uno','España','historico.dual@example.org','','Centro Uno','pendiente.director@itcr.ac.cr','si']
+  ]}]).toString('base64')};
+  assert.equal((await request(server,'/api/bulk/consolidated/import','POST',{...replacement,includePending:true},admin.cookies)).status,200);
+  assert.equal((await request(server,query,'GET',undefined,guest.cookies)).json().total,2);
+  const registered=await request(server,'/api/funcionarios','POST',{nombre:'Directora Pendiente',email:'pendiente.director@itcr.ac.cr',dependencia:'Escuela de Ingeniería en Computación',sede:'Campus Central Cartago'},admin.cookies);
+  assert.equal(registered.status,200,registered.text);
+  const resolved=(await request(server,'/api/personal/contacts?email=pendiente.director@itcr.ac.cr&origen=consolidado','GET',undefined,guest.cookies)).json();
+  assert.equal(resolved.total,2);
+  // El HTML importado permanece inerte también en la vista de consulta por correo.
+  const vm=require('node:vm'),nodes=new Map();
+  const node=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:''});return nodes.get(id);};
+  const context=vm.createContext({document:{getElementById:node},App:{currentUser:{rol:'USUARIO'}}});
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/personalDirectory.js'),'utf8')+'\nthis.mod=PersonalDirectoryModule;',context);
+  context.mod.render(resolved);
+  assert.doesNotMatch(node('personal-results').innerHTML,/<img/);assert.match(node('personal-results').innerHTML,/&lt;img/);
 });

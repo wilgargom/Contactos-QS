@@ -620,3 +620,93 @@ header.bg-tec-primary {
     grid-template-columns: 1fr;
   }
 }
+
+/* Consulta por funcionario: la misma jerarquía de tarjetas y formularios institucionales. */
+.personal-directory { display: grid; gap: 1.5rem; min-width: 0; }
+.personal-panel { background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; padding: 1.75rem; box-shadow: 0 1px 3px rgb(15 23 42 / 4%); min-width: 0; }
+.personal-heading { display: flex; align-items: flex-start; gap: .8rem; padding-bottom: 1.25rem; margin-bottom: 1.25rem; border-bottom: 1px solid #f1f5f9; }
+.personal-heading-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: none; border: 1px solid #dbeafe; border-radius: 9px; color: var(--tec-primary); background: #eff6ff; }
+.personal-heading h2 { margin: 0; font-size: 1.25rem; font-weight: 700; color: #0f172a; }
+.personal-heading p, .personal-source-help { margin: .35rem 0 0; font-size: .875rem; color: #64748b; line-height: 1.6; }
+.personal-section-title { display: flex; align-items: center; gap: .6rem; font-size: .9rem; font-weight: 700; color: var(--tec-primary); margin: 0 0 1.1rem; }
+.personal-reporter { padding: 1.25rem; border: 1px solid #e2e8f0; border-radius: 12px; }
+.personal-lookup-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 1.5rem; align-items: start; }
+.personal-email-form { min-width: 0; }
+.personal-email-form > .form-label { display: block; }
+.personal-email-group { display: flex; border: 1px solid #cbd5e1; border-radius: 10px; overflow: hidden; min-height: 62px; }
+.personal-email-group:focus-within { border-color: var(--tec-primary-light); box-shadow: 0 0 0 3px rgb(11 65 130 / 12%); }
+.personal-email-group input { width: 100%; min-width: 0; flex: 1; padding: 1rem; border: 0; outline: 0; font-size: .95rem; color: #0f172a; background: #fff; }
+.personal-email-domain { display: flex; align-items: center; padding: 0 .8rem; background: #f1f5f9; border-left: 1px solid #cbd5e1; font: 600 .85rem ui-monospace, monospace; color: #475569; }
+.personal-help { color: #64748b; font-size: .75rem; line-height: 1.6; margin: .5rem 0 .8rem; }
+.personal-actions { display: flex; flex-wrap: wrap; gap: .65rem; }
+.personal-error { color: var(--status-error); font-size: .8rem; margin: .6rem 0 0; }
+.personal-error:empty { display: none; }
+.personal-identity-card { display: flex; align-items: flex-start; gap: 1rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.1rem; margin-top: 1.7rem; min-height: 116px; }
+.personal-person-icon { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px; flex: none; border: 1px solid #e2e8f0; border-radius: 9px; background: #f1f5f9; color: #94a3b8; font-size: 1.35rem; }
+.personal-identity-card.is-found .personal-person-icon { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.personal-person-data { min-width: 0; overflow-wrap: anywhere; }
+.personal-eyebrow { display: block; color: #64748b; font-size: .68rem; font-weight: 600; letter-spacing: .03em; margin-bottom: .25rem; }
+.personal-person-data strong { display: block; font-size: 1rem; color: #0f172a; line-height: 1.45; }
+.personal-person-data p { font-size: .875rem; line-height: 1.5; margin: .25rem 0 0; color: #475569; }
+.personal-person-data .personal-person-sede { font-size: .8rem; color: #64748b; }
+.personal-person-email { display: block; margin-top: .55rem; color: var(--tec-primary); font-size: .8rem; }
+.personal-sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.personal-source { display: flex; align-items: center; gap: .85rem; text-align: left; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem; background: #fff; color: #475569; cursor: pointer; }
+.personal-source:hover { border-color: #94a3b8; }
+.personal-source:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }
+.personal-source.is-selected { border: 2px solid var(--tec-primary); padding: calc(1rem - 1px); background: #f0f6fc; color: var(--tec-primary); }
+.personal-source-icon { font-size: 1.25rem; }
+.personal-source-copy { flex: 1; min-width: 0; }
+.personal-source-copy strong { display: block; font-size: .875rem; line-height: 1.45; }
+.personal-source-copy > span { display: block; font-size: .75rem; color: #64748b; margin-top: .25rem; }
+.personal-source-count { background: #f1f5f9; border-radius: 8px; padding: .25rem .6rem; font-weight: 700; font-size: 1.1rem; }
+.personal-source.is-selected .personal-source-count { background: var(--tec-primary); color: #fff; }
+.personal-source-help { margin: .85rem 0 1.2rem; }
+.personal-filters { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem; }
+.personal-filters h4, .personal-results-heading h4 { margin: 0; font-size: .9rem; font-weight: 700; color: #1e293b; }
+.personal-filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem 1.25rem; margin: 1rem 0; }
+.personal-filter-grid .form-group { min-width: 0; }
+.personal-filter-grid .form-label { font-size: .8rem; }
+.personal-filter-grid .form-control { display: block; width: 100%; min-width: 0; min-height: 42px; }
+.personal-results-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin: 1.5rem 0 .85rem; }
+.personal-results-heading p { margin: 0; font-size: .8rem; color: #64748b; }
+.personal-contact-list { display: grid; gap: .7rem; }
+.personal-contact { border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; min-width: 0; overflow: hidden; }
+.personal-contact summary { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(120px, .7fr) auto; align-items: center; gap: 1rem; padding: 1rem; cursor: pointer; list-style: none; }
+.personal-contact summary::-webkit-details-marker { display: none; }
+.personal-contact summary:focus-visible { outline: 3px solid #93c5fd; outline-offset: -3px; }
+.personal-contact summary:hover { background: #f8fafc; }
+.personal-contact summary strong, .personal-contact summary span { overflow-wrap: anywhere; }
+.personal-contact-person strong, .personal-contact-organization strong { display: block; font-size: .875rem; color: #0f172a; line-height: 1.5; }
+.personal-contact-person > span:last-child, .personal-contact-organization > span, .personal-contact-status > span:last-child { display: block; font-size: .75rem; color: #64748b; margin-top: .25rem; }
+.personal-contact-type { display: inline-block; font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--tec-primary); margin-bottom: .25rem; }
+.personal-state { display: inline-block; font-size: .7rem; font-weight: 600; border: 1px solid #e2e8f0; background: #f1f5f9; color: #475569; border-radius: 6px; padding: .2rem .45rem; }
+.personal-contact-toggle { font-size: .75rem; font-weight: 600; color: var(--tec-primary); white-space: nowrap; }
+.personal-contact-toggle i { margin-left: .4rem; font-size: .65rem; }
+.personal-contact[open] .personal-contact-toggle i { transform: rotate(180deg); }
+.personal-contact-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; padding: 1.25rem; border-top: 1px solid #e2e8f0; background: #f8fafc; }
+.personal-contact-detail h5 { margin: 0 0 1rem; font-size: .8rem; font-weight: 700; color: var(--tec-primary); }
+.personal-contact-detail dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.personal-contact-detail dt { font-size: .7rem; font-weight: 600; color: #64748b; margin-bottom: .2rem; }
+.personal-contact-detail dd { margin: 0; font-size: .8rem; line-height: 1.5; color: #1e293b; overflow-wrap: anywhere; }
+.personal-empty, .personal-loading { padding: 2rem 1rem; text-align: center; border: 1px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; color: #64748b; font-size: .875rem; }
+.personal-empty > i { display: block; font-size: 1.6rem; color: #94a3b8; margin-bottom: .75rem; }
+.personal-empty strong { display: block; color: #475569; font-size: .9rem; }
+.personal-empty p { margin: .5rem 0 0; font-size: .8rem; }
+.personal-pagination { display: flex; justify-content: space-between; align-items: center; gap: .75rem; margin-top: 1.25rem; }
+.personal-pagination > span { font-size: .8rem; color: #64748b; }
+@media (min-width: 1500px) { .personal-filter-grid { grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1100px) { .personal-contact summary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .personal-contact-toggle { text-align: right; } }
+@media (max-width: 767px) {
+  .personal-panel { padding: 1.1rem; }
+  .personal-reporter, .personal-filters { padding: 1rem; }
+  .personal-lookup-grid, .personal-sources, .personal-filter-grid, .personal-contact-detail { grid-template-columns: minmax(0, 1fr); }
+  .personal-lookup-grid { gap: 1rem; }
+  .personal-identity-card { margin-top: 0; }
+  .personal-sources { gap: .65rem; }
+  .personal-contact summary { gap: .8rem; }
+  .personal-contact-person, .personal-contact-organization { grid-column: 1 / -1; }
+  .personal-contact-detail dl { grid-template-columns: minmax(0, 1fr); }
+  .personal-heading h2 { font-size: 1.1rem; }
+  .personal-email-domain { padding: 0 .6rem; font-size: .75rem; }
+}

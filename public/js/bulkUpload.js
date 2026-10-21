@@ -842,7 +842,7 @@ const BulkUploadModule = {
       this.analysisResult = response;
       this.activeFilter = 'TODOS';
       this.consolidatedSheet = ''; this.consolidatedQuery = ''; this.consolidatedPage = 1;
-      this.includeConsolidatedPending = selectedType === 'CONSOLIDADO' && (response.sheets || []).some(s => (s.columns || []).some(c => c.field === 'director_email'));
+      this.includeConsolidatedPending = selectedType === 'CONSOLIDADO';
       this.render();
       App.showToast('✅ Análisis preliminar completado.', 'success');
     } catch (err) {
@@ -899,17 +899,17 @@ const BulkUploadModule = {
         <td><span class="badge ${r.status === 'ERROR' ? 'badge-error' : r.status === 'CORRECTO' ? 'badge-validado' : 'badge-posible'}">${esc(labels[r.status] || r.status)}</span></td>
         <td>${esc(r.data.first_name)} ${esc(r.data.last_name)}<br><code>${esc(r.data.email || 'Sin correo')}</code></td>
         <td>${esc(r.data.institution || r.data.company_name || 'Sin dato')}</td><td>${esc(r.escuela || 'Sin Escuela Proponente')}<br><small>${esc(r.director?.email || r.metadata?.director_email || 'Sin vinculación de director')}</small><br><small>${esc(r.director?.nombre || '')}</small></td>
-        <td>${r.errors.map(e => `<p>${esc(e)}</p>`).join('') || 'Datos completos, listo para incorporar.'}
+        <td>${r.status === 'PENDIENTE_REVISION' ? '<strong>Observaciones que no impiden guardar el histórico</strong>' : ''}${r.errors.map(e => `<p>${esc(e)}</p>`).join('') || 'Datos completos, listo para incorporar.'}
         ${(r.warnings || []).map(w => `<p class="text-xs text-amber-800">${esc(w)}</p>`).join('')}
-        <p class="text-xs mt-2 font-semibold">${r.status === 'ERROR' || r.status === 'POSIBLE_DUPLICADO' ? 'Corregir en el archivo y analizar nuevamente, esta fila no se guardará.' : r.status === 'PENDIENTE_REVISION' ? 'Completar los campos indicados o incorporar como pendiente mediante la opción expresa.' : r.status === 'ACTUALIZAR_PROCEDENCIA' ? 'Conservar los datos actuales y actualizar la procedencia y vinculación del director.' : r.status === 'DUPLICADO_EXACTO' ? 'Se omite sin modificar el contacto.' : 'Se incorporará como contacto validado.'}</p></td>
+        <p class="text-xs mt-2 font-semibold">${r.status === 'ERROR' || r.status === 'POSIBLE_DUPLICADO' ? 'Corregir en el archivo y analizar nuevamente, esta fila no se guardará.' : r.status === 'PENDIENTE_REVISION' ? 'Se incorporará como pendiente con los datos disponibles, sin inventar información.' : r.status === 'ACTUALIZAR_PROCEDENCIA' ? 'Conservar los datos actuales y actualizar la procedencia y vinculación del director.' : r.status === 'DUPLICADO_EXACTO' ? 'Se omite sin modificar el contacto.' : 'Se incorporará como contacto validado.'}</p></td>
       </tr>`).join('') || '<tr><td colspan="6">No hay filas para estos filtros.</td></tr>'}</tbody></table></div>
       <div class="flex flex-wrap justify-between gap-3 mt-3"><p class="text-sm" aria-live="polite">${esc(filtered.length)} filas filtradas · Página ${esc(this.consolidatedPage)} de ${esc(pages)} · 50 filas por página</p>
       <div class="flex gap-2"><button type="button" class="btn btn-outline btn-sm" ${this.consolidatedPage <= 1 ? 'disabled' : ''} onclick="BulkUploadModule.pageConsolidated(-1)">Anterior</button><button type="button" class="btn btn-outline btn-sm" ${this.consolidatedPage >= pages ? 'disabled' : ''} onclick="BulkUploadModule.pageConsolidated(1)">Siguiente</button></div></div></section>
       <section class="bg-slate-50 border border-slate-200 rounded-xl p-4"><h4 class="font-bold mb-3">Confirmación del alcance</h4>
       <label class="flex items-start gap-3 mb-3"><input type="checkbox" ${this.includeConsolidatedPending ? 'checked' : ''} onchange="BulkUploadModule.includeConsolidatedPending=this.checked; BulkUploadModule.render();">
-      <span>Incluir también ${esc(summary.pendientesRevision)} registros históricos incompletos como pendientes de revisión, quedarán en estado NUEVO y fuera de la exportación QS.</span></label>
+      <span>Conservar también ${esc(summary.pendientesRevision)} registros históricos incompletos o con observaciones como pendientes de revisión, quedarán en estado NUEVO y fuera de la exportación QS.</span></label>
       <p class="text-sm">Se procesarán <strong>${esc(importable)}</strong> filas: ${esc(summary.nuevosCompletos)} nuevos completos, ${esc(this.includeConsolidatedPending ? summary.pendientesRevision : 0)} nuevos pendientes y ${esc(summary.actualizaciones)} actualizaciones de procedencia, se omitirán ${esc(summary.totalAnalizados - importable)} filas.</p>
-      <p class="text-xs mt-2">Los filtros solo cambian la vista, la confirmación aplica al alcance completo indicado arriba, sin inventar países, disciplinas, escuelas ni autorizaciones ausentes.</p>
+      <p class="text-xs mt-2">Los filtros solo cambian la vista, la confirmación aplica al alcance completo indicado arriba, los campos faltantes se guardan vacíos, los caracteres especiales como texto literal y Escuela Proponente se conserva aunque el director tenga otras dependencias en el padrón.</p>
       <div class="flex flex-wrap gap-3">
         <button class="btn btn-outline" ${this.consolidatedImporting ? 'disabled' : ''} onclick="BulkUploadModule.cancelAnalysis()">Cancelar y volver</button>
         <button class="btn btn-outline" ${this.consolidatedImporting ? 'disabled' : ''} onclick="BulkUploadModule.analyzeFile()">Analizar nuevamente</button>

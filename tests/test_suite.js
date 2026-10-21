@@ -1573,6 +1573,8 @@ test('ventana por correo inicia vacía, limpia datos al escribir y descarta resp
     API:{get:(route,params)=>new Promise(resolve=>{requests.push({route,params,resolve});})}});
   vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/personalDirectory.js'),'utf8')+'\nglobalThis.mod=PersonalDirectoryModule;',context);
   const mod=context.mod;mod.init();
+  assert.equal(mod.normalizeEmail(' CBRENES '),'cbrenes@itcr.ac.cr');
+  assert.equal(mod.normalizeEmail('persona@tec.ac.cr'),'persona@tec.ac.cr');
   assert.equal(requests.length,0);
   assert.match(node('personal-view').innerHTML,/id="personal-email"/);
   assert.doesNotMatch(node('personal-view').innerHTML,/Microsoft|\.auth\/|autenticad/i);
@@ -1586,9 +1588,10 @@ test('ventana por correo inicia vacía, limpia datos al escribir y descarta resp
   requests[0].resolve(data);await pending;
   assert.equal(node('personal-results').innerHTML,'');
   node('personal-email').value='';mod.onEmailInput();assert.equal(timers.size,0);assert.equal(mod.email,'');
+  assert.doesNotMatch(node('personal-identity').innerHTML,/Carlos/);
   node('personal-email').value='cbrenes@itcr.ac.cr';const next=mod.lookupEmail();
   requests[1].resolve(data);await next;
-  assert.match(node('personal-results').innerHTML,/Carlos/);
+  assert.match(node('personal-identity').innerHTML,/Carlos/);
   assert.match(node('personal-view').innerHTML,/id="personal-email"/);
   const attack='<img src=x onerror=alert(1)>';
   mod.render({...data,funcionario:{...data.funcionario,nombre:attack},contacts:[{first_name:attack}]});

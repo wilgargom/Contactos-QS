@@ -14,6 +14,48 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('consolidado resuelve escuelas homónimas por correo y conserva observaciones sin bloquear la carga', async t => {
+  const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-consolidated-campus-'));
+  const server=await startServer(storage);
+  t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
+  const admin=await request(server,'/api/auth/login','POST',{username:testUsername,password:testPassword});
+  const guest=await request(server,'/api/auth/guest','POST');
+  const school='Escuela Homónima';
+  const rowsToImport=[{nombre:'Directora Cartago',email:'directora.cartago@itcr.ac.cr',dependencia:school,sede:'Cartago'},
+    {nombre:'Directora San Carlos',email:'directora.sc@itcr.ac.cr',dependencia:school,sede:'San Carlos'},
+    {nombre:'Otro Rol',email:'otro.rol@itcr.ac.cr',dependencia:'Unidad Diferente',sede:'Cartago'}];
+  assert.equal((await request(server,'/api/bulk/import','POST',{tipo_contacto:'FUNCIONARIOS',rowsToImport},admin.cookies)).status,200);
+  const {generateMultiSheetXlsx}=require(path.join(appRoot,'src/services/excelService'));
+  const headers=['Title','First Name','Last Name','Position','Industry','Company Name','Country','Email','Escuela Proponente','Correo director','Director','Autorización de contacto'];
+  const row=(name,email,director)=>['Mr',name,'Prueba','Gerente','Servicios','Empresa '+name,'Costa Rica',email,school,director,'Nombre distinto del padrón','si'];
+  const file={fileName:'sedes.xlsx',fileBase64:generateMultiSheetXlsx([{name:'Empleadores',headers,rows:[
+    row('ContactoSC','contacto.sc@example.org',rowsToImport[1].email),
+    row('ContactoCartago','contacto.cartago@example.org',rowsToImport[0].email),
+    row('ContactoOtroRol','otro.rol@example.org',rowsToImport[2].email),
+    row('SinFicha','sin.ficha@example.org','no.registrado@itcr.ac.cr')
+  ]}]).toString('base64')};
+  const preview=(await request(server,'/api/bulk/consolidated/analyze','POST',file,admin.cookies)).json();
+  assert.equal(preview.summary.correctos,4);assert.equal(preview.summary.conErrores,0);
+  const sc=preview.analyzedRows.find(r=>r.data.email==='contacto.sc@example.org');
+  assert.equal(sc.status,'CORRECTO');assert.equal(sc.departamento.sede_id,'sede-sancarlos');
+  assert.equal(sc.departamento.pertenencia_verificada,true);
+  assert.match(sc.warnings.join(' '),/diferencia no impide importar/);
+  const other=preview.analyzedRows.find(r=>r.data.email==='otro.rol@example.org');
+  assert.equal(other.departamento.pertenencia_verificada,false);assert.equal(preview.summary.asignacionesPorConfirmar,1);
+  const pending=preview.analyzedRows.find(r=>r.data.email==='sin.ficha@example.org');
+  assert.equal(pending.departamento.sede_id,null);assert.equal(preview.summary.sedesPorRevisar,1);
+  const imported=await request(server,'/api/bulk/consolidated/import','POST',{...file,includePending:true,analysisHash:preview.analysisHash},admin.cookies);
+  assert.equal(imported.status,200,imported.text);assert.equal(imported.json().importedCount,4);
+  const contacts=(await request(server,'/api/contacts','GET',undefined,admin.cookies)).json().contacts;
+  assert.equal(contacts.find(c=>c.email==='contacto.sc@example.org').sede_id,'sede-sancarlos');
+  assert.equal(contacts.find(c=>c.email==='contacto.cartago@example.org').sede_id,'sede-cartago');
+  assert.equal(contacts.find(c=>c.email==='sin.ficha@example.org').sede_id,null);
+  const visible=(await request(server,'/api/personal/contacts?email='+rowsToImport[1].email+'&origen=consolidado','GET',undefined,guest.cookies)).json();
+  assert.equal(visible.total,1);assert.equal(visible.contacts[0].email,'contacto.sc@example.org');
+  const second=(await request(server,'/api/bulk/consolidated/import','POST',{...file,includePending:true},admin.cookies));
+  assert.equal(second.status,200,second.text);assert.equal(second.json().importedCount,0);assert.equal(second.json().updatedCount,4);
+});
+
 test('revisión de sedes exige selección, muestra texto literal y descarta sesiones o archivos anteriores', async () => {
   const vm=require('node:vm'),nodes=[],timers=new Map();let timerId=0,current=true;
   const create=tag=>{const n={tag,children:[],value:'',textContent:'',isConnected:true,

@@ -12,32 +12,8 @@ function resolveSedeId(sedeText) {
   return 'sede-cartago';
 }
 
-function resolveOrRegisterDepartamento(db, dependenciaName, sedeId) {
-  if (!dependenciaName) return null;
-  const clean = (dependenciaName || '').trim();
-  if (!clean) return null;
-
-  // 1. Coincidencia exacta
-  let d = db.prepare('SELECT id FROM departamentos WHERE LOWER(TRIM(nombre)) = LOWER(?)').get(clean);
-  if (d) return d.id;
-
-  // 2. Coincidencia parcial
-  d = db.prepare("SELECT id FROM departamentos WHERE LOWER(?) LIKE ('%' || LOWER(nombre) || '%')").get(clean);
-  if (d) return d.id;
-
-  d = db.prepare("SELECT id FROM departamentos WHERE LOWER(nombre) LIKE ?").get(`%${clean.toLowerCase()}%`);
-  if (d) return d.id;
-
-  // 3. Crear nuevo departamento en la tabla departamentos
-  const newId = 'dep-' + crypto.randomUUID().slice(0, 8);
-  const cod = clean.slice(0, 6).toUpperCase().replace(/[^A-Z0-9]/g, '') || 'DEP';
-  db.prepare(`
-    INSERT INTO departamentos (id, codigo, nombre, sede_id, activo)
-    VALUES (?, ?, ?, ?, 1)
-  `).run(newId, cod, clean, sedeId || 'sede-cartago');
-
-  return newId;
-}
+const { splitDependencies, resolveDepartment } = require('../utils/departamentos');
+const { enrich } = require('./funcionarioScope');
 
 /**
  * Busca un funcionario por su correo institucional normalizado
@@ -58,7 +34,7 @@ function getFuncionarioByEmail(email) {
 
   if (!f) return null;
 
-  return f;
+  return enrich(f);
 }
 
 /**
@@ -82,7 +58,10 @@ function searchFuncionarios(term = '', limit = 10) {
 /**
  * Inserta o actualiza un funcionario en el padrón del TEC
  */
-function upsertFuncionario({ nombre, email, dependencia, sede, sede_id, departamento_id }) {
+function upsertFuncionario(data, user = null) {
+  const db = getDb();
+  if (!db.isTransaction) return runTransaction(() => upsertFuncionario(data, user));
+  const { nombre, email, dependencia, sede, sede_id, departamento_id, cargo, puesto } = data;
   if (typeof nombre !== 'string' || typeof email !== 'string' || !nombre.trim() || !email.trim()) {
     throw new Error('El nombre y correo del funcionario son obligatorios.');
   }
@@ -91,7 +70,7 @@ function upsertFuncionario({ nombre, email, dependencia, sede, sede_id, departam
     throw new Error('Indique nombre, correo, dependencia y sede oficiales.');
   }
   if (nombre.trim().length < 3 || dependencia.trim().length < 2 || sede.trim().length < 2 ||
-      nombre.length > 200 || dependencia.length > 200 || sede.length > 200) {
+      nombre.length > 200 || dependencia.length > 2000 || sede.length > 200) {
     throw new Error('Revise la longitud de los datos del funcionario.');
   }
   const cleanNombre = normalizeText(nombre);
@@ -105,13 +84,30 @@ function upsertFuncionario({ nombre, email, dependencia, sede, sede_id, departam
   const cleanDependencia = normalizeText(dependencia) || 'Dependencia no especificada';
   const cleanSede = normalizeText(sede) || 'Campus Central Cartago';
 
-  const db = getDb();
   const existing = db.prepare('SELECT * FROM funcionarios WHERE email_normalized = ?').get(emailNorm);
   const now = new Date().toISOString();
 
   // Resolver IDs de sede y departamento
-  const finalSedeId = sede_id || resolveSedeId(cleanSede);
-  const finalDeptoId = departamento_id || resolveOrRegisterDepartamento(db, cleanDependencia, finalSedeId);
+  const finalSedeId = sede_id || resolveSedeId(cleanSede.split(';')[0]);
+  const names = splitDependencies(cleanDependencia);
+  if (!names.length || names.length > 30 || names.some(n => n.length < 2 || n.length > 200)) throw new Error('Revise las dependencias separadas por punto y coma.');
+  // El padrón no expresa qué sede corresponde a cada dependencia cuando hay varias.
+  const departmentIds = names.map(name => resolveDepartment(db, name, sede.includes(';') ? null : finalSedeId));
+  if (departamento_id && !departmentIds.includes(departamento_id)) throw new Error('La dependencia no coincide con el identificador indicado.');
+  const finalDeptoId = departamento_id || departmentIds[0];
+  const previousMemberships = existing ? require('./funcionarioScope').memberships(existing).map(d => d.id).sort() : [];
+  const sync = id => {
+    db.prepare("DELETE FROM funcionario_departamentos WHERE funcionario_id = ? AND origen = 'PADRON'").run(id);
+    const insert = db.prepare('INSERT OR IGNORE INTO funcionario_departamentos VALUES (?, ?, ?)');
+    for (const departmentId of departmentIds) insert.run(id, departmentId, 'PADRON');
+    if (typeof (cargo ?? puesto) === 'string') db.prepare('UPDATE funcionarios SET cargo = ? WHERE id = ?').run(normalizeText(cargo ?? puesto).slice(0, 200), id);
+    if (user) {
+      const changes = [{ campo: 'dependencias_padron', anterior: previousMemberships.join('; '), nuevo: departmentIds.slice().sort().join('; ') },
+        { campo: 'dependencia', anterior: existing?.dependencia ?? null, nuevo: cleanDependencia }];
+      db.prepare('INSERT INTO funcionarios_historial (id, funcionario_id, usuario_id, usuario_nombre, accion, detalles, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(crypto.randomUUID(), id, user.id, user.nombre || user.username || 'Administrador', existing ? 'IMPORTACION_ACTUALIZACION' : 'IMPORTACION_CREACION', JSON.stringify(changes), now);
+    }
+  };
 
   if (existing) {
     db.prepare(`
@@ -120,13 +116,14 @@ function upsertFuncionario({ nombre, email, dependencia, sede, sede_id, departam
       WHERE id = ?
     `).run(cleanNombre, cleanEmail, cleanDependencia, cleanSede, finalSedeId, finalDeptoId, now, existing.id);
 
-    const row = db.prepare(`
+    sync(existing.id);
+    const row = enrich(db.prepare(`
       SELECT f.*, s.nombre as sede_nombre, d.nombre as departamento_nombre
       FROM funcionarios f
       LEFT JOIN sedes s ON f.sede_id = s.id
       LEFT JOIN departamentos d ON f.departamento_id = d.id
       WHERE f.id = ?
-    `).get(existing.id);
+    `).get(existing.id));
     return { ...row, isNew: false, funcionario: row };
   } else {
     const id = crypto.randomUUID();
@@ -136,13 +133,14 @@ function upsertFuncionario({ nombre, email, dependencia, sede, sede_id, departam
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, cleanNombre, cleanEmail, emailNorm, cleanDependencia, cleanSede, finalSedeId, finalDeptoId, now, now);
 
-    const row = db.prepare(`
+    sync(id);
+    const row = enrich(db.prepare(`
       SELECT f.*, s.nombre as sede_nombre, d.nombre as departamento_nombre
       FROM funcionarios f
       LEFT JOIN sedes s ON f.sede_id = s.id
       LEFT JOIN departamentos d ON f.departamento_id = d.id
       WHERE f.id = ?
-    `).get(id);
+    `).get(id));
     return { ...row, isNew: true, funcionario: row };
   }
 }
@@ -150,7 +148,7 @@ function upsertFuncionario({ nombre, email, dependencia, sede, sede_id, departam
 /**
  * Importación masiva de funcionarios desde archivo Excel/CSV
  */
-function bulkImportFuncionarios(rows) {
+function bulkImportFuncionarios(rows, user = null) {
   if (!rows || !Array.isArray(rows) || rows.length === 0) {
     return { success: false, message: 'No se encontraron filas para importar.' };
   }
@@ -166,12 +164,13 @@ function bulkImportFuncionarios(rows) {
         nombre: row.nombre || row['Nombre de funcionario'] || row['Nombre'] || row['Funcionario'],
         email: row.email || row['Correo electrónico'] || row['Correo'] || row['Email'],
         dependencia: row.dependencia || row['Dependencia'] || row['Departamento'] || row['Escuela'],
-        sede: row.sede || row['Sede'] || row['Campus']
+        sede: row.sede || row['Sede'] || row['Campus'],
+        cargo: row.cargo ?? row.puesto ?? row['Cargo']
       };
       const email = normalizeEmail(data.email);
       if (seen.has(email)) throw new Error('El padrón contiene correos repetidos. No se guardó ninguna fila.');
       seen.add(email);
-      const result = upsertFuncionario(data);
+      const result = upsertFuncionario(data, user);
       if (result.isNew) imported++;
       else updated++;
     }

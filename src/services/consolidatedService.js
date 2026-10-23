@@ -55,7 +55,7 @@ function extractRows(buffer) {
     const absent = required.filter(k => !mapping[k]);
     if (absent.length) throw new Error(`La hoja «${sheet.name}» no contiene las columnas ${absent.map(k => aliases[k][0]).join(', ')}.`);
     const optional = ['title', 'country_name', ...(type === 'ACADEMICO' ? ['subject_area', 'department_unit', 'job_title'] : ['industry', 'position'])];
-    if (!mapping.director_email) warnings.push('No se encontró Correo director: estas filas no se compartirán en la consulta de funcionarios hasta vincularlas mediante una nueva carga.');
+    if (!mapping.director_email) warnings.push('No se encontró Correo director: la consulta se limita a las pertenencias de Escuela Proponente registradas en el padrón.');
     for (const k of optional) if (!mapping[k]) warnings.push(`No se encontró ${aliases[k][0]}; los contactos sin este dato quedarán pendientes.`);
     const info = { name: sheet.name, type, headerRow: sheet.headerRowNum, total: 0, ignored: false, warnings,
       columns: Object.entries(mapping).map(([field, header]) => ({ field, header, label: aliases[field][0] })),
@@ -177,12 +177,7 @@ function analyzeConsolidated(buffer) {
 }
 
 function schoolDepartment(db, school) {
-  // Solo coincidencia exacta normalizada: no atribuir escuelas por semejanza parcial.
-  const existing = db.prepare('SELECT * FROM departamentos').all().find(d => normalize(d.nombre) === normalize(school));
-  if (existing) return existing;
-  const id = `dep-qs-${crypto.createHash('sha256').update(normalize(school)).digest('hex').slice(0, 20)}`;
-  db.prepare('INSERT OR IGNORE INTO departamentos (id, codigo, nombre, sede_id) VALUES (?, ?, ?, NULL)')
-    .run(id, 'QS', school);
+  const id = require('../utils/departamentos').resolveDepartment(db, school);
   return db.prepare('SELECT * FROM departamentos WHERE id = ?').get(id);
 }
 

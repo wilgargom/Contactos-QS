@@ -30,7 +30,9 @@ function requireReporter(body, res, user) {
     res.status(422).json({ success: false, code: 'REPORTER_NOT_VERIFIED', field: 'recomienda_email',
       message: 'Verifique un correo institucional registrado en el padrón del TEC antes de guardar o cargar contactos.' });
   }
-  return reporter;
+  if (!reporter) return null;
+  try { return require('../services/funcionarioScope').selectDepartment(reporter, body.departamento_id); }
+  catch (err) { res.status(err.statusCode || 422).json({ success: false, code: 'REPORTER_DEPARTMENT', field: 'departamento_id', message: err.message }); return null; }
 }
 
 // Middleware de autenticación y resolución de usuario
@@ -91,7 +93,7 @@ function handleApi(req, res, pathname, query, body, user) {
     const funcionario = verifyReporter(query.email);
     if (!funcionario) return res.status(422).json({ success: false, field: 'email', message: 'Ingrese un correo institucional registrado y activo en el padrón del TEC.' });
     if (pathname === '/api/personal/identity') return res.json({ success: true,
-      funcionario: { nombre: funcionario.nombre, email: funcionario.email_normalized, dependencia: funcionario.dependencia, sede: funcionario.sede } });
+      funcionario: require('../services/funcionarioScope').identity(funcionario) });
     try {
       const { email, ...filters } = query;
       return res.json({ success: true, ...require('../services/personalDirectoryService').list({ funcionario }, filters) });
@@ -281,7 +283,7 @@ function handleApi(req, res, pathname, query, body, user) {
   if (pathname === '/api/funcionarios' && method === 'POST') {
     const funcService = require('../services/funcionarioService');
     try {
-      const funcionario = funcService.upsertFuncionario(body);
+      const funcionario = funcService.upsertFuncionario(body, user);
       return res.json({ success: true, funcionario });
     } catch (err) {
       return res.status(400).json({ success: false, message: err.message });
@@ -514,7 +516,7 @@ function handleApi(req, res, pathname, query, body, user) {
         let rowStatus = 'CORRECTO';
         const rowErrors = [];
 
-        if (!nombre || nombre.length < 3) {
+        if (!nombre || nombre.length < 3 || nombre.length > 200) {
           rowStatus = 'ERROR';
           const msg = 'El nombre de funcionario debe tener al menos 3 caracteres.';
           rowErrors.push(msg);
@@ -534,14 +536,14 @@ function handleApi(req, res, pathname, query, body, user) {
           errorDetails.push({ row: rowNum, column: 'Correo electrónico', field: 'email', foundValue: email, problem: msg, recommendation: 'Ingrese un correo institucional válido.' });
         }
 
-        if (!dependencia || dependencia.length < 2) {
+        if (!dependencia || dependencia.length > 2000 || !require('../utils/departamentos').splitDependencies(dependencia).length || require('../utils/departamentos').splitDependencies(dependencia).length > 30 || require('../utils/departamentos').splitDependencies(dependencia).some(n => n.length < 2 || n.length > 200)) {
           rowStatus = 'ERROR';
           const msg = 'La dependencia o departamento es requerida (mínimo 2 caracteres).';
           rowErrors.push(msg);
           errorDetails.push({ row: rowNum, column: 'Dependencia', field: 'dependencia', foundValue: dependencia || '(vacío)', problem: msg, recommendation: 'Indique la unidad, escuela o departamento.' });
         }
 
-        if (!sede || sede.length < 2) {
+        if (!sede || sede.length < 2 || sede.length > 200) {
           rowStatus = 'ERROR';
           const msg = 'La sede es requerida (mínimo 2 caracteres).';
           rowErrors.push(msg);
@@ -559,25 +561,9 @@ function handleApi(req, res, pathname, query, body, user) {
           inBatchEmails.set(email, rowNum);
         }
 
-        // Verificar si ya existe en la base de datos oficial de funcionarios
-        if (rowStatus === 'CORRECTO' && email) {
-          const db = getDb();
-          const existingInDb = db.prepare('SELECT id, nombre, dependencia FROM funcionarios WHERE email_normalized = ?').get(email);
-          if (existingInDb) {
-            rowStatus = 'DUPLICADO_EXACTO';
-            duplicadosExactos++;
-            const msg = `El funcionario ya existe en el padrón institucional (${existingInDb.nombre} - ${existingInDb.dependencia}).`;
-            rowErrors.push(msg);
-            errorDetails.push({
-              row: rowNum,
-              column: 'Correo electrónico',
-              field: 'email',
-              foundValue: email,
-              problem: msg,
-              recommendation: 'Ya está registrado en el padrón institucional. Se omitirá al importar nuevos registros.'
-            });
-          }
-        }
+        // Las coincidencias del padrón se actualizan por correo; solo las filas repetidas del archivo se excluyen.
+        const existingInDb = rowStatus === 'CORRECTO' && getDb().prepare('SELECT id FROM funcionarios WHERE email_normalized = ?').get(email);
+        if (existingInDb) rowErrors.push('Se actualizará la ficha y sus dependencias del padrón. Las asignaciones manuales se conservan.');
 
         if (rowStatus === 'CORRECTO') correctos++;
         if (rowStatus === 'ERROR') conErrores++;
@@ -589,6 +575,7 @@ function handleApi(req, res, pathname, query, body, user) {
             email,
             dependencia,
             sede,
+            cargo: row.cargo || row.Cargo || row.puesto || '',
             'Nombre de funcionario': nombre,
             'Correo electrónico': email,
             'Dependencia': dependencia,
@@ -746,7 +733,7 @@ function handleApi(req, res, pathname, query, body, user) {
 
       const funcionarioService = require('../services/funcionarioService');
       let importResult;
-      try { importResult = funcionarioService.bulkImportFuncionarios(rowsToImport); }
+      try { importResult = funcionarioService.bulkImportFuncionarios(rowsToImport, user); }
       catch (err) { return res.status(422).json({ success: false, message: err.message }); }
 
       // Guardar archivo original en staging Drive

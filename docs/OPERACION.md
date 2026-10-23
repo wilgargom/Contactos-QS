@@ -50,6 +50,16 @@ La vista muestra las hojas y columnas reconocidas, contadores, filtros, búsqued
 
 La procedencia queda como Administrador y cada fila conserva su Escuela Proponente para la agrupación institucional. El año, director y autorización originales quedan en la auditoría, sin inferir información ausente. Coincidencias de nombre y organización con correos diferentes requieren revisión, mientras que una actualización de procedencia conserva los datos del contacto existente. Al confirmar se vuelve a analizar el archivo dentro de la transacción; la vista envía una huella del análisis y, si cambió la clasificación o la versión de un contacto que se actualizaría, se rechaza la carga para solicitar un análisis nuevo.
 
+## Padrón y alcance por dependencias
+
+La columna Dependencia admite varias unidades separadas por `;`. Cada una se registra por separado, con coincidencia exacta normalizada de acentos, mayúsculas y espacios. No se conceden accesos por subcadenas, nombres de personas ni por el campo puesto. La primera actualización migra las fichas existentes sin modificar los contactos ni su procedencia.
+
+Para incorporar el padrón de GTH, cargue su hoja principal desde Carga masiva → Funcionarios, revise la vista previa y confirme las filas válidas. Los correos existentes actualizan el padrón y las pertenencias PADRON; las asignaciones MANUAL se conservan. Los correos ausentes del archivo no se eliminan ni desactivan. Las celdas con varias sedes no expresan una correspondencia por dependencia y no se cruzan para generar permisos.
+
+En Administración → Funcionarios, marque las dependencias autorizadas y conserve una principal. El historial registra las modificaciones. La desactivación bloquea la identificación y los nuevos aportes. Las asignaciones adicionales de Correo director provienen del consolidado: modificar su Escuela Proponente o director exige actualizar esa procedencia desde una nueva carga.
+
+El registro y la carga de contactos incluyen un selector restringido a las dependencias del padrón, las manuales y las asignadas en el consolidado. Cuando hay varias, la persona selecciona expresamente a cuál corresponde el aporte. El servidor comprueba de nuevo la pertenencia al confirmar; un filtro o identificador enviado desde el navegador no agrega acceso. La consulta separa aportes propios, cargas de las dependencias y consolidado. Las dos últimas vistas son compartidas con quienes tengan esas dependencias, incluso si no figuran como directores. Retirar una pertenencia revoca ese alcance salvo que una asignación vigente del consolidado siga autorizando la misma dependencia.
+
 ## Incidencias e identidad institucional
 
 Los fallos internos de las operaciones nuevas y del despachador devuelven una referencia para soporte. El panel muestra las incidencias recientes; los archivos técnicos rotan con un límite aproximado de 4 MB y omiten cuerpos, contraseñas y mensajes crudos de las excepciones. Los errores de validación se presentan al usuario sin registrarlos como fallos técnicos.

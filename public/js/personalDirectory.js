@@ -55,7 +55,7 @@ const PersonalDirectoryModule = {
         <div class="personal-person-data">
           <span class="personal-eyebrow">${pending ? 'Consultando padrón' : funcionario ? 'Persona encontrada en el padrón' : 'Persona funcionaria'}</span>
           <strong>${esc(funcionario?.nombre || (pending ? 'Buscando información…' : 'Nombre de la persona funcionaria'))}</strong>
-          <p>${esc(funcionario?.dependencia || 'Oficina o Departamento')}</p>
+          <p>${esc(funcionario?.dependencias?.map(d => d.nombre + (d.origen === 'CONSOLIDADO' ? ' (consolidado)' : '')).join('; ') || funcionario?.dependencia || 'Oficina o Departamento')}</p>
           <p class="personal-person-sede">${esc(funcionario?.sede || 'Sede del TEC')}</p>
           ${funcionario ? `<span class="personal-person-email">${esc(funcionario.email)}</span>` : ''}
         </div>
@@ -116,9 +116,10 @@ const PersonalDirectoryModule = {
         <h3 id="personal-contacts-title" class="personal-section-title">Contactos asociados</h3>
         <div class="personal-sources" role="group" aria-label="Procedencia de los contactos">
           ${source('actuales', 'Registros individuales y masivos', 'Contactos reportados por esta persona', data.counts.actuales, 'fa-user-pen')}
+          ${source('escuela', 'Cargas de las dependencias', 'Aportes individuales y masivos de las dependencias asignadas', data.counts.escuela || 0, 'fa-building')}
           ${source('consolidado', 'Consolidado de la dependencia', 'Contactos de la carga institucional', data.counts.consolidado, 'fa-building-columns')}
         </div>
-        <p class="personal-source-help">${consolidated ? 'Contactos del consolidado asignados a la dependencia vigente del funcionario consultado.' : 'Registros individuales y masivos asociados al correo consultado, incluidos los de sesiones anteriores.'}</p>
+        <p class="personal-source-help">${consolidated ? 'Contactos del consolidado de las dependencias del padrón y de las asignaciones por correo director.' : this.filters.origen === 'escuela' ? 'Aportes de cualquier reportante registrados en las dependencias asignadas a esta persona. La consulta no concede permisos de edición.' : 'Registros individuales y masivos asociados al correo consultado, incluidos los de sesiones anteriores.'}</p>
         <form id="personal-filters" class="personal-filters">
           <h4>Filtrar contactos</h4>
           <div class="personal-filter-grid">
@@ -130,7 +131,7 @@ const PersonalDirectoryModule = {
           <div class="personal-actions"><button type="submit" class="btn btn-tec">Aplicar filtros</button><button type="button" id="personal-clear" class="btn btn-outline">Limpiar filtros</button></div>
         </form>
         <div class="personal-results-heading"><h4>${consolidated ? 'Contactos del consolidado' : 'Contactos reportados'}</h4><p role="status">${esc(data.total)} ${data.total === 1 ? 'contacto encontrado' : 'contactos encontrados'}${data.pages > 1 ? ' · Página '+esc(data.page)+' de '+esc(data.pages) : ''}</p></div>
-        ${data.contacts.length ? `<div class="personal-contact-list">${data.contacts.map(c=>this.renderContact(c)).join('')}</div>` : `<div class="personal-empty"><i class="fa-solid fa-address-book" aria-hidden="true"></i><strong>No hay contactos para esta selección</strong><p>${data.counts[consolidated ? 'consolidado' : 'actuales'] ? 'Pruebe con otros filtros o limpie la búsqueda.' : consolidated ? 'Todavía no hay contactos consolidados vinculados a esta dependencia.' : 'Todavía no hay registros individuales o masivos asociados a este correo.'}</p></div>`}
+        ${data.contacts.length ? `<div class="personal-contact-list">${data.contacts.map(c=>this.renderContact(c)).join('')}</div>` : `<div class="personal-empty"><i class="fa-solid fa-address-book" aria-hidden="true"></i><strong>No hay contactos para esta selección</strong><p>${data.counts[this.filters.origen] ? 'Pruebe con otros filtros o limpie la búsqueda.' : consolidated ? 'Todavía no hay contactos consolidados vinculados a esta dependencia.' : 'Todavía no hay registros individuales o masivos asociados a este correo.'}</p></div>`}
         <nav class="personal-pagination" aria-label="Páginas de contactos" ${data.pages <= 1 ? 'hidden' : ''}><button id="personal-prev" type="button" class="btn btn-outline" ${data.page<=1?'disabled':''}>Anterior</button><span>Página ${esc(data.page)} de ${esc(data.pages)}</span><button id="personal-next" type="button" class="btn btn-outline" ${data.page>=data.pages?'disabled':''}>Siguiente</button></nav>
       </section>`;
     document.getElementById('personal-filters').onsubmit = event => {
@@ -162,7 +163,7 @@ const PersonalDirectoryModule = {
     </details>`;
   },
   changeOrigin(origen) {
-    if (!['actuales','consolidado'].includes(origen)) return;
+    if (!['actuales','escuela','consolidado'].includes(origen)) return;
     this.filters.origen = origen; this.filters.metodo = ''; this.filters.director_id = ''; this.filters.departamento_id = ''; this.load();
   }
 };

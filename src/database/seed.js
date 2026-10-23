@@ -202,6 +202,10 @@ function seedDatabase() {
     const now = new Date().toISOString();
     for (const f of initialFuncionarios) {
       stmtFunc.run(f.id, f.nombre, f.email, f.email_normalized, f.dependencia, f.sede, f.sede_id, f.departamento_id, now, now);
+      // La siembra no restituye dependencias que administración haya retirado.
+      if (trx.prepare('SELECT changes() AS n').get().n) {
+        trx.prepare('INSERT OR IGNORE INTO funcionario_departamentos VALUES (?, ?, ?)').run(f.id, f.departamento_id, 'PADRON');
+      }
     }
   });
 

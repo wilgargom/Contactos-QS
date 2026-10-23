@@ -45,7 +45,7 @@ const AdminModule = {
         '</select><button type="submit" class="btn btn-outline">Buscar</button><button type="button" class="btn btn-tec" id="funcionario-new">Agregar funcionario</button></form>' +
         '<p role="status" class="mb-3">' + data.total + ' funcionarios · Página ' + page + ' de ' + Math.max(1,Math.ceil(data.total / data.pageSize)) + '</p>' +
         '<div class="table-responsive"><table class="data-table"><thead><tr><th>Nombre / correo</th><th>Cargo</th><th>Dependencia / sede</th><th>Estado</th><th>Acción</th></tr></thead><tbody>' +
-        data.funcionarios.map((f,i) => '<tr><td>'+esc(f.nombre)+'<br>'+esc(f.email)+'</td><td>'+esc(f.cargo || 'Sin especificar')+'</td><td>'+esc(f.dependencia)+'<br>'+esc(f.sede)+'</td><td>'+(f.activo?'Activo':'Inactivo')+'</td><td><button type="button" class="btn btn-outline btn-sm" data-funcionario-index="'+i+'">Editar ficha</button></td></tr>').join('') +
+        data.funcionarios.map((f,i) => '<tr><td>'+esc(f.nombre)+'<br>'+esc(f.email)+'</td><td>'+esc(f.cargo || 'Sin especificar')+'</td><td>'+esc(f.dependencias?.map(d => d.nombre).join('; ') || f.dependencia)+'<br>'+esc(f.sede)+'</td><td>'+(f.activo?'Activo':'Inactivo')+'</td><td><button type="button" class="btn btn-outline btn-sm" data-funcionario-index="'+i+'">Editar ficha</button></td></tr>').join('') +
         (data.total ? '' : '<tr><td colspan="5">No se encontraron funcionarios.</td></tr>') +
         '</tbody></table></div><div class="flex gap-3 mt-4"><button type="button" id="funcionarios-prev" class="btn btn-outline" '+(page<=1?'disabled':'')+'>Anterior</button><button type="button" id="funcionarios-next" class="btn btn-outline" '+(page*data.pageSize>=data.total?'disabled':'')+'>Siguiente</button></div>';
       document.getElementById('funcionarios-search').onsubmit = event => {
@@ -80,7 +80,9 @@ const AdminModule = {
       host.innerHTML = '<h4 class="font-bold mb-3">'+(id?'Actualizar ficha':'Agregar funcionario')+'</h4><form id="funcionario-form">' +
         input('nombre','Nombre completo')+input('email','Correo institucional','email')+input('cargo','Cargo / puesto (opcional)','text',false)+
         '<label class="block mb-3">Sede<select id="funcionario-sede_id" class="form-control" required>'+options(catalogs.sedes,f.sede_id)+'</select></label>'+
-        '<label class="block mb-3">Escuela / Unidad<select id="funcionario-departamento_id" class="form-control" required></select></label>'+
+        '<label class="block mb-3">Dependencia principal<select id="funcionario-departamento_id" class="form-control" required></select></label>'+
+        '<fieldset class="mb-3"><legend>Dependencias del padrón y asignaciones manuales</legend><p class="text-sm text-slate-600">Marque todas las pertenencias autorizadas, incluida la principal.</p><div class="max-h-64 overflow-auto border border-slate-200 p-3">'+catalogs.departamentos.map(d => '<label class="block mb-2"><input type="checkbox" data-membership="'+esc(d.id)+'" '+((f.dependencias || []).some(m => m.id === d.id)?'checked':'')+'> '+esc(d.nombre)+'</label>').join('')+'</div></fieldset>'+
+        '<p class="text-sm mb-3">Asignaciones adicionales del consolidado: '+esc((f.dependencias_autorizadas || []).filter(d => d.asignado_consolidado).map(d => d.nombre).join('; ') || 'Ninguna')+'. Se actualizan desde el archivo consolidado.</p>'+
         '<label class="block mb-3"><input type="checkbox" id="funcionario-activo" '+(f.activo?'checked':'')+'> Activo para reportar contactos</label>'+
         '<p class="text-sm text-slate-600 mb-3">La desactivación conserva la ficha y sus contactos anteriores. El correo debe ser único en el padrón.</p>'+
         '<p id="funcionario-error" role="alert" class="text-red-600 mb-3"></p><div class="flex gap-3"><button type="submit" id="funcionario-save" class="btn btn-tec">Guardar cambios</button><button type="button" id="funcionario-cancel" class="btn btn-outline">Volver al padrón</button></div></form>'+
@@ -92,6 +94,7 @@ const AdminModule = {
       const sede = document.getElementById('funcionario-sede_id'), depto = document.getElementById('funcionario-departamento_id');
       const refresh = selected => { depto.innerHTML = options(catalogs.departamentos.filter(d => !d.sede_id || d.sede_id === sede.value), selected); };
       refresh(f.departamento_id); sede.onchange = () => refresh('');
+      depto.onchange = () => { const checkbox = [...host.querySelectorAll('[data-membership]')].find(c => c.dataset.membership === depto.value); if (checkbox) checkbox.checked = true; };
       document.getElementById('funcionario-cancel').onclick = () => this.loadFuncionarios();
       document.getElementById('funcionario-form').onsubmit = event => { event.preventDefault(); this.saveFuncionario(); };
     } catch (err) { if (seq === this.funcionariosRequest && session === App.sessionVersion) App.showToast(err.message, 'error'); }
@@ -102,6 +105,8 @@ const AdminModule = {
     if (!f || this.funcionariosBusy || App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
     const data = {};
     for (const k of ['nombre','email','cargo','sede_id','departamento_id']) data[k] = document.getElementById('funcionario-'+k).value.trim();
+    data.departamento_ids = [...document.querySelectorAll('[data-membership]:checked')].map(c => c.dataset.membership);
+    if (data.departamento_id && !data.departamento_ids.includes(data.departamento_id)) data.departamento_ids.unshift(data.departamento_id);
     data.activo = document.getElementById('funcionario-activo').checked;
     if (f.activo && !data.activo && !window.confirm('¿Desactivar al funcionario? Ya no se identificará para registrar o cargar nuevos contactos. Sus contactos anteriores se conservarán.')) return;
     if (f.id) data.version = f.version;

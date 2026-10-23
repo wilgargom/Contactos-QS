@@ -16,7 +16,7 @@ function resolveDepartment(db, name, sedeId = null) {
   const key = departmentKey(name);
   if (!key) throw new Error('Indique una dependencia.');
   let matches = db.prepare('SELECT id, nombre, sede_id, activo FROM departamentos ORDER BY activo DESC, id').all().filter(d => departmentKey(d.nombre) === key);
-  if (new Set(matches.map(d => d.sede_id)).size > 1 && sedeId) matches = matches.filter(d => d.sede_id === sedeId);
+  if (sedeId) matches = matches.filter(d => d.sede_id === sedeId);
   if (new Set(matches.map(d => d.sede_id)).size > 1) {
     throw Object.assign(new Error('Existen dependencias con el mismo nombre en distintas sedes. Solicite su revisión administrativa.'), { code: 'AMBIGUOUS_DEPARTMENT' });
   }

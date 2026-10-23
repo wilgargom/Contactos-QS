@@ -62,6 +62,8 @@ El registro y la carga de contactos incluyen un selector restringido a las depen
 
 ## Incidencias e identidad institucional
 
+Cuando el padrón incluye varias sedes, la importación utiliza la sede de la dependencia principal para resolver dependencias ambiguas. Conserva la principal vigente si sigue incluida en el padrón; para fichas nuevas toma la primera dependencia. Una dependencia secundaria con sede inequívoca conserva su propia sede. Si tampoco se identifica la sede principal, aparece una revisión por persona y dependencia antes de guardar la carga completa. Las selecciones se restringen a las sedes de esa fila y se validan otra vez en el servidor; cancelar no guarda filas.
+
 Los catálogos muestran dependencias individuales con nombres uniformes. Las combinaciones históricas separadas por punto y coma se conservan para auditoría y se excluyen de las nuevas selecciones. Las equivalencias de nombre se consultan por sede: Computación, Ingeniería en Computación e Ingeniería en Computación-Cartago comparten alcance únicamente cuando sus IDs tienen la misma sede. Ingeniería en Computadores, programas, fondos y otras sedes mantienen su identidad. Los filtros y las estadísticas incluyen los IDs equivalentes sin cambiar contactos, versiones o exportaciones previas. Los nombres truncados requieren revisión administrativa; no se completan ni se asignan por semejanza.
 
 Los fallos internos de las operaciones nuevas y del despachador devuelven una referencia para soporte. El panel muestra las incidencias recientes; los archivos técnicos rotan con un límite aproximado de 4 MB y omiten cuerpos, contraseñas y mensajes crudos de las excepciones. Los errores de validación se presentan al usuario sin registrarlos como fallos técnicos.

@@ -233,6 +233,8 @@ const RegisterModule = {
           <p class="text-sm text-slate-600 mt-2">Seleccione una dependencia asignada en el padrón o en el consolidado. Cada aporte se registra en una sola dependencia.</p>
         </div>
 
+        <p id="contact-entry-lock-message" class="text-sm text-slate-600 mb-4" role="status">Primero identifique al funcionario y seleccione la dependencia del aporte para habilitar los datos del contacto.</p>
+        <fieldset id="contact-entry-fields" ${this.isReporterVerified() && this.reporterDepartments().some(d => d.id === this.selectedDeptoId) ? '' : 'disabled inert'} aria-describedby="contact-entry-lock-message">
         <!-- 2. Selector de Tipo de Contacto (Dentro del Registro Individual) -->
         <div class="mb-6">
           <label class="block text-sm font-bold text-slate-800 mb-3 flex items-center gap-2">
@@ -276,6 +278,7 @@ const RegisterModule = {
             </div>
           `}
         </div>
+        </fieldset>
       </div>
 
       <!-- Modal de Detección de Duplicados -->
@@ -661,6 +664,11 @@ const RegisterModule = {
 
   updateCardDisplay() {
     const verified = this.isReporterVerified();
+    const ready = verified && this.reporterDepartments().some(d => d.id === this.selectedDeptoId);
+    const fields = document.getElementById('contact-entry-fields');
+    if (fields) { fields.disabled = !ready; fields.inert = !ready; }
+    const lockMessage = document.getElementById('contact-entry-lock-message');
+    if (lockMessage) lockMessage.hidden = ready;
     this.renderReporterDepartment();
     const input = document.getElementById('reg-recomienda-email');
     if (input) {
@@ -829,6 +837,10 @@ const RegisterModule = {
   },
 
   selectType(type) {
+    if (!this.isReporterVerified() || !this.reporterDepartments().some(d => d.id === this.selectedDeptoId)) {
+      App.showToast('Primero identifique al funcionario y seleccione la dependencia del aporte.', 'warning');
+      return;
+    }
     if (this.draft && this.currentType !== type && !window.confirm('Cambiar el tipo descartará el borrador actual, ¿desea continuar?')) return;
     if (this.currentType !== type) {
       this.draft = null;
@@ -1222,6 +1234,7 @@ const RegisterModule = {
 
   // Verificación reactiva y de duplicados en tiempo real para Correo Electrónico
   onEmailInput(value) {
+    this.emailCheckVersion = (this.emailCheckVersion || 0) + 1;
     clearTimeout(this.emailCheckTimeout);
     const trimmed = (value || '').trim();
     const errEl = document.getElementById('err-email');
@@ -1318,6 +1331,7 @@ const RegisterModule = {
 
   // Consulta inmediata a la base para determinar si el correo existe
   async checkEmailAvailability(email) {
+    const version = this.emailCheckVersion = (this.emailCheckVersion || 0) + 1;
     const errEl = document.getElementById('err-email');
     const inputEl = document.getElementById('field-email');
     const spinner = document.getElementById('email-checking-spinner');
@@ -1357,6 +1371,7 @@ const RegisterModule = {
 
     try {
       const res = await API.get(`/api/contacts/check-email?email=${encodeURIComponent(email)}`);
+      if (version !== this.emailCheckVersion || inputEl.value.trim().toLowerCase() !== email.trim().toLowerCase()) return;
       if (spinner) spinner.classList.add('hidden');
 
       if (res.isTecDomain) {
@@ -1379,7 +1394,7 @@ const RegisterModule = {
             </div>
           </div>
         `;
-      } else if (res.exists && res.contact) {
+      } else if (res.exists) {
         // EL CORREO YA EXISTE: alertar de inmediato para no perder tiempo
         this.emailExists = true;
         this.emailValid = false;
@@ -1391,7 +1406,7 @@ const RegisterModule = {
           groupEl.className = 'form-group mb-0 bg-red-50/60 p-3.5 rounded-xl border-2 border-red-400 transition-all shadow-xs';
         }
 
-        const c = res.contact;
+        const c = res.contact || {};
         const org = c.institution || c.company_name || 'Institución no especificada';
 
         errEl.innerHTML = `
@@ -1401,7 +1416,7 @@ const RegisterModule = {
               Este correo ya existe
             </div>
             <div class="text-xs text-red-800 mt-1 font-medium">
-              Ya se encuentra registrado en el sistema como <strong>${this.escapeReporterText(c.tipo_contacto)}</strong>: ${this.escapeReporterText(c.first_name)} ${this.escapeReporterText(c.last_name)} (${this.escapeReporterText(org)}).
+              ${res.contact ? `Ya se encuentra registrado en el sistema como <strong>${this.escapeReporterText(c.tipo_contacto)}</strong>: ${this.escapeReporterText(c.first_name)} ${this.escapeReporterText(c.last_name)} (${this.escapeReporterText(org)}).` : 'El correo ya está registrado en el consolidado o en el directorio. Los detalles del contacto están restringidos, pero el correo no está disponible para otro registro.'}
             </div>
             <div class="text-[11px] text-red-700/90 mt-1 bg-white/70 p-1.5 rounded border border-red-200">
               <i class="fa-solid fa-hand text-amber-600 mr-1"></i> No es necesario continuar completando los demás campos para este contacto ya que se encuentra almacenado.

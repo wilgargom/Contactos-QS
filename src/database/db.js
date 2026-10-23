@@ -30,6 +30,16 @@ function getDb() {
     try { dbInstance.exec('ALTER TABLE contactos ADD COLUMN escuela_proponente TEXT;'); } catch (_) {}
 
     const columns = dbInstance.prepare('PRAGMA table_info(contactos)').all();
+    // Conservar duplicados históricos existentes; impedir que nuevas escrituras
+    // agreguen otro contacto con el mismo correo, sin distinguir categoría u origen.
+    dbInstance.exec(`CREATE INDEX IF NOT EXISTS idx_contactos_email_identity ON contactos(LOWER(TRIM(email))) WHERE TRIM(email) <> '';
+      CREATE TRIGGER IF NOT EXISTS contactos_email_unique_insert BEFORE INSERT ON contactos
+      WHEN TRIM(NEW.email) <> '' AND EXISTS (SELECT 1 FROM contactos WHERE TRIM(email) <> '' AND LOWER(TRIM(email)) = LOWER(TRIM(NEW.email)))
+      BEGIN SELECT RAISE(ABORT, 'CONTACT_EMAIL_ALREADY_EXISTS'); END;
+      CREATE TRIGGER IF NOT EXISTS contactos_email_unique_update BEFORE UPDATE OF email ON contactos
+      WHEN TRIM(NEW.email) <> '' AND LOWER(TRIM(NEW.email)) <> LOWER(TRIM(OLD.email)) AND EXISTS
+        (SELECT 1 FROM contactos WHERE id <> OLD.id AND TRIM(email) <> '' AND LOWER(TRIM(email)) = LOWER(TRIM(NEW.email)))
+      BEGIN SELECT RAISE(ABORT, 'CONTACT_EMAIL_ALREADY_EXISTS'); END;`);
     if (!columns.some(c => c.name === 'version')) {
       dbInstance.exec('ALTER TABLE contactos ADD COLUMN version INTEGER NOT NULL DEFAULT 1');
     }
@@ -124,6 +134,10 @@ function runTransaction(fn) {
     return result;
   } catch (err) {
     db.exec('ROLLBACK;');
+    if (err.message?.includes('CONTACT_EMAIL_ALREADY_EXISTS')) {
+      err.statusCode = 409;
+      err.message = 'El correo ya está registrado en el sistema y no admite otro registro.';
+    }
     throw err;
   }
 }

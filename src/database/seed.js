@@ -131,6 +131,7 @@ function seedDatabase() {
     `);
 
     for (const c of initialContacts) {
+      if (trx.prepare("SELECT id FROM contactos WHERE id = ? OR (TRIM(email) <> '' AND LOWER(TRIM(email)) = ?) LIMIT 1").get(c.id, c.email.trim().toLowerCase())) continue;
       stmtContact.run(
         c.id, c.tipo_contacto, c.source, c.title, c.first_name, c.last_name, c.email, c.email_normalized,
         c.phone, c.country_name, c.sede_id, c.departamento_id, c.job_title, c.department_unit,

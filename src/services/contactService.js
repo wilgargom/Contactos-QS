@@ -159,7 +159,7 @@ function updateContact(id, rawData, user) {
   const s = validation.sanitized;
   const dupCheck = checkDuplicate(s, id);
 
-  if (dupCheck.status === 'EXACT_MATCH') {
+  if (dupCheck.status === 'EXACT_MATCH' && !(dupCheck.matchType === 'EMAIL_EXACT' && normalizeEmail(existing.email) === normalizeEmail(s.email))) {
     return {
       success: false,
       duplicateStatus: 'EXACT_MATCH',

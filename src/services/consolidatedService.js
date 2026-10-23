@@ -140,12 +140,12 @@ function extractRows(buffer) {
 function analyzeConsolidated(buffer) {
   const { rows, sheets } = extractRows(buffer);
   const db = getDb();
-  const existing = db.prepare('SELECT id,email_normalized,first_name,last_name,institution,company_name,tipo_contacto,metodo_ingreso,es_consolidado,version,departamento_id FROM contactos').all();
+  const existing = db.prepare('SELECT id,email,email_normalized,first_name,last_name,institution,company_name,tipo_contacto,metodo_ingreso,es_consolidado,version,departamento_id FROM contactos').all();
   const versions = new Map(existing.map(c => [c.id, c.version]));
-  const emails = new Map(), names = new Map(), batch = new Map(), batchNames = new Map();
+  const emails = new Map(), names = new Map(), batch = new Map(), batchNames = new Map(), globalEmails = new Map(), batchEmails = new Map();
   const add = (map, key, value) => { if (key) map.set(key, [...(map.get(key) || []), value]); };
-  for (const c of existing) { add(emails, c.tipo_contacto + ':' + normalize(c.email_normalized), c); add(names, fullKey(c) ? c.tipo_contacto + ':' + fullKey(c) : '', c); }
-  for (const r of rows) { add(batch, identityKey(r.data), r); add(batchNames, fullKey(r.data) ? r.data.tipo_contacto + ':' + fullKey(r.data) : '', r); }
+  for (const c of existing) { add(emails, c.tipo_contacto + ':' + normalize(c.email), c); add(names, fullKey(c) ? c.tipo_contacto + ':' + fullKey(c) : '', c); add(globalEmails, normalize(c.email), c); }
+  for (const r of rows) { add(batch, identityKey(r.data), r); add(batchNames, fullKey(r.data) ? r.data.tipo_contacto + ':' + fullKey(r.data) : '', r); add(batchEmails, r.data.email, r); }
   const seen = new Set();
   const summary = { totalAnalizados: rows.length, correctos: 0, nuevos: 0, nuevosCompletos: 0, actualizaciones: 0,
     pendientesRevision: 0, conErrores: 0, posiblesDuplicados: 0, duplicadosExactos: 0 };
@@ -163,6 +163,10 @@ function analyzeConsolidated(buffer) {
     } else if (!r.escuela || (!d.email && !fullKey(d))) {
       r.status = 'ERROR';
       r.errors.unshift(!r.escuela ? 'Falta Escuela Proponente.' : 'Falta correo o nombre completo con organización para identificar el contacto.');
+    } else if (!matches.length && (globalEmails.get(d.email) || []).length) {
+      r.status = 'DUPLICADO_EXACTO'; r.errors.unshift('El correo ya está registrado en el sistema. Se omite la fila, aunque corresponda a otro tipo de contacto.');
+    } else if (!matches.length && new Set((batchEmails.get(d.email) || []).map(p => p.data.tipo_contacto)).size > 1) {
+      r.status = 'POSIBLE_DUPLICADO'; r.errors.unshift('El mismo correo aparece en distintas categorías del archivo. Deje un solo contacto por correo antes de importar.');
     } else if (new Set(peers.map(p => normalize(p.escuela))).size > 1 ||
         new Set(peers.map(p => p.data.tipo_contacto)).size > 1 ||
         new Set(peers.map(p => p.director?.id || '')).size > 1) {

@@ -212,7 +212,7 @@ const AdminModule = {
             <div class="kpi-value text-emerald-700">${empleadores}</div>
           </div>
           <div class="kpi-card" style="border-top-color: var(--status-success);">
-            <div class="kpi-title">Validados / Aptos</div>
+            <div class="kpi-title">Validados sin exportar</div>
             <div class="kpi-value text-emerald-700">${validados}</div>
           </div>
           <div class="kpi-card" style="border-top-color: var(--status-warning);">
@@ -220,7 +220,7 @@ const AdminModule = {
             <div class="kpi-value text-amber-700">${duplicados}</div>
           </div>
           <div class="kpi-card" style="border-top-color: var(--tec-accent);">
-            <div class="kpi-title">Exportados Oficiales</div>
+            <div class="kpi-title">Contactos con envío confirmado</div>
             <div class="kpi-value text-amber-600">${exportados}</div>
           </div>
         </div>

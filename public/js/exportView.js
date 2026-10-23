@@ -107,6 +107,7 @@ const ExportModule = {
         </div>
         <div id="exp-result" class="mb-6" aria-live="polite"></div>
         <h3 class="font-bold text-slate-800 mb-3">Lotes preparados y confirmados</h3>
+        <p class="text-sm text-slate-500 mb-3">Anule los lotes creados durante pruebas o confirmados por error, los contactos se conservan y la anulación queda en el historial. Esta acción modifica la constancia interna de envío.</p>
         <div id="exp-history" class="table-responsive"></div>
       </div>
     `;
@@ -160,12 +161,14 @@ const ExportModule = {
       const target = document.getElementById('exp-history');
       if (!target) return;
       const esc = value => DirectoryModule.escapeSelectionText(value);
-      const labels = { GENERADO: 'Archivo preparado', RECIBIDO_NAVEGADOR: 'Recibido por el navegador', CONFIRMADO_QS: 'Envío a QS confirmado' };
+      const labels = { GENERADO: 'Archivo preparado', RECIBIDO_NAVEGADOR: 'Recibido por el navegador', CONFIRMADO_QS: 'Envío a QS confirmado', ANULADO: 'Lote anulado' };
       target.innerHTML = `<table class="data-table"><thead><tr><th>Fecha / lote</th><th>Tipo y contactos</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
         ${this.batches.map(b => `<tr><td>${esc(new Date(b.created_at).toLocaleString())}<br><small>${esc(b.id)}</small></td>
-        <td>${esc(b.tipo)} · ${esc(b.total)}</td><td>${esc(labels[b.estado] || b.estado)}</td><td>
+        <td>${esc(b.tipo)} · ${esc(b.total)}</td><td>${esc(labels[b.estado] || b.estado)}
+        ${b.estado === 'ANULADO' ? `<br><small>${esc(new Date(b.anulado_at).toLocaleString())}<br>Motivo: ${esc(b.motivo_anulacion)}</small>` : ''}</td><td>
         <button type="button" class="btn btn-outline btn-xs" onclick="ExportModule.downloadBatch('${b.id}')">Descargar</button>
-        ${b.estado === 'RECIBIDO_NAVEGADOR' ? `<button type="button" class="btn btn-tec btn-xs" onclick="ExportModule.confirmExport('${b.id}')">Confirmar envío a QS</button>` : ''}</td></tr>`).join('')}
+        ${b.estado === 'RECIBIDO_NAVEGADOR' ? `<button type="button" class="btn btn-tec btn-xs" onclick="ExportModule.confirmExport('${b.id}')">Confirmar envío a QS</button>` : ''}
+        ${b.estado !== 'ANULADO' ? `<button type="button" class="btn btn-outline btn-xs" onclick="ExportModule.cancelExport('${b.id}')">Anular lote</button>` : ''}</td></tr>`).join('')}
         </tbody></table>`;
     } catch (err) { App.showToast(err.message, 'error'); }
   },
@@ -182,8 +185,30 @@ const ExportModule = {
       anchor.href = url; anchor.download = batch.filename;
       document.body.appendChild(anchor); anchor.click(); anchor.remove();
       setTimeout(() => window.URL.revokeObjectURL(url), 1000);
-      await API.post(`/api/export/lotes/${id}/received`);
-      App.showToast('Archivo recibido por el navegador. Confirme el envío únicamente después de realizarlo.', 'info');
+      if (batch.estado !== 'ANULADO') await API.post(`/api/export/lotes/${id}/received`);
+      App.showToast(batch.estado === 'ANULADO' ? 'Copia del lote anulado descargada para consulta.' : 'Archivo recibido por el navegador. Confirme el envío únicamente después de realizarlo.', 'info');
+      await this.loadBatches();
+    } catch (err) { App.showToast(err.message, 'error'); }
+    finally { this.busy = false; }
+  },
+
+  async cancelExport(id) {
+    if (this.busy) return;
+    const batch = this.batches.find(b => b.id === id);
+    if (!batch || batch.estado === 'ANULADO') return;
+    const reason = window.prompt('Indique el motivo de anulación del lote (3 a 500 caracteres):', 'Prueba del sistema');
+    if (reason === null) return;
+    if (reason.trim().length < 3 || reason.trim().length > 500) {
+      App.showToast('Indique un motivo de entre 3 y 500 caracteres.', 'error');
+      return;
+    }
+    if (!window.confirm(`¿Anular este lote de ${batch.total} contactos? Se conservarán los contactos y el historial, se retirará la confirmación interna de este lote y se mantendrán los otros envíos confirmados.`)) return;
+    this.busy = true;
+    try {
+      await API.post(`/api/export/lotes/${id}/cancel`, { confirmed: true, reason: reason.trim() });
+      const result = document.getElementById('exp-result');
+      if (result) result.textContent = 'Lote anulado, los contactos y el historial se conservan. El tablero se actualizará al abrirlo.';
+      App.showToast('Lote anulado y estados de los contactos revisados.', 'success');
       await this.loadBatches();
     } catch (err) { App.showToast(err.message, 'error'); }
     finally { this.busy = false; }

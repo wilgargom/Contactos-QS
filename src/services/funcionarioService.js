@@ -12,8 +12,33 @@ function resolveSedeId(sedeText) {
   return 'sede-cartago';
 }
 
-const { splitDependencies, resolveDepartment } = require('../utils/departamentos');
+const { splitDependencies, resolveDepartment, departmentKey } = require('../utils/departamentos');
 const { enrich } = require('./funcionarioScope');
+
+function departmentPlan(data) {
+  const db = getDb();
+  const sedes = [...new Set(String(data.sede || '').split(';').filter(s => s.trim()).map(resolveSedeId))];
+  const selections = data.sedes_dependencias || {};
+  if (typeof selections !== 'object' || Array.isArray(selections)) throw new Error('Revise las sedes seleccionadas por dependencia.');
+  const names = splitDependencies(data.dependencia);
+  if (Object.keys(selections).some(key => !names.some(name => departmentKey(name) === key))) throw new Error('La selección incluye una dependencia ajena a la fila.');
+  const catalog = db.prepare('SELECT nombre, sede_id FROM departamentos WHERE activo = 1').all();
+  const candidates = name => [...new Set(catalog.filter(d => departmentKey(d.nombre) === departmentKey(name) && sedes.includes(d.sede_id)).map(d => d.sede_id))];
+  const previousPrimary = typeof data.email === 'string' ? db.prepare(`SELECT d.nombre, COALESCE(d.sede_id, f.sede_id) AS sede_id FROM funcionarios f
+    JOIN departamentos d ON d.id = f.departamento_id AND d.activo = 1 WHERE f.email_normalized = ?`).get(normalizeEmail(data.email)) : null;
+  // Principal explícita vigente; para una ficha nueva, primera dependencia del padrón.
+  const keepPrincipal = previousPrimary && names.some(name => departmentKey(name) === departmentKey(previousPrimary.nombre)) && sedes.includes(previousPrimary.sede_id);
+  const principal = keepPrincipal ? previousPrimary.sede_id : names.length && candidates(names[0]).length === 1 ? candidates(names[0])[0] : null;
+  const principalKey = departmentKey(keepPrincipal ? previousPrimary.nombre : names[0]);
+  return names.map(name => {
+    const key = departmentKey(name);
+    const matches = candidates(name);
+    const selected = selections[key];
+    if (selected !== undefined && (typeof selected !== 'string' || !sedes.includes(selected))) throw new Error('La sede seleccionada no pertenece a las sedes de esta fila.');
+    const sedeId = selected || (sedes.length === 1 ? sedes[0] : key === principalKey && principal ? principal : matches.length === 1 ? matches[0] : principal);
+    return { name, key, sedeId, opciones: sedes.map(id => db.prepare('SELECT id, nombre FROM sedes WHERE id = ? AND activo = 1').get(id)).filter(Boolean) };
+  });
+}
 
 /**
  * Busca un funcionario por su correo institucional normalizado
@@ -88,13 +113,19 @@ function upsertFuncionario(data, user = null) {
   const now = new Date().toISOString();
 
   // Resolver IDs de sede y departamento
-  const finalSedeId = sede_id || resolveSedeId(cleanSede.split(';')[0]);
+  let finalSedeId = sede_id || resolveSedeId(cleanSede.split(';')[0]);
   const names = splitDependencies(cleanDependencia);
   if (!names.length || names.length > 30 || names.some(n => n.length < 2 || n.length > 200)) throw new Error('Revise las dependencias separadas por punto y coma.');
-  // El padrón no expresa qué sede corresponde a cada dependencia cuando hay varias.
-  const departmentIds = names.map(name => resolveDepartment(db, name, sede.includes(';') ? null : finalSedeId));
+  const plan = departmentPlan({ email: cleanEmail, dependencia: cleanDependencia, sede: cleanSede, sedes_dependencias: data.sedes_dependencias });
+  const pending = plan.filter(p => !p.sedeId);
+  if (pending.length) throw Object.assign(new Error('Seleccione la sede de las dependencias indicadas antes de importar. No se guardó ninguna fila.'), {
+    code: 'STAFF_DEPARTMENT_REVIEW', conflicts: pending.map(p => ({ email: emailNorm, nombre: cleanNombre, dependencia: p.name, key: p.key, opciones: p.opciones })) });
+  const departmentIds = plan.map(p => resolveDepartment(db, p.name, p.sedeId));
   if (departamento_id && !departmentIds.includes(departamento_id)) throw new Error('La dependencia no coincide con el identificador indicado.');
-  const finalDeptoId = departamento_id || departmentIds[0];
+  const previousPrimary = existing?.departamento_id ? db.prepare('SELECT nombre, COALESCE(sede_id, ?) AS sede_id FROM departamentos WHERE id = ?').get(existing.sede_id, existing.departamento_id) : null;
+  const preservedPrimary = previousPrimary ? plan.findIndex(p => departmentKey(p.name) === departmentKey(previousPrimary.nombre) && p.sedeId === previousPrimary.sede_id) : -1;
+  const finalDeptoId = departamento_id || (preservedPrimary >= 0 ? departmentIds[preservedPrimary] : departmentIds[0]);
+  finalSedeId = db.prepare('SELECT sede_id FROM departamentos WHERE id = ?').get(finalDeptoId).sede_id || finalSedeId;
   const previousMemberships = existing ? require('./funcionarioScope').memberships(existing).map(d => d.id).sort() : [];
   const sync = id => {
     db.prepare("DELETE FROM funcionario_departamentos WHERE funcionario_id = ? AND origen = 'PADRON'").run(id);
@@ -158,6 +189,7 @@ function bulkImportFuncionarios(rows, user = null) {
     let imported = 0;
     let updated = 0;
     const seen = new Set();
+    const prepared = [];
     for (const row of rows) {
       if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('El padrón contiene una fila inválida.');
       const data = {
@@ -165,11 +197,23 @@ function bulkImportFuncionarios(rows, user = null) {
         email: row.email || row['Correo electrónico'] || row['Correo'] || row['Email'],
         dependencia: row.dependencia || row['Dependencia'] || row['Departamento'] || row['Escuela'],
         sede: row.sede || row['Sede'] || row['Campus'],
-        cargo: row.cargo ?? row.puesto ?? row['Cargo']
+        cargo: row.cargo ?? row.puesto ?? row['Cargo'],
+        sedes_dependencias: row.sedes_dependencias
       };
       const email = normalizeEmail(data.email);
       if (seen.has(email)) throw new Error('El padrón contiene correos repetidos. No se guardó ninguna fila.');
       seen.add(email);
+      prepared.push(data);
+    }
+    const conflicts = [];
+    for (const data of prepared) {
+      const plan = departmentPlan(data);
+      conflicts.push(...plan.filter(p => !p.sedeId).map(p => ({ email: normalizeEmail(data.email), nombre: data.nombre,
+        dependencia: p.name, key: p.key, opciones: p.opciones })));
+      data.sedes_dependencias = Object.fromEntries(plan.filter(p => p.sedeId).map(p => [p.key, p.sedeId]));
+    }
+    if (conflicts.length) throw Object.assign(new Error('Seleccione la sede de las dependencias indicadas antes de importar. No se guardó ninguna fila.'), { code: 'STAFF_DEPARTMENT_REVIEW', conflicts });
+    for (const data of prepared) {
       const result = upsertFuncionario(data, user);
       if (result.isNew) imported++;
       else updated++;

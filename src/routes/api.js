@@ -734,7 +734,8 @@ function handleApi(req, res, pathname, query, body, user) {
       const funcionarioService = require('../services/funcionarioService');
       let importResult;
       try { importResult = funcionarioService.bulkImportFuncionarios(rowsToImport, user); }
-      catch (err) { return res.status(422).json({ success: false, message: err.message }); }
+      catch (err) { return res.status(422).json({ success: false, message: err.message,
+        ...(err.code === 'STAFF_DEPARTMENT_REVIEW' ? { code: err.code, conflicts: err.conflicts } : {}) }); }
 
       // Guardar archivo original en staging Drive
       if (fileBase64) {

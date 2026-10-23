@@ -14,6 +14,71 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('revisión de sedes exige selección, muestra texto literal y descarta sesiones o archivos anteriores', async () => {
+  const vm=require('node:vm'),nodes=[],timers=new Map();let timerId=0,current=true;
+  const create=tag=>{const n={tag,children:[],value:'',textContent:'',isConnected:true,
+    setAttribute(){},append(...items){items.forEach(i=>this.appendChild(i));},
+    appendChild(child){this.children.push(child);return child;},showModal(){this.open=true;},close(){this.open=false;},remove(){this.isConnected=false;}};nodes.push(n);return n;};
+  const host=create('host');
+  const context=vm.createContext({document:{createElement:create,getElementById:()=>host},
+    setInterval:cb=>{timers.set(++timerId,cb);return timerId;},clearInterval:id=>timers.delete(id)});
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/bulkUpload.js'),'utf8')+'\nglobalThis.mod=BulkUploadModule;',context);
+  const mod=context.mod,item={nombre:'Persona <img src=x>',email:'prueba@itcr.ac.cr',dependencia:'Unidad',key:'unidad',opciones:[{id:'sede-cartago',nombre:'Cartago'},{id:'sede-sancarlos',nombre:'San Carlos'}]};
+  const last=tag=>nodes.filter(n=>n.tag===tag).at(-1);
+  let resolved=false;
+  const first=mod.chooseStaffDepartmentSedes([item],()=>current).then(value=>{resolved=true;return value;});
+  assert.ok(nodes.some(n=>n.textContent.includes('Persona <img src=x>')));
+  last('form').onsubmit({preventDefault(){}});await Promise.resolve();assert.equal(resolved,false);
+  last('select').value='sede-limon';last('form').onsubmit({preventDefault(){}});await Promise.resolve();assert.equal(resolved,false);
+  last('select').value='sede-cartago';last('form').onsubmit({preventDefault(){}});
+  assert.equal((await first)[item.email][item.key],'sede-cartago');assert.equal(timers.size,0);
+  const canceled=mod.chooseStaffDepartmentSedes([item],()=>current);
+  last('dialog').oncancel({preventDefault(){}});assert.equal(await canceled,null);
+  const stale=mod.chooseStaffDepartmentSedes([item],()=>current);current=false;
+  [...timers.values()][0]();assert.equal(await stale,null);assert.equal(timers.size,0);
+});
+
+test('padrón usa la sede principal para dependencias ambiguas y solicita revisión solo cuando falta esa sede', async t => {
+  const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-staff-campus-'));
+  const server=await startServer(storage);
+  t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
+  const admin=await request(server,'/api/auth/login','POST',{username:testUsername,password:testPassword});
+  const guest=await request(server,'/api/auth/guest','POST');
+  const upload=rowsToImport=>request(server,'/api/bulk/import','POST',{tipo_contacto:'FUNCIONARIOS',rowsToImport},admin.cookies);
+  const staff=(email,dependencia,sede)=>({nombre:'Persona de prueba',email,dependencia,sede});
+  assert.equal((await upload([
+    staff('principal@itcr.ac.cr','Unidad Principal','Cartago'),
+    staff('secundaria.cartago@itcr.ac.cr','Unidad Compartida','Cartago'),
+    staff('secundaria.sc@itcr.ac.cr','Unidad Compartida','San Carlos'),
+    staff('exclusiva.sc@itcr.ac.cr','Unidad Exclusiva','San Carlos')
+  ])).status,200);
+  const multi=staff('persona.multisede@itcr.ac.cr','Unidad Principal; Unidad Compartida; Unidad Exclusiva','San Carlos; Cartago');
+  const result=await upload([multi]); assert.equal(result.status,200,result.text);
+  const ficha=async email=>(await request(server,'/api/funcionarios/by-email?email='+email,'GET',undefined,guest.cookies)).json().funcionario;
+  let f=await ficha(multi.email);
+  assert.equal(f.sede_id,'sede-cartago');
+  assert.equal(f.dependencias.find(d=>d.nombre==='Unidad Compartida').sede_id,'sede-cartago');
+  assert.equal(f.dependencias.find(d=>d.nombre==='Unidad Exclusiva').sede_id,'sede-sancarlos');
+  // Una sede única diferente crea su propia unidad, sin reutilizar la de otro campus.
+  assert.equal((await upload([staff('principal.sc@itcr.ac.cr','Unidad Principal','San Carlos')])).status,200);
+  assert.equal((await upload([multi])).status,200); // Ahora la principal también tiene dos sedes; conservar la principal vigente.
+  f=await ficha(multi.email); assert.equal(f.sede_id,'sede-cartago');
+  const {DatabaseSync}=require('node:sqlite'); const db=new DatabaseSync(path.join(storage,'tec_qs.sqlite'));
+  db.prepare('UPDATE departamentos SET sede_id = NULL WHERE id = ?').run(f.departamento_id);db.close();
+  assert.equal((await upload([multi])).status,200); // Catálogo antiguo sin sede: utilizar la sede principal registrada en la ficha.
+  f=await ficha(multi.email);assert.equal(f.sede_id,'sede-cartago');
+  const unknown=staff('revisar.sede@itcr.ac.cr','Unidad Principal; Unidad Compartida','San Carlos; Cartago');
+  const review=await upload([staff('atomicidad@itcr.ac.cr','Unidad Nueva','Cartago'),unknown]);
+  assert.equal(review.status,422);assert.equal(review.json().code,'STAFF_DEPARTMENT_REVIEW');
+  assert.equal(review.json().conflicts.length,2);
+  assert.ok(review.json().conflicts.every(c=>c.opciones.length===2));
+  assert.equal((await request(server,'/api/funcionarios/by-email?email=atomicidad@itcr.ac.cr','GET',undefined,guest.cookies)).json().exists,false);
+  assert.equal((await upload([{...unknown,sedes_dependencias:{'unidad principal':'sede-limon'}}])).status,422);
+  const selections=Object.fromEntries(review.json().conflicts.map(c=>[c.key,'sede-sancarlos']));
+  const confirmed=await upload([{...unknown,sedes_dependencias:selections}]); assert.equal(confirmed.status,200,confirmed.text);
+  f=await ficha(unknown.email);assert.ok(f.dependencias.every(d=>d.sede_id==='sede-sancarlos'));
+});
+
 test('lector XLSX conserva columnas vacías, atributos de filas, texto enriquecido y encabezados posteriores', () => {
   const { generateMultiSheetXlsx, parseXlsx, parseXlsxSheets } = require(path.join(appRoot, 'src/services/excelService'));
   const { readZip, createZip } = require(path.join(appRoot, 'src/utils/zip'));

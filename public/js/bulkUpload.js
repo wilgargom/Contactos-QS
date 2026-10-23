@@ -11,6 +11,7 @@ const BulkUploadModule = {
   analyzing: false,
   consolidatedImporting: false,
   analysisVersion: 0,
+  staffDepartmentSelections: {},
   tipoContacto: 'ACADEMICO',
   catalogs: null,
   selectedSedeId: '',
@@ -22,6 +23,7 @@ const BulkUploadModule = {
   modalEmailTimeout: null,
 
   init(catalogs) {
+    this.staffDepartmentSelections = {};
     this.catalogs = catalogs || App.catalogs;
     if (['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && App.currentUser?.rol !== 'ADMIN') {
       this.tipoContacto = 'ACADEMICO';
@@ -830,6 +832,7 @@ const BulkUploadModule = {
   },
 
   handleFileSelect(event) {
+    this.staffDepartmentSelections = {};
     if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!this.isReporterVerified() || !this.selectedDeptoId)) {
       this.chooseReporterDepartment();
       App.showToast('Verifique el correo del funcionario en el padrón antes de cargar el archivo.', 'warning');
@@ -1234,12 +1237,54 @@ const BulkUploadModule = {
   },
 
   cancelAnalysis() {
+    this.staffDepartmentSelections = {};
     this.analysisVersion++;
     this.selectedFile = null;
     this.fileBase64 = null;
     this.analysisResult = null;
     this.resetReporter();
     this.render();
+  },
+
+  chooseStaffDepartmentSedes(conflicts, current) {
+    return new Promise(resolve => {
+      const dialog = document.createElement('dialog'); dialog.className = 'reporter-department-dialog';
+      dialog.setAttribute('aria-label', 'Revisar sede por dependencia');
+      const form = document.createElement('form');
+      const title = document.createElement('h2'); title.textContent = 'Indique la sede de cada dependencia';
+      const help = document.createElement('p');
+      help.textContent = 'No se identificó una sede para la dependencia principal de estas personas. Seleccione las sedes correspondientes; la carga se guardará al confirmar todas las selecciones.';
+      form.append(title, help);
+      const selections = [];
+      for (const item of conflicts) {
+        const label = document.createElement('label'); label.className = 'block mb-4';
+        const text = document.createElement('span'); text.textContent = item.nombre + ' · ' + item.email + ' — ' + item.dependencia;
+        const select = document.createElement('select'); select.className = 'form-control'; select.required = true;
+        const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Seleccione la sede'; select.appendChild(empty);
+        for (const sede of item.opciones) {
+          const option = document.createElement('option'); option.value = sede.id; option.textContent = sede.nombre; select.appendChild(option);
+        }
+        label.append(text, select); form.appendChild(label); selections.push({item,select});
+      }
+      const actions = document.createElement('div'); actions.className = 'reporter-department-actions';
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'btn btn-outline'; cancel.textContent = 'Cancelar';
+      const confirm = document.createElement('button'); confirm.type = 'submit'; confirm.className = 'btn btn-tec'; confirm.textContent = 'Confirmar sedes e importar';
+      actions.append(cancel,confirm); form.appendChild(actions); dialog.appendChild(form);
+      document.getElementById('bulk-upload-view').appendChild(dialog);
+      let finished = false;
+      const finish = value => { if (finished) return; finished = true; clearInterval(timer); dialog.close(); dialog.remove(); resolve(value); };
+      const timer = setInterval(() => { if (!current() || !dialog.isConnected) finish(null); }, 250);
+      cancel.onclick = () => finish(null);
+      dialog.oncancel = event => { event.preventDefault(); finish(null); };
+      form.onsubmit = event => {
+        event.preventDefault(); if (!current()) return finish(null);
+        if (selections.some(({item,select}) => !item.opciones.some(s => s.id === select.value))) return;
+        const choices = JSON.parse(JSON.stringify(this.staffDepartmentSelections));
+        for (const {item,select} of selections) { choices[item.email] ||= {}; choices[item.email][item.key] = select.value; }
+        finish(choices);
+      };
+      dialog.showModal();
+    });
   },
 
   async confirmImport(includePotentialDuplicates = false) {
@@ -1260,6 +1305,7 @@ const BulkUploadModule = {
           dependencia: r.data.dependencia || r.data['Dependencia'],
           sede: r.data.sede || r.data['Sede'],
           cargo: r.data.cargo || r.data.puesto || '',
+          sedes_dependencias: this.staffDepartmentSelections[(r.data.email || r.data['Correo electrónico'] || '').trim().toLowerCase()] || {},
           status: r.status
         }));
 
@@ -1270,6 +1316,8 @@ const BulkUploadModule = {
 
       const btn = document.getElementById('btn-import-valid');
       if (btn) btn.disabled = true;
+      const staffFile = this.selectedFile, staffAnalysis = this.analysisVersion, staffSession = App.sessionVersion;
+      const current = () => this.tipoContacto === 'FUNCIONARIOS' && staffFile === this.selectedFile && staffAnalysis === this.analysisVersion && staffSession === App.sessionVersion && !App.suspended && App.currentUser?.rol === 'ADMIN' && (!App.activeTab || App.activeTab === 'bulk');
 
       try {
         const response = await API.post('/api/bulk/import', {
@@ -1279,9 +1327,20 @@ const BulkUploadModule = {
           fileBase64: this.fileBase64
         });
 
-        App.showToast(`🎉 ${response.message}`, 'success');
+        if (!current()) return;
+        App.showToast(response.message, 'success');
         this.cancelAnalysis();
       } catch (err) {
+        if (!current()) return;
+        if (err.data?.code === 'STAFF_DEPARTMENT_REVIEW' && Array.isArray(err.data.conflicts)) {
+          const choices = await this.chooseStaffDepartmentSedes(err.data.conflicts, current);
+          if (choices && current()) {
+            this.staffDepartmentSelections = choices;
+            return this.confirmImport(includePotentialDuplicates);
+          }
+          if (btn) btn.disabled = false;
+          return;
+        }
         App.showToast(err.message || 'Error en la importación de funcionarios', 'error');
         if (btn) btn.disabled = false;
       }

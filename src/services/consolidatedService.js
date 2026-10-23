@@ -4,6 +4,8 @@ const { parseXlsxSheets } = require('./excelService');
 const { validateContact } = require('../utils/validator');
 const config = require('../config');
 const { verifyReporter } = require('./funcionarioService');
+const { departmentKey, equivalentDepartments, resolveDepartment } = require('../utils/departamentos');
+const { normalizeDependency } = require('../utils/dependencyNames');
 
 const normalize = value => String(value || '').trim().toLowerCase().normalize('NFD')
   .replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
@@ -27,7 +29,28 @@ function resolveDirector(email) {
   if (!director) return { error: 'Correo director no corresponde a un funcionario activo del padrón.' };
   // Un director conserva su identidad aunque el libro le asigne varias dependencias.
   // Escuela Proponente determina cada asignación, sin cambiar su ficha del padrón.
-  return { id: director.id, email: director.email_normalized, nombre: director.nombre, departamento_id: director.departamento_id, version: director.version };
+  return { id: director.id, email: director.email_normalized, nombre: director.nombre, departamento_id: director.departamento_id,
+    sede_id: director.sede_id, dependencias: director.dependencias_autorizadas, version: director.version };
+}
+
+function departmentPlan(db, row, existing) {
+  const key = departmentKey(row.escuela);
+  const explicitSede = /-\s*cartago$/i.test(normalize(row.escuela)) ? 'sede-cartago' : null;
+  const all = db.prepare('SELECT * FROM departamentos WHERE activo = 1 ORDER BY id').all();
+  const matches = all.filter(d => departmentKey(d.nombre) === key && (!explicitSede || d.sede_id === explicitSede));
+  const memberships = (row.director?.dependencias || []).filter(d => departmentKey(d.nombre) === key && (!explicitSede || d.sede_id === explicitSede));
+  const primary = memberships.filter(d => d.sede_id === row.director.sede_id);
+  const own = memberships.length === 1 ? memberships[0] : primary.length === 1 ? primary[0] : null;
+  const old = existing ? matches.find(d => d.id === existing.departamento_id) : null;
+  const bySede = matches.filter(d => d.sede_id === (explicitSede || row.director?.sede_id));
+  const chosen = own || old || (new Set(matches.map(d => d.sede_id)).size === 1 ? matches[0] : bySede[0]);
+  const canonical = chosen ? equivalentDepartments(db, chosen.id, true)[0] : null;
+  const membership = canonical && memberships.find(d => d.id === canonical.id || d.alias_ids?.includes(canonical.id));
+  const sedeId = canonical?.sede_id || explicitSede || null;
+  return { id: canonical?.id || null, nombre: normalizeDependency(row.escuela), sede_id: sedeId,
+    sede_nombre: sedeId ? db.prepare('SELECT nombre FROM sedes WHERE id = ?').get(sedeId)?.nombre || '' : 'Sede pendiente de revisión',
+    pertenencia_verificada: Boolean(membership), origen_pertenencia: membership?.origen || null,
+    criterio: own ? 'DEPENDENCIA_DEL_CORREO' : old ? 'PROCEDENCIA_EXISTENTE' : canonical ? 'CATALOGO_Y_SEDE' : explicitSede ? 'SEDE_EN_ESCUELA' : 'SEDE_PENDIENTE' };
 }
 const missing = value => !String(value || '').trim() || /^(?:definir|por definir|pendiente|n\/a|sin datos|sin informacion|no disponible|-)$/i.test(normalize(value));
 const fullKey = c => c.first_name && c.last_name && (c.institution || c.company_name)
@@ -93,7 +116,7 @@ function extractRows(buffer) {
       const literalMarkup = [original.escuela, ...Object.values(data)].some(value => /[<>]|[\"'`]\s+[a-z][\w-]*\s*=/i.test(String(value)));
       if (literalMarkup) review.push('Los caracteres y etiquetas se conservan como texto literal, sin ejecutarse como HTML.');
       if (Object.values(data).some(value => String(value).length > 500)) blockers.push('Un campo supera 500 caracteres; revise su longitud.');
-      if (director && !director.error && original.director && normalize(original.director) !== normalize(director.nombre)) notes.push('El nombre del director difiere del padrón; la vinculación utiliza su correo, nunca el nombre.');
+      if (director && !director.error && original.director && normalize(original.director) !== normalize(director.nombre)) notes.push('Observación informativa: el nombre del director difiere del padrón; la identidad se confirma por su correo y esta diferencia no impide importar.');
       if (!mapping.director_email) notes.push('Sin vinculación por Correo director; visible únicamente para administración.');
       if (original.reportedType && headerKey(original.reportedType) !== headerKey(type)) blockers.push('El tipo indicado en la fila no corresponde a la hoja.');
       if (String(original.escuela || '').length > 180) blockers.push('Escuela Proponente no debe superar 180 caracteres.');
@@ -117,7 +140,7 @@ function extractRows(buffer) {
 function analyzeConsolidated(buffer) {
   const { rows, sheets } = extractRows(buffer);
   const db = getDb();
-  const existing = db.prepare('SELECT id,email_normalized,first_name,last_name,institution,company_name,tipo_contacto,metodo_ingreso,es_consolidado,version FROM contactos').all();
+  const existing = db.prepare('SELECT id,email_normalized,first_name,last_name,institution,company_name,tipo_contacto,metodo_ingreso,es_consolidado,version,departamento_id FROM contactos').all();
   const versions = new Map(existing.map(c => [c.id, c.version]));
   const emails = new Map(), names = new Map(), batch = new Map(), batchNames = new Map();
   const add = (map, key, value) => { if (key) map.set(key, [...(map.get(key) || []), value]); };
@@ -132,6 +155,9 @@ function analyzeConsolidated(buffer) {
     const peers = batch.get(identity) || [];
     const emailKey = d.tipo_contacto + ':' + d.email, nameKey = d.tipo_contacto + ':' + fullKey(d);
     const matches = d.email && emails.has(emailKey) ? emails.get(emailKey) : (fullKey(d) ? names.get(nameKey) : []) || [];
+    r.departamento = departmentPlan(db, r, matches.length === 1 ? matches[0] : null);
+    if (r.director && !r.departamento.pertenencia_verificada) r.warnings.push('La pertenencia de este correo a Escuela Proponente no consta en el padrón ni en asignaciones consolidadas previas. Al confirmar, el administrador registra esta asignación del consolidado; no se modifica la ficha del funcionario.');
+    if (!r.departamento.sede_id) r.warnings.push('La sede no se identifica de forma inequívoca. Se conservará sin asignar sede, junto con Escuela Proponente, sin bloquear la carga histórica.');
     if (r.blockers.length) {
       r.status = 'ERROR'; r.errors = [...new Set([...r.blockers, ...r.errors])];
     } else if (!r.escuela || (!d.email && !fullKey(d))) {
@@ -171,13 +197,15 @@ function analyzeConsolidated(buffer) {
     else summary.duplicadosExactos++;
   }
   for (const sheet of sheets) sheet.counts = Object.fromEntries(['CORRECTO', 'PENDIENTE_REVISION', 'ACTUALIZAR_PROCEDENCIA', 'ERROR', 'POSIBLE_DUPLICADO', 'DUPLICADO_EXACTO'].map(status => [status, rows.filter(r => r.sheet === sheet.name && r.status === status).length]));
+  summary.asignacionesPorConfirmar = rows.filter(r => eligible.has(r.status) && r.director && !r.departamento.pertenencia_verificada).length;
+  summary.sedesPorRevisar = rows.filter(r => eligible.has(r.status) && !r.departamento.sede_id).length;
   const analysisHash = crypto.createHash('sha256').update(buffer).update(JSON.stringify(rows.map(r =>
-    [r.key, r.status, r.existingId || null, r.existingId ? versions.get(r.existingId) : null, r.director?.id, r.director?.version, r.director?.departamento_id]))).digest('hex');
+    [r.key, r.status, r.existingId || null, r.existingId ? versions.get(r.existingId) : null, r.director?.id, r.director?.version, r.director?.departamento_id, r.departamento]))).digest('hex');
   return { success: true, summary, sheets, analysisHash, analyzedRows: rows, errorDetails: rows.filter(r => r.errors.length).map(r => ({ sheet: r.sheet, rowNum: r.rowNum, errors: r.errors })) };
 }
 
-function schoolDepartment(db, school) {
-  const id = require('../utils/departamentos').resolveDepartment(db, school);
+function schoolDepartment(db, row) {
+  const id = row.departamento.id || resolveDepartment(db, row.escuela, row.departamento.sede_id, { exactSede: true });
   return db.prepare('SELECT * FROM departamentos WHERE id = ?').get(id);
 }
 
@@ -202,7 +230,7 @@ function importConsolidated(buffer, fileName, user, options = {}) {
       'recomienda_nombre', 'recomienda_email', 'created_by', 'created_by_name', 'created_at', 'es_consolidado', 'escuela_proponente', 'director_email', 'director_funcionario_id', 'autorizacion_contacto'];
     const insert = db.prepare(`INSERT INTO contactos (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
     for (const row of rows) {
-      const dep = schoolDepartment(db, row.escuela), id = row.existingId || crypto.randomUUID();
+      const dep = schoolDepartment(db, row), id = row.existingId || crypto.randomUUID();
       let previous = null;
       if (row.existingId) {
         previous = db.prepare('SELECT * FROM contactos WHERE id = ?').get(id);
@@ -226,7 +254,7 @@ function importConsolidated(buffer, fileName, user, options = {}) {
         VALUES (?, ?, ?, 'Administrador', ?, ?, ?)`).run(crypto.randomUUID(), id, user.id,
           previous ? 'ACTUALIZACION_PROCEDENCIA' : 'CREACION', JSON.stringify({ loteId, hoja: row.sheet,
             fila: row.rowNum, escuela_proponente: row.escuela, valores_anteriores: previous, errores_revision: row.errors,
-            origen_consolidado: row.metadata }), now);
+            origen_consolidado: row.metadata, verificacion_dependencia: row.departamento, observaciones: row.warnings }), now);
     }
     return { success: true, loteId, importedCount, updatedCount, skippedCount: analysis.summary.totalAnalizados - rows.length, summary: analysis.summary,
       message: `${importedCount} contactos importados y ${updatedCount} procedencias actualizadas.` };

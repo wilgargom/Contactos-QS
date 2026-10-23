@@ -170,10 +170,20 @@ function generateXlsx(sheetName, headers, rows) {
  * Parsea un archivo XLSX desde un Buffer
  */
 // Leer las hojas por sus relaciones reales, sin asumir su orden o nombre de archivo.
+function spreadsheetXml(xml) {
+  // Excel admite tanto <row> como <x:row>. Normalizar únicamente prefijos
+  // declarados para los espacios OpenXML que este lector consume.
+  const prefixes = [...xml.matchAll(/xmlns:([A-Za-z_][\w.-]*)="http:\/\/schemas\.openxmlformats\.org\/(?:spreadsheetml\/2006\/main|package\/2006\/relationships)"/g)].map(m => m[1]);
+  for (const prefix of new Set(prefixes)) {
+    const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    xml = xml.replace(new RegExp('(<\\/?)[ ]*' + escaped + ':', 'g'), '$1');
+  }
+  return xml;
+}
 function parseXlsxSheets(buffer, options = {}) {
   const files = readZip(buffer);
-  const workbook = files.get('xl/workbook.xml')?.toString('utf8') || '';
-  const relationships = files.get('xl/_rels/workbook.xml.rels')?.toString('utf8') || '';
+  const workbook = spreadsheetXml(files.get('xl/workbook.xml')?.toString('utf8') || '');
+  const relationships = spreadsheetXml(files.get('xl/_rels/workbook.xml.rels')?.toString('utf8') || '');
   const attr = (xml, name) => unescapeXml(new RegExp(`\\b${name}="([^"]*)"`).exec(xml)?.[1] || '');
   const targets = new Map();
   for (const match of relationships.matchAll(/<Relationship\b[^>]*\/?>/g)) {
@@ -198,7 +208,7 @@ function parseXlsx(buffer, sheetPath = null, options = {}) {
   // 1. Extraer Shared Strings si existen
   const sharedStrings = [];
   if (files.has('xl/sharedStrings.xml')) {
-    const ssXml = files.get('xl/sharedStrings.xml').toString('utf8');
+    const ssXml = spreadsheetXml(files.get('xl/sharedStrings.xml').toString('utf8'));
     const siRegex = /<si\b[^>]*>([\s\S]*?)<\/si>/g;
     let match;
     while ((match = siRegex.exec(ssXml)) !== null) {
@@ -236,6 +246,7 @@ function parseXlsx(buffer, sheetPath = null, options = {}) {
   }
 
   // 3. Parsear filas y celdas
+  sheetXmlStr = spreadsheetXml(sheetXmlStr);
   const rowsMap = new Map(); // rowIndex (1-based) -> Array of values
   const issuesMap = new Map();
   const rowRegex = /<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g;

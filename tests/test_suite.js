@@ -31,6 +31,14 @@ test('lector XLSX conserva columnas vacías, atributos de filas, texto enriqueci
   assert.equal(fixed.rows[0]['First Name'], 'María Elena');
   assert.equal(fixed.rows[0].Subject, 'Matemáticas');
   assert.equal(fixed.rows[0]['Escuela Proponente'], 'Escuela de Matemática');
+  const namespaced=new Map(files);
+  for(const file of ['xl/workbook.xml','xl/worksheets/sheet1.xml']) {
+    namespaced.set(file,Buffer.from(namespaced.get(file).toString()
+      .replace('xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"','xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"')
+      .replace(/<(\/?)([A-Za-z]+)(?=[\s>\/])/g,'<$1x:$2')));
+  }
+  const prefixedRows=parseXlsxSheets(createZip([...namespaced].map(([name,data])=>({name,data}))));
+  assert.deepEqual(prefixedRows[0].rows,fixed.rows);
   const prefixed = generateMultiSheetXlsx([{ name: 'Académicos', headers: [], rows: [['Reporte institucional'],
     ['Nombre', 'Apellidos', 'Correo', 'Escuela Proponente'], ['Ana', 'Ejemplo', 'ana@example.org', 'Unidad A']] }]);
   const parsed = parseXlsxSheets(prefixed, { headerMatch: cells => cells.includes('Correo') })[0];
@@ -1982,7 +1990,7 @@ test('migración separa dependencias antiguas sin mantener coincidencias parcial
   assert.equal(f.dependencias.length,1); assert.equal(f.dependencias[0].id,primary.id);
 });
 
-test('catálogo histórico con acentos duplicados migra y consulta sus IDs sin mezclar otras sedes ni alterar contactos', async t => {
+test('catálogo normaliza alias y combinaciones históricas sin mezclar otras sedes ni alterar contactos', async t => {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(),'qs-duplicate-departments-'));
   let server = await startServer(storage);
   t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
@@ -1991,13 +1999,17 @@ test('catálogo histórico con acentos duplicados migra y consulta sus IDs sin m
     position:'Gerente',industry:'Servicios',company_name:'Empresa Equivalencia',country_name:'Costa Rica',recomienda_email:'cbrenes@itcr.ac.cr',allow_duplicate_override:true };
   const first = await request(server,'/api/contacts','POST',contact,guest.cookies);
   const other = await request(server,'/api/contacts','POST',{...contact,email:'otra.sede@example.org',company_name:'Empresa Otra Sede'},guest.cookies);
+  const canonicalContact = await request(server,'/api/contacts','POST',{...contact,email:'nombre.canonico@example.org',company_name:'Empresa Nombre Canónico'},guest.cookies);
+  assert.equal(canonicalContact.status,201,canonicalContact.text);
   assert.equal(first.status,201,first.text);assert.equal(other.status,201,other.text);
   await server.stop();
   const { DatabaseSync } = require('node:sqlite');
   let db = new DatabaseSync(path.join(storage,'tec_qs.sqlite'));
   db.exec('DROP TABLE funcionario_departamentos');
   db.prepare("INSERT INTO departamentos (id, codigo, nombre, sede_id, activo) VALUES (?, 'ALIAS', ?, ?, 1)")
-    .run('dep-comp-alias','ESCUELA DE INGENIERIA EN COMPUTACION','sede-cartago');
+    .run('dep-comp-alias','Escuela de Computación','sede-cartago');
+  db.prepare("INSERT INTO departamentos (id, codigo, nombre, sede_id, activo) VALUES (?, 'ALIAS', ?, ?, 1)")
+    .run('dep-comp-combinado','Escuela de Computación; Escuela de Química','sede-cartago');
   db.prepare("INSERT INTO departamentos (id, codigo, nombre, sede_id, activo) VALUES (?, 'OTRA', ?, ?, 1)")
     .run('dep-comp-otra-sede','ESCUELA DE INGENIERIA EN COMPUTACION','sede-sancarlos');
   db.prepare('UPDATE contactos SET departamento_id = ? WHERE id = ?').run('dep-comp-alias',first.json().contact.id);
@@ -2016,9 +2028,32 @@ test('catálogo histórico con acentos duplicados migra y consulta sus IDs sin m
   const f = (await request(server,'/api/funcionarios/by-email?email=cbrenes@itcr.ac.cr','GET',undefined,guest.cookies)).json().funcionario;
   assert.equal(f.dependencias_autorizadas.length,1);
   assert.deepEqual(f.dependencias_autorizadas[0].alias_ids,['dep-comp','dep-comp-alias']);
+  const catalogs=(await request(server,'/api/catalogs','GET',undefined,guest.cookies)).json().departamentos;
+  assert.ok(catalogs.every(d=>!d.nombre.includes(';')));
+  assert.equal(catalogs.filter(d=>d.sede_id==='sede-cartago'&&/Computación/.test(d.nombre)).length,1);
+  const admin=await request(server,'/api/auth/login','POST',{username:testUsername,password:testPassword});
+  const directory=(await request(server,'/api/contacts?departamento_id=dep-comp','GET',undefined,admin.cookies)).json();
+  assert.ok(JSON.stringify(directory).includes(contact.email));
+  assert.ok(!JSON.stringify(directory).includes('otra.sede@example.org'));
+  const stats=(await request(server,'/api/stats','GET',undefined,admin.cookies)).json().stats;
+  assert.equal(stats.porDepto.reduce((n,d)=>n+d.count,0),stats.total);
+  assert.ok(!stats.porDepto.some(d=>d.departamento==='Escuela de Computación'));
   db = new DatabaseSync(path.join(storage,'tec_qs.sqlite'));
+  const expectedCount=db.prepare("SELECT COUNT(*) n FROM contactos WHERE departamento_id IN ('dep-comp','dep-comp-alias')").get().n;
+  assert.equal(stats.porDepto.find(d=>/Ingeniería en Computación.*Cartago/.test(d.departamento)).count,expectedCount);
   assert.deepEqual(db.prepare('SELECT id, departamento_id, version FROM contactos WHERE id IN (?, ?) ORDER BY id').all(first.json().contact.id,other.json().contact.id),before);
   db.close();
+});
+
+test('normalización conserva programas, fondos, sedes y Computadores como unidades distintas', () => {
+  const { normalizeDependency, normalizedDependencies }=require(path.join(appRoot,'src/utils/dependencyNames'));
+  assert.equal(normalizeDependency(' ESCUELA DE INGENIERIA EN COMPUTACION '),'Escuela de Ingeniería en Computación');
+  assert.equal(normalizeDependency('Escuela de Ingeniería en Computación-Cartago'),'Escuela de Ingeniería en Computación');
+  assert.notEqual(normalizeDependency('ESCUELA DE INGENIERÍA EN COMPUTADORES'),normalizeDependency('Escuela de Computación'));
+  assert.equal(normalizeDependency('Centro de Investigación en Innovación Forestal (CIIF)'),'Centro de Investigación en Innovación Forestal (CIIF)');
+  const names=normalizedDependencies('ADMINISTRACION DE EMPRESAS NOCTURNA Cartago; ESCUELA DE ADMINISTRACIÓN DE EMPRESAS; ADMINISTRACION DE EMPRESAS SAN JOSÉ; GASEL FONDO DEL SISTEMA');
+  assert.equal(names.length,4);
+  for(const name of names) assert.equal(normalizeDependency(name),name);
 });
 
 test('ventana por correo inicia vacía, limpia datos al escribir y descarta respuestas de otro correo o sesión', async () => {

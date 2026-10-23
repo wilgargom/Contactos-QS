@@ -62,6 +62,8 @@ El registro y la carga de contactos incluyen un selector restringido a las depen
 
 ## Incidencias e identidad institucional
 
+Los catálogos muestran dependencias individuales con nombres uniformes. Las combinaciones históricas separadas por punto y coma se conservan para auditoría y se excluyen de las nuevas selecciones. Las equivalencias de nombre se consultan por sede: Computación, Ingeniería en Computación e Ingeniería en Computación-Cartago comparten alcance únicamente cuando sus IDs tienen la misma sede. Ingeniería en Computadores, programas, fondos y otras sedes mantienen su identidad. Los filtros y las estadísticas incluyen los IDs equivalentes sin cambiar contactos, versiones o exportaciones previas. Los nombres truncados requieren revisión administrativa; no se completan ni se asignan por semejanza.
+
 Los fallos internos de las operaciones nuevas y del despachador devuelven una referencia para soporte. El panel muestra las incidencias recientes; los archivos técnicos rotan con un límite aproximado de 4 MB y omiten cuerpos, contraseñas y mensajes crudos de las excepciones. Los errores de validación se presentan al usuario sin registrarlos como fallos técnicos.
 
 La consulta de un correo en el padrón identifica el registro del funcionario; no demuestra control del buzón. Falta conectar la identidad institucional o un servicio de códigos de verificación para acreditar ese control. Las pruebas locales de concurrencia tampoco sustituyen una medición de capacidad en Azure F1 con usuarios y datos representativos.

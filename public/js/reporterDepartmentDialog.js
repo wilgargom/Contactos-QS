@@ -36,7 +36,10 @@ const ReporterDepartmentDialog = {
       const input = document.createElement('input');
       input.type = 'radio'; input.name = 'reporter-department-choice'; input.value = department.id;
       input.required = true; input.checked = department.id === owner.selectedDeptoId;
-      const name = document.createElement('span'); name.textContent = department.nombre;
+      const name = document.createElement('span');
+      const repeated = departments.filter(d => d.nombre === department.nombre).length > 1;
+      const campus = App.catalogs?.sedes?.find(s => s.id === department.sede_id)?.nombre;
+      name.textContent = department.nombre + (repeated ? ' — ' + (campus || 'Sede por revisar') : '');
       label.appendChild(input); label.appendChild(name); choices.appendChild(label);
       input.onchange = () => { if (current()) confirm.disabled = false; };
       if (input.checked) confirm.disabled = false;

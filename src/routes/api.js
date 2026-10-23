@@ -203,7 +203,7 @@ function handleApi(req, res, pathname, query, body, user) {
   if (pathname === '/api/catalogs' && method === 'GET') {
     const db = getDb();
     const sedes = db.prepare('SELECT id, codigo, nombre FROM sedes WHERE activo = 1 ORDER BY nombre').all();
-    const departamentos = db.prepare('SELECT id, codigo, nombre, sede_id FROM departamentos WHERE activo = 1 ORDER BY nombre').all();
+    const departamentos = require('../utils/departamentos').departmentCatalog(db);
 
     return res.json({
       success: true,

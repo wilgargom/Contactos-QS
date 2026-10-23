@@ -2,12 +2,22 @@ const { getDb } = require('../database/db');
 const { equivalentDepartments } = require('../utils/departamentos');
 
 function memberships(f) {
-  return getDb().prepare(`SELECT d.id, d.nombre, d.sede_id, m.origen FROM funcionario_departamentos m
+  const db = getDb(), result = new Map();
+  const rows = db.prepare(`SELECT d.id, d.nombre, d.sede_id, m.origen FROM funcionario_departamentos m
     JOIN departamentos d ON d.id = m.departamento_id WHERE m.funcionario_id = ? AND d.activo = 1 ORDER BY d.nombre`).all(f.id);
+  for (const d of rows) {
+    if (d.nombre.includes(';')) continue;
+    const canonical = equivalentDepartments(db, d.id, true)[0];
+    if (!canonical) continue;
+    const previous = result.get(canonical.id);
+    result.set(canonical.id, { ...d, ...canonical, origen: previous?.origen === 'PADRON' ? 'PADRON' : d.origen });
+  }
+  return [...result.values()];
 }
 function authorizedDepartments(f) {
   const db = getDb(), result = new Map();
   const add = d => {
+    if (d.nombre.includes(';')) return;
     const aliases = equivalentDepartments(db, d.id, true);
     if (!aliases.length) return;
     const canonical = aliases[0], previous = result.get(canonical.id);
@@ -25,7 +35,10 @@ function authorizedDepartments(f) {
   return [...result.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
 }
 function enrich(f) {
-  return f ? { ...f, dependencias: memberships(f), dependencias_autorizadas: authorizedDepartments(f) } : null;
+  if (!f) return null;
+  const canonical = equivalentDepartments(getDb(), f.departamento_id, true)[0];
+  return { ...f, departamento_id: canonical?.id || f.departamento_id,
+    dependencias: memberships(f), dependencias_autorizadas: authorizedDepartments(f) };
 }
 function identity(f) {
   return { nombre: f.nombre, email: f.email_normalized, dependencia: f.dependencia, sede: f.sede,

@@ -1,7 +1,8 @@
 const crypto = require('node:crypto');
+const { normalizeDependency, dependencyKey } = require('./dependencyNames');
 
 function departmentKey(value) {
-  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().replace(/\s+/g, ' ').toLowerCase();
+  return dependencyKey(value);
 }
 function splitDependencies(value) {
   const unique = new Map();
@@ -10,7 +11,7 @@ function splitDependencies(value) {
   }
   return [...unique.values()];
 }
-// Solo se unifican diferencias de acentos, mayúsculas y espacios. Una subcadena no acredita pertenencia.
+// Equivalencias explícitas, siempre conservando la sede. No se comparan subcadenas.
 function resolveDepartment(db, name, sedeId = null) {
   const key = departmentKey(name);
   if (!key) throw new Error('Indique una dependencia.');
@@ -22,7 +23,7 @@ function resolveDepartment(db, name, sedeId = null) {
   if (matches[0]) return matches[0].id;
   const id = 'dep-' + crypto.randomUUID();
   db.prepare('INSERT INTO departamentos (id, codigo, nombre, sede_id, activo) VALUES (?, ?, ?, ?, 1)')
-    .run(id, 'DEP', name.trim().replace(/\s+/g, ' '), sedeId);
+    .run(id, 'DEP', normalizeDependency(name), sedeId);
   return id;
 }
 
@@ -32,7 +33,19 @@ function equivalentDepartments(db, id, activeOnly = false) {
   const row = db.prepare('SELECT * FROM departamentos WHERE id = ?').get(id);
   if (!row) return [];
   return db.prepare('SELECT * FROM departamentos ORDER BY activo DESC, id').all().filter(d =>
-    (!activeOnly || d.activo) && d.sede_id === row.sede_id && departmentKey(d.nombre) === departmentKey(row.nombre));
+    (!activeOnly || d.activo) && d.sede_id === row.sede_id && departmentKey(d.nombre) === departmentKey(row.nombre))
+    .map(d => ({ ...d, nombre: normalizeDependency(d.nombre) }));
+}
+
+function departmentCatalog(db) {
+  const result = new Map();
+  for (const d of db.prepare('SELECT * FROM departamentos WHERE activo = 1 ORDER BY id').all()) {
+    // Estas filas históricas se conservan por auditoría, pero no son unidades elegibles.
+    if (d.nombre.includes(';')) continue;
+    const key = JSON.stringify([d.sede_id, departmentKey(d.nombre)]);
+    if (!result.has(key)) result.set(key, { ...d, nombre: normalizeDependency(d.nombre) });
+  }
+  return [...result.values()].sort((a,b) => a.nombre.localeCompare(b.nombre, 'es'));
 }
 
 function initializeMemberships(db) {
@@ -66,4 +79,4 @@ function initializeMemberships(db) {
   } catch (err) { db.exec('ROLLBACK'); throw err; }
 }
 
-module.exports = { departmentKey, splitDependencies, resolveDepartment, equivalentDepartments, initializeMemberships };
+module.exports = { departmentKey, splitDependencies, resolveDepartment, equivalentDepartments, departmentCatalog, initializeMemberships };

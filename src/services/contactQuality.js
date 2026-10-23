@@ -1,9 +1,11 @@
 const { validateContact } = require('../utils/validator');
+const { normalizeDependency } = require('../utils/dependencyNames');
 
 function quality(contact) {
   const validation = validateContact(contact, contact.tipo_contacto);
   return {
     ...contact,
+    ...(contact.departamento_nombre ? { departamento_nombre: normalizeDependency(contact.departamento_nombre) } : {}),
     calidad_datos: validation.isValid ? 'COMPLETO' : 'CON_OBSERVACIONES',
     observaciones_datos: Object.values(validation.errors).join('; '),
     exportable_historico: Boolean(contact.es_consolidado && ['NUEVO', 'VALIDADO', 'CORREGIDO', 'EXPORTADO'].includes(contact.estado))

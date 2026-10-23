@@ -42,12 +42,12 @@ function save(id, body, user) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 30 || ids.some(d => typeof d !== 'string') ||
         new Set(ids).size !== ids.length || !ids.includes(depto.id)) fail('Seleccione las dependencias de la ficha, incluida la principal.');
     const departments = ids.map(d => db.prepare('SELECT id, nombre FROM departamentos WHERE id = ? AND activo = 1').get(d));
-    if (departments.some(d => !d)) fail('Una dependencia seleccionada no está activa en el catálogo.');
+    if (departments.some(d => !d || d.nombre.includes(';'))) fail('Seleccione dependencias individuales activas del catálogo.');
     if (db.prepare('SELECT id FROM funcionarios WHERE email_normalized = ? AND id != ?').get(email, id || '')) fail('El correo ya pertenece a otro funcionario.', 409);
     const now = new Date().toISOString();
     const funcionarioId = id || crypto.randomUUID();
     const data = { nombre, email, email_normalized: email, cargo, sede: sede.nombre, sede_id: sede.id,
-      dependencia: departments.map(d => d.nombre).join('; '), departamento_id: depto.id, activo: body.activo ? 1 : 0 };
+      dependencia: departments.map(d => require('../utils/dependencyNames').normalizeDependency(d.nombre)).join('; '), departamento_id: depto.id, activo: body.activo ? 1 : 0 };
     if (existing) {
       db.prepare('UPDATE funcionarios SET nombre = ?, email = ?, email_normalized = ?, cargo = ?, sede = ?, sede_id = ?, dependencia = ?, departamento_id = ?, activo = ?, updated_at = ? WHERE id = ?')
         .run(...Object.values(data), now, funcionarioId);

@@ -77,11 +77,13 @@ const AdminModule = {
       this.funcionarioEditing = f;
       const input = (key,label,type='text',required=true) => '<label class="block mb-3">'+label+'<input class="form-control" id="funcionario-'+key+'" type="'+type+'" maxlength="'+(key==='email'?254:200)+'" '+(required?'required':'')+' value="'+esc(f[key]||'')+'"></label>';
       const options = (rows,selected) => '<option value="">Seleccione</option>' + rows.map(r => '<option value="'+esc(r.id)+'" '+(r.id===selected?'selected':'')+'>'+esc(r.nombre)+'</option>').join('');
+      const departmentLabel = d => d.nombre + (catalogs.departamentos.filter(other => other.nombre === d.nombre).length > 1
+        ? ' — ' + (catalogs.sedes.find(s => s.id === d.sede_id)?.nombre || 'Sede por revisar') : '');
       host.innerHTML = '<h4 class="font-bold mb-3">'+(id?'Actualizar ficha':'Agregar funcionario')+'</h4><form id="funcionario-form">' +
         input('nombre','Nombre completo')+input('email','Correo institucional','email')+input('cargo','Cargo / puesto (opcional)','text',false)+
         '<label class="block mb-3">Sede<select id="funcionario-sede_id" class="form-control" required>'+options(catalogs.sedes,f.sede_id)+'</select></label>'+
         '<label class="block mb-3">Dependencia principal<select id="funcionario-departamento_id" class="form-control" required></select></label>'+
-        '<fieldset class="mb-3"><legend>Dependencias del padrón y asignaciones manuales</legend><p class="text-sm text-slate-600">Marque todas las pertenencias autorizadas, incluida la principal.</p><div class="max-h-64 overflow-auto border border-slate-200 p-3">'+catalogs.departamentos.map(d => '<label class="block mb-2"><input type="checkbox" data-membership="'+esc(d.id)+'" '+((f.dependencias || []).some(m => m.id === d.id)?'checked':'')+'> '+esc(d.nombre)+'</label>').join('')+'</div></fieldset>'+
+        '<fieldset class="mb-3"><legend>Dependencias del padrón y asignaciones manuales</legend><p class="text-sm text-slate-600">Marque todas las pertenencias autorizadas, incluida la principal.</p><div class="max-h-64 overflow-auto border border-slate-200 p-3">'+catalogs.departamentos.map(d => '<label class="block mb-2"><input type="checkbox" data-membership="'+esc(d.id)+'" '+((f.dependencias || []).some(m => m.id === d.id)?'checked':'')+'> '+esc(departmentLabel(d))+'</label>').join('')+'</div></fieldset>'+
         '<p class="text-sm mb-3">Asignaciones adicionales del consolidado: '+esc((f.dependencias_autorizadas || []).filter(d => d.asignado_consolidado).map(d => d.nombre).join('; ') || 'Ninguna')+'. Se actualizan desde el archivo consolidado.</p>'+
         '<label class="block mb-3"><input type="checkbox" id="funcionario-activo" '+(f.activo?'checked':'')+'> Activo para reportar contactos</label>'+
         '<p class="text-sm text-slate-600 mb-3">La desactivación conserva la ficha y sus contactos anteriores. El correo debe ser único en el padrón.</p>'+

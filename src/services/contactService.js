@@ -3,6 +3,8 @@ const { getDb, runTransaction } = require('../database/db');
 const { validateContact, normalizeEmail } = require('../utils/validator');
 const { checkDuplicate } = require('./duplicateDetector');
 const { quality } = require('./contactQuality');
+const { equivalentDepartments, departmentKey } = require('../utils/departamentos');
+const { normalizeDependency } = require('../utils/dependencyNames');
 
 function canManage(contact, user) {
   return Boolean(user && (user.rol === 'ADMIN' || contact.created_by === user.id));
@@ -242,8 +244,9 @@ function listContacts(filters = {}, user = null, paginate = false) {
   }
 
   if (filters.departamento_id) {
-    sql += ' AND c.departamento_id = ?';
-    params.push(filters.departamento_id);
+    const ids = equivalentDepartments(db, filters.departamento_id).map(d => d.id);
+    sql += ids.length ? ' AND c.departamento_id IN (' + ids.map(() => '?').join(',') + ')' : ' AND 0';
+    params.push(...ids);
   }
 
   if (filters.country_name) {
@@ -371,13 +374,25 @@ function getStatistics() {
     GROUP BY s.nombre
   `).all();
 
-  const porDepto = db.prepare(`
-    SELECT COALESCE(d.nombre, 'Sin departamento') as departamento, COUNT(c.id) as count
+  const rawDepartments = db.prepare(`
+    SELECT COALESCE(d.nombre, 'Sin departamento') as departamento, d.sede_id,
+      s.nombre AS sede, COUNT(c.id) as count
     FROM contactos c
     LEFT JOIN departamentos d ON c.departamento_id = d.id
-    GROUP BY d.nombre
-    ORDER BY count DESC
+    LEFT JOIN sedes s ON s.id = d.sede_id
+    GROUP BY d.nombre, d.sede_id
   `).all();
+  const groups = new Map();
+  for (const row of rawDepartments) {
+    const key = JSON.stringify([departmentKey(row.departamento), row.sede_id]);
+    const previous = groups.get(key);
+    groups.set(key, { ...row, departamento: normalizeDependency(row.departamento), count: row.count + (previous?.count || 0) });
+  }
+  const porDepto = [...groups.values()].map(row => ({
+    departamento: [...groups.values()].filter(d => d.departamento === row.departamento).length > 1
+      ? row.departamento + ' — ' + (row.sede || 'Sede por revisar') : row.departamento,
+    count: row.count
+  })).sort((a,b) => b.count - a.count);
 
   return {
     total,

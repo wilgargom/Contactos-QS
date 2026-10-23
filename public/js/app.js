@@ -154,6 +154,7 @@ const App = {
   },
 
   clearAdminViews() {
+    if (typeof ReporterDepartmentDialog !== 'undefined') ReporterDepartmentDialog.close();
     for (const id of ['admin-view', 'export-view', 'directory-view', 'bulk-upload-view', 'personal-view']) {
       document.getElementById(id)?.replaceChildren();
     }
@@ -337,6 +338,7 @@ const App = {
     if (['admin', 'export'].includes(tabName) && this.currentUser?.rol !== 'ADMIN') tabName = 'register';
     if (tabName === 'personal' && this.currentUser?.rol === 'ADMIN') tabName = 'admin';
     if (tabName === 'directory' && this.currentUser?.rol !== 'ADMIN') tabName = 'personal';
+    if (typeof ReporterDepartmentDialog !== 'undefined') ReporterDepartmentDialog.close();
     this.activeTab = tabName;
 
     // Actualizar estilos activos en el menú lateral izquierdo

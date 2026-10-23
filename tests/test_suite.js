@@ -841,7 +841,8 @@ for (const [file, moduleName, inputId, cardPrefix] of [
       post: () => { posts++; throw new Error('No debe guardar sin verificar'); } };
     const timers = new Map(); let timerId = 0;
     const prefs = new Map([['tec_qs_pref_depto', 'dependencia-anterior']]);
-    const context = vm.createContext({ console, API: api,
+    const dialogCalls = [];
+    const context = vm.createContext({ console, API: api, ReporterDepartmentDialog: { open: (owner,tab) => { dialogCalls.push(tab); return true; }, close() {} },
       App: { currentUser: { rol: 'ADMIN', nombre_completo: 'Anterior', email: 'anterior@itcr.ac.cr' }, showToast() {} },
       document: { getElementById: element },
       localStorage: { removeItem: key => prefs.delete(key) },
@@ -872,10 +873,12 @@ for (const [file, moduleName, inputId, cardPrefix] of [
     mod.selectedDeptoId = '';
     mod.updateCardDisplay();
     assert.doesNotMatch(element(`${inputId}-reporter-department`).innerHTML, /<img/);
-    assert.match(element(`${inputId}-reporter-department`).innerHTML, /&lt;img/);
+    mod.chooseReporterDepartment();
+    assert.equal(dialogCalls.at(-1), inputId === 'bulk' ? 'bulk' : 'register');
     if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled, true);
     mod.selectReporterDepartment('dep-centro');
     assert.equal(mod.selectedDeptoId, 'dep-centro');
+    assert.equal(element(`${inputId}-reporter-department`).value, '<img src=x onerror=alert(1)>');
     if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled, false);
     mod.selectReporterDepartment('dep-ajeno');
     assert.equal(mod.selectedDeptoId, '');
@@ -901,6 +904,17 @@ for (const [file, moduleName, inputId, cardPrefix] of [
     assert.equal(mod.recomiendaEmail, 'nuevo@tec.ac.cr');
     assert.equal(mod.recomiendaNombre, 'Nuevo');
     assert.equal(element(`${inputId}-recomienda-domain`).textContent, '@tec.ac.cr');
+    // La identificación abre automáticamente el diálogo cuando la respuesta contiene varias asignaciones.
+    mod.onRecomiendaEmailInput('multiple');
+    const multiple = mod.lookupFuncionario(mod.recomiendaEmail);
+    const opens = dialogCalls.length;
+    pendingResolve({ exists: true, funcionario: { nombre:'Varias dependencias',email:'multiple@itcr.ac.cr',sede_id:'sede-cartago',departamento_id:'dep-comp',
+      dependencias_autorizadas:[{id:'dep-comp',nombre:'Computación'},{id:'dep-centro',nombre:'Centro'}] } });
+    await multiple;
+    assert.equal(dialogCalls.length,opens+1); assert.equal(mod.selectedDeptoId,'');
+    if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled,true);
+    else { await mod.handleSubmit(); assert.equal(dialogCalls.length,opens+2); }
+    assert.equal(posts,0);
     mod.onRecomiendaEmailInput('inexistente');
     const unknown = mod.lookupFuncionario(mod.recomiendaEmail);
     pendingResolve({ exists: false });
@@ -940,6 +954,71 @@ for (const [file, moduleName, inputId, cardPrefix] of [
     }
   });
 }
+
+test('ventana de dependencias exige selección, conserva texto literal y descarta fichas, pestañas y sesiones anteriores', () => {
+  const vm = require('node:vm'), nodes = new Map();
+  const create = () => ({ children:[],textContent:'',value:'',open:false,disabled:false,
+    appendChild(child) { this.children.push(child); return child; },
+    replaceChildren() { this.children = []; },
+    querySelector() { return this.children.flatMap(c=>c.children).find(c=>c.type==='radio'&&c.checked); },
+    showModal() { this.open=true; },close() { this.open=false; },focus() {} });
+  const node = id => { if (!nodes.has(id)) nodes.set(id,create()); return nodes.get(id); };
+  const app = { currentUser:{id:'usuario'},activeTab:'register',sessionVersion:1,suspended:false };
+  const context = vm.createContext({ App:app,document:{getElementById:node,createElement:create} });
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/reporterDepartmentDialog.js'),'utf8')+'\nglobalThis.dialog=ReporterDepartmentDialog;',context);
+  const dialog = context.dialog, selected = [];
+  const owner = { funcionarioIdentificado:{nombre:'Persona <img src=x>'},recomiendaEmail:'persona@itcr.ac.cr',reporterLookupVersion:1,selectedDeptoId:'',
+    departments:[{id:'dep-uno',nombre:'Escuela Uno'}],isReporterVerified:()=>true,
+    reporterDepartments() { return this.departments; },selectReporterDepartment(id) { selected.push(id);this.selectedDeptoId=id; } };
+  const submit = () => node('reporter-department-form').onsubmit({preventDefault(){}});
+  const choose = index => { const input=node('reporter-department-choices').children[index].children[0];input.checked=true;input.onchange(); };
+  assert.equal(dialog.open(owner,'register'),false); // Una dependencia no requiere la ventana.
+  owner.departments.push({id:'dep-dos',nombre:'Centro <img src=x onerror=alert(1)>'});
+  assert.equal(dialog.open(owner,'register'),true);
+  assert.equal(node('reporter-department-dialog').open,true);
+  assert.equal(node('reporter-department-confirm').disabled,true);
+  assert.equal(node('reporter-department-choices').children[1].children[1].textContent,owner.departments[1].nombre);
+  submit(); assert.equal(selected.length,0);
+  choose(1); assert.equal(node('reporter-department-confirm').disabled,false);
+  submit(); assert.deepEqual(selected,['dep-dos']);assert.equal(node('reporter-department-dialog').open,false);
+  dialog.open(owner,'register');let prevented=false;
+  node('reporter-department-dialog').oncancel({preventDefault(){prevented=true;}});
+  assert.equal(prevented,true);assert.equal(owner.selectedDeptoId,'dep-dos');assert.equal(node('reporter-department-dialog').open,false);
+  owner.selectedDeptoId='';dialog.open(owner,'register');
+  node('reporter-department-cancel').onclick();assert.equal(owner.selectedDeptoId,'');assert.equal(selected.length,1);
+  dialog.open(owner,'register');choose(0);app.sessionVersion++;submit();assert.equal(selected.length,1);
+  dialog.open(owner,'register');choose(0);owner.recomiendaEmail='otra@itcr.ac.cr';submit();assert.equal(selected.length,1);
+  owner.recomiendaEmail='persona@itcr.ac.cr';dialog.open(owner,'register');choose(0);
+  const staleSubmit=node('reporter-department-form').onsubmit;owner.reporterLookupVersion++;
+  dialog.open(owner,'register');staleSubmit({preventDefault(){}});
+  assert.equal(node('reporter-department-dialog').open,true);assert.equal(selected.length,1);
+  choose(0);owner.departments=[owner.departments[1]];submit();assert.equal(selected.length,1); // Asignación retirada.
+  dialog.close(owner);assert.equal(node('reporter-department-dialog').open,false);
+  owner.departments.push({id:'dep-tres',nombre:'Escuela Tres'});app.activeTab='bulk';
+  assert.equal(dialog.open(owner,'register'),false);
+  assert.equal(dialog.open(owner,'bulk'),true);assert.match(node('reporter-department-help').textContent,/todos los contactos de este archivo/);
+  choose(0);app.suspended=true;submit();assert.equal(selected.length,1);
+});
+
+test('cambiar dependencia de un archivo vuelve a analizar y descarta respuestas de la selección anterior', async () => {
+  const vm = require('node:vm'), calls = [];
+  const context = vm.createContext({ App:{currentUser:{rol:'USUARIO'},sessionVersion:1,suspended:false,showToast(){}},
+    API:{post:(route,body)=>new Promise(resolve=>calls.push({route,body,resolve}))},document:{getElementById:()=>null} });
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/bulkUpload.js'),'utf8')+'\nglobalThis.mod=BulkUploadModule;',context);
+  const mod=context.mod;mod.render=()=>{};mod.updateCardDisplay=()=>{};
+  Object.assign(mod,{tipoContacto:'EMPLEADOR',recomiendaEmail:'prueba@itcr.ac.cr',recomiendaNombre:'Persona Prueba',reporterLookupPending:false,
+    funcionarioIdentificado:{nombre:'Persona Prueba',email:'prueba@itcr.ac.cr',sede_id:'sede-cartago',departamento_id:'dep-uno',
+      dependencias_autorizadas:[{id:'dep-uno',nombre:'Escuela Uno'},{id:'dep-dos',nombre:'Escuela Dos'}]},
+    selectedDeptoId:'dep-uno',selectedFile:{name:'contactos.xlsx'},fileBase64:'archivo'});
+  const first=mod.analyzeFile();assert.equal(calls[0].body.departamento_id,'dep-uno');
+  const second=mod.selectReporterDepartment('dep-dos');assert.equal(calls[1].body.departamento_id,'dep-dos');
+  const obsolete={summary:{correctos:9},analyzedRows:[]},current={summary:{correctos:1},analyzedRows:[]};
+  calls[0].resolve(obsolete);await first;assert.equal(mod.analysisResult,null);
+  calls[1].resolve(current);await second;assert.equal(mod.analysisResult,current);
+  const third=mod.selectReporterDepartment('dep-uno');assert.equal(mod.analysisResult,null);
+  mod.selectReporterDepartment('id-ajeno');assert.equal(mod.selectedDeptoId,'');
+  calls[2].resolve(obsolete);await third;assert.equal(mod.analysisResult,null);
+});
 
 test('consolidado exclusivo del administrador: dos hojas, Escuela Proponente y actualización sin duplicar', async t => {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-consolidated-'));

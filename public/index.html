@@ -230,7 +230,21 @@
   <div id="app-modal-area"></div>
 
   <!-- Scripts de la Aplicación -->
+  <dialog id="reporter-department-dialog" class="reporter-department-dialog" aria-labelledby="reporter-department-title" aria-describedby="reporter-department-help">
+    <form id="reporter-department-form">
+      <h2 id="reporter-department-title">¿A cuál escuela o departamento corresponde el aporte?</h2>
+      <p id="reporter-department-person" class="reporter-department-person"></p>
+      <p id="reporter-department-help"></p>
+      <fieldset><legend>Dependencias asignadas</legend><div id="reporter-department-choices"></div></fieldset>
+      <div class="reporter-department-actions">
+        <button id="reporter-department-cancel" type="button" class="btn btn-outline">Cancelar</button>
+        <button id="reporter-department-confirm" type="submit" class="btn btn-tec" disabled>Usar esta dependencia</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="js/api.js"></script>
+  <script src="js/reporterDepartmentDialog.js"></script>
   <script src="js/register.js"></script>
   <script src="js/bulkUpload.js"></script>
   <script src="js/directory.js"></script>

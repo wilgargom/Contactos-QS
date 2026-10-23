@@ -56,17 +56,32 @@ const BulkUploadModule = {
   },
 
   selectReporterDepartment(id) {
+    const previous = this.selectedDeptoId;
     this.selectedDeptoId = this.reporterDepartments().some(d => d.id === id) ? id : '';
     this.selectedSedeId = this.reporterDepartments().find(d => d.id === id)?.sede_id || this.funcionarioIdentificado?.sede_id || '';
     this.updateCardDisplay();
+    if (previous !== this.selectedDeptoId && this.fileBase64 && this.selectedFile) {
+      this.analysisVersion++; this.analysisResult = null; this.analyzing = false;
+      if (this.selectedDeptoId) return this.analyzeFile();
+      else this.render();
+    }
+  },
+
+  chooseReporterDepartment() {
+    if (typeof ReporterDepartmentDialog !== 'undefined') return ReporterDepartmentDialog.open(this, 'bulk');
+    return false;
   },
 
   renderReporterDepartment() {
-    const select = document.getElementById('bulk-reporter-department');
-    if (!select) return;
-    select.innerHTML = '<option value="">Seleccione la dependencia del aporte</option>' + this.reporterDepartments().map(d => '<option value="'+this.escapeReporterText(d.id)+'" '+(d.id === this.selectedDeptoId ? 'selected' : '')+'>'+this.escapeReporterText(d.nombre)+(d.origen === 'CONSOLIDADO' ? ' (asignada en consolidado)' : '')+'</option>').join('');
-    select.disabled = !this.isReporterVerified();
+    const input = document.getElementById('bulk-reporter-department');
+    if (input) { input.value = this.getSelectedDeptoNombre(); input.disabled = !this.isReporterVerified(); }
+    const button = document.getElementById('bulk-choose-department');
+    if (button) {
+      button.disabled = !this.isReporterVerified() || this.reporterDepartments().length <= 1;
+      button.textContent = this.selectedDeptoId ? 'Cambiar dependencia' : 'Elegir dependencia';
+    }
   },
+
 
   isInstitutionalEmail(email) {
     return typeof email === 'string' && /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(email);
@@ -80,6 +95,7 @@ const BulkUploadModule = {
   },
 
   resetReporter(email = '') {
+    if (typeof ReporterDepartmentDialog !== 'undefined') ReporterDepartmentDialog.close(this);
     clearTimeout(this.recEmailCheckTimeout);
     this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
     this.reporterLookupPending = false;
@@ -108,6 +124,7 @@ const BulkUploadModule = {
   },
 
   async lookupFuncionario(email) {
+    if (typeof ReporterDepartmentDialog !== 'undefined') ReporterDepartmentDialog.close(this);
     clearTimeout(this.recEmailCheckTimeout);
     if (email !== this.recomiendaEmail || !this.isInstitutionalEmail(email)) return;
     const version = this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
@@ -140,6 +157,7 @@ const BulkUploadModule = {
       if (version === this.reporterLookupVersion && email === this.recomiendaEmail) {
         this.reporterLookupPending = false;
         this.updateCardDisplay();
+        if (this.isReporterVerified() && this.reporterDepartments().length > 1 && !this.selectedDeptoId) this.chooseReporterDepartment();
       }
     }
   },
@@ -584,7 +602,7 @@ const BulkUploadModule = {
 
         ${!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) ? `        <div class="mb-6">
           <label class="form-label" for="bulk-reporter-department">Dependencia a la que corresponde el aporte *</label>
-          <select id="bulk-reporter-department" class="form-control" onchange="BulkUploadModule.selectReporterDepartment(this.value)"></select>
+          <input id="bulk-reporter-department" class="form-control" readonly aria-readonly="true"><button type="button" id="bulk-choose-department" class="btn btn-outline mt-2" onclick="BulkUploadModule.chooseReporterDepartment()">Elegir dependencia</button>
           <p class="text-sm text-slate-600 mt-2">Seleccione una dependencia asignada en el padrón o en el consolidado. Cada aporte se registra en una sola dependencia.</p>
         </div>
 
@@ -813,6 +831,7 @@ const BulkUploadModule = {
 
   handleFileSelect(event) {
     if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!this.isReporterVerified() || !this.selectedDeptoId)) {
+      this.chooseReporterDepartment();
       App.showToast('Verifique el correo del funcionario en el padrón antes de cargar el archivo.', 'warning');
       event.target.value = '';
       return;
@@ -843,6 +862,7 @@ const BulkUploadModule = {
 
   async analyzeFile() {
     if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!this.isReporterVerified() || !this.selectedDeptoId)) {
+      this.chooseReporterDepartment();
       App.showToast('Verifique el correo del funcionario antes de analizar el archivo.', 'warning');
       return;
     }
@@ -1224,6 +1244,7 @@ const BulkUploadModule = {
 
   async confirmImport(includePotentialDuplicates = false) {
     if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!this.isReporterVerified() || !this.selectedDeptoId)) {
+      this.chooseReporterDepartment();
       App.showToast('Verifique el correo del funcionario en el padrón antes de confirmar la carga.', 'warning');
       return;
     }

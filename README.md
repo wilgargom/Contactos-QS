@@ -81,7 +81,7 @@ funcionario vacía. Ambos consultan el padrón por el correo institucional ingre
 los datos se limpian y el guardado se bloquea al cambiar el correo, mientras se
 consulta o si la consulta falla. El servidor vuelve a comprobar la existencia del
 funcionario al guardar o confirmar una importación y toma del padrón su nombre,
-correo, sede y dependencia. Esta comprobación identifica un registro del padrón;
+correo y sede, y valida la dependencia elegida entre sus asignaciones autorizadas. Esta comprobación identifica un registro del padrón;
 no incluye envío de códigos ni autenticación del buzón institucional.
 
 
@@ -171,7 +171,7 @@ La carga consolidada conserva los campos disponibles. Un cargo, disciplina, trat
 
 El consolidado muestra dos indicadores de calidad, **Completo** e **Histórico con observaciones**, independientes de la preparación o confirmación de un envío. Ambos se incluyen en la exportación cuando administración mantiene seleccionada **Incluir el consolidado histórico previamente aceptado por QS**, sin completar datos ausentes. La declaración queda en la auditoría y en el lote, el archivo incluye los contactos de ambas calidades. Los registros individuales y masivos de funcionarios mantienen la validación completa. Las duplicidades pendientes o descartadas permanecen fuera de la exportación histórica.
 
-Los registros incompletos o con observaciones se incluyen de forma predeterminada en la vista previa y conservan internamente el estado `NUEVO`, sin que este estado impida su exportación como consolidado histórico. Un director ausente, desconocido o inactivo deja una vinculación pendiente y conserva su correo original, sin descartar el contacto. Una ficha activa que coincida exactamente con ese correo permite consultarlo; los archivos sin la columna Correo director permanecen para administración hasta vincularlos. Se mantienen como errores bloqueantes los correos de contacto mal formados, las filas sin escuela o identidad suficiente, las fórmulas y errores de Excel y las autorizaciones negativas.
+Los registros incompletos o con observaciones se incluyen de forma predeterminada en la vista previa y conservan internamente el estado `NUEVO`, sin que este estado impida su exportación como consolidado histórico. Un director ausente, desconocido o inactivo deja una vinculación pendiente y conserva su correo original, sin descartar el contacto. Una ficha activa que coincida exactamente con ese correo permite consultarlo; los archivos sin Correo director se consultan únicamente por las pertenencias autorizadas de Escuela Proponente. Se mantienen como errores bloqueantes los correos de contacto mal formados, las filas sin escuela o identidad suficiente, las fórmulas y errores de Excel y las autorizaciones negativas.
 
 La consulta por correo reúne los contactos asignados directamente al funcionario como director, en todas las dependencias indicadas en el libro, y los consolidados vinculados a todas sus dependencias activas del padrón o asignadas expresamente por administración. Los filtros solo reducen ese alcance. Una actualización del correo o dependencia del padrón conserva las relaciones con el identificador de la ficha, las fichas inactivas no se admiten como correo de consulta y un cambio explícito de director nunca conserva una vinculación anterior por defecto.
 
@@ -183,8 +183,7 @@ Al abrir **Mis contactos TEC** se muestra una ventana con el correo instituciona
 
 Esta consulta no requiere contraseña, código de correo, Microsoft ni configuración adicional en Azure. El correo sirve para identificar la ficha consultada; no autentica a quien lo escribe. Por diseño, cualquier visitante que conozca el correo de una ficha activa consulta ese alcance de información. No debe describirse como identidad autenticada ni como prueba de propiedad del buzón.
 
-La consulta es de solo lectura. El servidor resuelve la ficha y su dependencia desde el padrón, los filtros adicionales solo reducen ese alcance. La pestaña de cargas de las dependencias incluye aportes de otros reportantes de esas mismas dependencias; las escuelas ajenas quedan excluidas. Los permisos de edición y eliminación y la autenticación del administrador se conservan. La sesión automática de usuario mantiene su suspensión por inactividad.
-
+La consulta es de solo lectura. El servidor resuelve la ficha y sus dependencias autorizadas; los filtros adicionales solo reducen ese alcance. La pestaña de cargas de las dependencias incluye aportes de otros reportantes de esas mismas dependencias; las escuelas ajenas quedan excluidas. Los permisos de edición y eliminación y la autenticación del administrador se conservan. La sesión automática de usuario mantiene su suspensión por inactividad.
 
 #### Funcionarios con varias dependencias
 

@@ -83,9 +83,9 @@ function searchFuncionarios(term = '', limit = 10) {
 /**
  * Inserta o actualiza un funcionario en el padrón del TEC
  */
-function upsertFuncionario(data, user = null) {
+function upsertFuncionario(data, user = null, includeDetails = true) {
   const db = getDb();
-  if (!db.isTransaction) return runTransaction(() => upsertFuncionario(data, user));
+  if (!db.isTransaction) return runTransaction(() => upsertFuncionario(data, user, includeDetails));
   const { nombre, email, dependencia, sede, sede_id, departamento_id, cargo, puesto } = data;
   if (typeof nombre !== 'string' || typeof email !== 'string' || !nombre.trim() || !email.trim()) {
     throw new Error('El nombre y correo del funcionario son obligatorios.');
@@ -148,6 +148,7 @@ function upsertFuncionario(data, user = null) {
     `).run(cleanNombre, cleanEmail, cleanDependencia, cleanSede, finalSedeId, finalDeptoId, now, existing.id);
 
     sync(existing.id);
+    if (!includeDetails) return { isNew: false };
     const row = enrich(db.prepare(`
       SELECT f.*, s.nombre as sede_nombre, d.nombre as departamento_nombre
       FROM funcionarios f
@@ -165,6 +166,7 @@ function upsertFuncionario(data, user = null) {
     `).run(id, cleanNombre, cleanEmail, emailNorm, cleanDependencia, cleanSede, finalSedeId, finalDeptoId, now, now);
 
     sync(id);
+    if (!includeDetails) return { isNew: true };
     const row = enrich(db.prepare(`
       SELECT f.*, s.nombre as sede_nombre, d.nombre as departamento_nombre
       FROM funcionarios f
@@ -214,7 +216,7 @@ function bulkImportFuncionarios(rows, user = null) {
     }
     if (conflicts.length) throw Object.assign(new Error('Seleccione la sede de las dependencias indicadas antes de importar. No se guardó ninguna fila.'), { code: 'STAFF_DEPARTMENT_REVIEW', conflicts });
     for (const data of prepared) {
-      const result = upsertFuncionario(data, user);
+      const result = upsertFuncionario(data, user, false);
       if (result.isNew) imported++;
       else updated++;
     }

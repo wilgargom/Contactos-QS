@@ -49,6 +49,10 @@ function getDb() {
         archivo TEXT NOT NULL, sha256 TEXT NOT NULL, manifiesto TEXT NOT NULL,
         total INTEGER NOT NULL, excluidos INTEGER NOT NULL, created_by TEXT NOT NULL,
         created_at TEXT NOT NULL, recibido_at TEXT, confirmado_at TEXT);`);
+    const exportColumns = dbInstance.prepare('PRAGMA table_info(exportaciones)').all();
+    for (const name of ['anulado_at', 'anulado_por', 'motivo_anulacion']) {
+      if (!exportColumns.some(c => c.name === name)) dbInstance.exec('ALTER TABLE exportaciones ADD COLUMN ' + name + ' TEXT');
+    }
     if (!columns.some(c => c.name === 'campania_id')) {
       dbInstance.exec('ALTER TABLE contactos ADD COLUMN campania_id TEXT REFERENCES campanias(id)');
     }

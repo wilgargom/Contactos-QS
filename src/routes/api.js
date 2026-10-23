@@ -141,7 +141,7 @@ function handleApi(req, res, pathname, query, body, user) {
         }
         return res.json({ success: true, batch: service.prepareExport(body.tipo, body.filters, user) });
       }
-      const route = pathname.match(/^\/api\/export\/lotes\/([a-f0-9-]+)\/(download|received|confirm)$/);
+      const route = pathname.match(/^\/api\/export\/lotes\/([a-f0-9-]+)\/(download|received|confirm|cancel)$/);
       if (route && route[2] === 'download' && method === 'GET') {
         const file = service.downloadBatch(route[1], user);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -150,9 +150,10 @@ function handleApi(req, res, pathname, query, body, user) {
       }
       if (route && route[2] === 'received' && method === 'POST') return res.json({ success: true, batch: service.receiveBatch(route[1], user) });
       if (route && route[2] === 'confirm' && method === 'POST') return res.json({ success: true, batch: service.confirmBatch(route[1], user, body.confirmed) });
+      if (route && route[2] === 'cancel' && method === 'POST') return res.json({ success: true, batch: service.cancelBatch(route[1], user, body.confirmed, body.reason) });
     } catch (err) {
       const errorId = err.statusCode ? undefined : require('../services/errorService').recordError(err, { method, pathname });
-      return res.status(err.statusCode || 500).json({ success: false, message: err.statusCode ? err.message : 'No se logró preparar o confirmar el lote.', errorId });
+      return res.status(err.statusCode || 500).json({ success: false, message: err.statusCode ? err.message : 'No se logró completar la operación del lote.', errorId });
     }
   }
 

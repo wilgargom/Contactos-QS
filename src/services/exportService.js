@@ -115,8 +115,8 @@ function batch(id) {
   return item;
 }
 function metadata(item) {
-  const { id, tipo, estado, total, excluidos, created_at, recibido_at, confirmado_at } = item;
-  return { id, tipo, estado, total, excluidos, created_at, recibido_at, confirmado_at,
+  const { id, tipo, estado, total, excluidos, created_at, recibido_at, confirmado_at, anulado_at, motivo_anulacion } = item;
+  return { id, tipo, estado, total, excluidos, created_at, recibido_at, confirmado_at, anulado_at, motivo_anulacion,
     filename: `TEC_QS_${tipo}_${id}.xlsx`, downloadUrl: `/api/export/lotes/${id}/download` };
 }
 function listBatches(user) {
@@ -153,6 +153,7 @@ function downloadBatch(id, user) {
 function receiveBatch(id, user) {
   requireAdmin(user);
   const item = batch(id);
+  if (item.estado === 'ANULADO') throw fail('El lote está anulado. Prepare un lote nuevo.');
   if (item.estado === 'GENERADO') getDb().prepare("UPDATE exportaciones SET estado='RECIBIDO_NAVEGADOR', recibido_at=? WHERE id=?")
     .run(new Date().toISOString(), id);
   return metadata(batch(id));
@@ -174,13 +175,67 @@ function confirmBatch(id, user, confirmed) {
       db.prepare("UPDATE contactos SET estado='EXPORTADO',updated_by=?,updated_by_name=?,updated_at=? WHERE id=? AND estado!='EXPORTADO'")
         .run(user.id, user.nombre_completo || 'Administrador', now, contact.id);
       logAudit(db, contact.id, { ...user, nombre_completo: user.nombre_completo || 'Administrador' }, 'EXPORTACION',
-        { lote: id, confirmacion: 'ENVIO_QS_DECLARADO_POR_ADMINISTRADOR', sha256: item.sha256 });
+        { lote: id, confirmacion: 'ENVIO_QS_DECLARADO_POR_ADMINISTRADOR', sha256: item.sha256,
+          estado_anterior: contact.estado,
+          version_confirmada: db.prepare('SELECT version FROM contactos WHERE id=?').get(contact.id).version });
     }
     db.prepare("UPDATE exportaciones SET estado='CONFIRMADO_QS',confirmado_at=? WHERE id=?").run(now, id);
     return metadata(batch(id));
   });
 }
 
+function cancelBatch(id, user, confirmed, reason) {
+  requireAdmin(user);
+  if (confirmed !== true) throw fail('Confirme la anulación del lote.', 400);
+  if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 500) {
+    throw fail('Indique un motivo de anulación de entre 3 y 500 caracteres.', 400);
+  }
+  return runTransaction(db => {
+    const item = batch(id);
+    if (item.estado === 'ANULADO') return metadata(item);
+    if (!['GENERADO', 'RECIBIDO_NAVEGADOR', 'CONFIRMADO_QS'].includes(item.estado)) throw fail('El estado del lote no admite anulación.');
+    const actor = { ...user, nombre_completo: user.nombre_completo || 'Administrador' };
+    const now = new Date().toISOString(), motive = reason.trim();
+    let restoredCount = 0;
+    if (item.estado === 'CONFIRMADO_QS') {
+      // Un mismo contacto puede pertenecer a otros lotes cuyo envío sigue confirmado.
+      const stillExported = new Set(db.prepare("SELECT manifiesto FROM exportaciones WHERE estado='CONFIRMADO_QS' AND id!=?")
+        .all(id).flatMap(other => JSON.parse(other.manifiesto).map(entry => entry.id)));
+      for (const entry of JSON.parse(item.manifiesto)) {
+        const contact = db.prepare('SELECT * FROM contactos WHERE id=?').get(entry.id);
+        let restoredState = contact?.estado || null, criterion = 'SIN_CAMBIO';
+        if (contact?.estado === 'EXPORTADO' && !stillExported.has(entry.id)) {
+          const history = db.prepare("SELECT detalles FROM auditoria WHERE contacto_id=? AND accion='EXPORTACION' ORDER BY created_at DESC, rowid DESC")
+            .all(entry.id).map(a => JSON.parse(a.detalles));
+          const previous = history.find(a => ['VALIDADO', 'CORREGIDO'].includes(a.estado_anterior));
+          const latest = history[0];
+          const changed = latest?.version_confirmada !== undefined && latest.version_confirmada !== contact.version;
+          // Los lotes antiguos no guardaban el estado previo: se revalidan los datos actuales.
+          // Solo se modifica el estado; nunca se sobrescriben campos del contacto.
+          restoredState = validateContact(contact, contact.tipo_contacto).isValid
+            ? changed ? 'CORREGIDO' : previous?.estado_anterior || 'VALIDADO'
+            : 'NUEVO';
+          criterion = changed ? 'REVALIDACION_CAMBIOS_POSTERIORES' : previous ? 'ESTADO_PREVIO_REGISTRADO' : 'REVALIDACION_LOTE_ANTERIOR';
+          db.prepare('UPDATE contactos SET estado=?,updated_by=?,updated_by_name=?,updated_at=? WHERE id=?')
+            .run(restoredState, actor.id, actor.nombre_completo, now, entry.id);
+          restoredCount++;
+        }
+        logAudit(db, entry.id, actor, 'ANULACION_EXPORTACION', {
+          lote: id, motivo: motive, estado_anterior: contact?.estado || null, estado_resultante: restoredState,
+          criterio: criterion, otro_envio_confirmado: stillExported.has(entry.id)
+        });
+      }
+    }
+    db.prepare("UPDATE exportaciones SET estado='ANULADO',anulado_at=?,anulado_por=?,motivo_anulacion=? WHERE id=?")
+      .run(now, actor.id, motive, id);
+    logAudit(db, null, actor, 'ANULACION_LOTE_EXPORTACION', {
+      lote: id, motivo: motive, estado_anterior: item.estado, contactos_actualizados: restoredCount,
+      sha256: item.sha256, confirmado_at: item.confirmado_at
+    });
+    return metadata(batch(id));
+  });
+}
+
 module.exports = {
-  exportContactsToXlsx, prepareExport, listBatches, downloadBatch, receiveBatch, confirmBatch
+  exportContactsToXlsx, prepareExport, listBatches, downloadBatch, receiveBatch, confirmBatch, cancelBatch
 };

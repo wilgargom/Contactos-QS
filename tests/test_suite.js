@@ -160,6 +160,130 @@ test('lotes QS: generación sin cambios, descarga íntegra, confirmación explí
   assert.equal((await request(server, corrupt.downloadUrl, 'GET', undefined, admin.cookies)).status, 409);
 });
 
+test('anular lotes conserva contactos, requiere administración y motivo y mantiene historial descargable', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-cancel-batches-'));
+  const server = await startServer(storage);
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  t.after(async () => { db.close(); await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const snapshot = () => JSON.stringify(db.prepare('SELECT * FROM contactos ORDER BY id').all());
+  const prepare = async () => (await request(server, '/api/export/prepare', 'POST', { tipo: 'ACADEMICO', filters: {} }, admin.cookies)).json().batch;
+  const generated = await prepare(), received = await prepare();
+  await request(server, `/api/export/lotes/${received.id}/received`, 'POST', {}, admin.cookies);
+  const original = snapshot();
+  const cancel = (id, body = { confirmed: true, reason: 'Prueba del sistema' }, cookies = admin.cookies) => request(server, `/api/export/lotes/${id}/cancel`, 'POST', body, cookies);
+  assert.equal((await cancel(generated.id, undefined, guest.cookies)).status, 403);
+  for (const body of [{}, { confirmed: false, reason: 'Prueba' }, { confirmed: true }, { confirmed: true, reason: {} }, { confirmed: true, reason: '  ' }, { confirmed: true, reason: 'x'.repeat(501) }]) {
+    assert.equal((await cancel(generated.id, body)).status, 400);
+  }
+  assert.equal((await cancel('00000000-0000-0000-0000-000000000000')).status, 404);
+  assert.equal(snapshot(), original);
+  for (const item of [generated, received]) {
+    const response = await cancel(item.id);
+    assert.equal(response.status, 200, response.text);
+    assert.equal(response.json().batch.estado, 'ANULADO');
+    assert.ok(response.json().batch.anulado_at);
+    assert.equal(response.json().batch.motivo_anulacion, 'Prueba del sistema');
+    const audits = db.prepare('SELECT COUNT(*) AS n FROM auditoria').get().n;
+    assert.equal((await cancel(item.id)).status, 200);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM auditoria').get().n, audits);
+    assert.equal((await request(server, item.downloadUrl, 'GET', undefined, admin.cookies)).status, 200);
+    assert.equal((await request(server, `/api/export/lotes/${item.id}/received`, 'POST', {}, admin.cookies)).status, 409);
+    assert.equal((await request(server, `/api/export/lotes/${item.id}/confirm`, 'POST', { confirmed: true }, admin.cookies)).status, 409);
+  }
+  assert.equal(snapshot(), original);
+  const listing = (await request(server, '/api/export/lotes', 'GET', undefined, admin.cookies)).json().batches;
+  assert.equal(listing.filter(b => b.estado === 'ANULADO').length, 2);
+});
+
+test('anular envío restaura estados, respeta otros envíos y cambios posteriores y revierte fallos sin borrados', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-cancel-confirmation-'));
+  const server = await startServer(storage);
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  t.after(async () => { db.close(); await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const originalCount = db.prepare('SELECT COUNT(*) AS n FROM contactos').get().n;
+  db.prepare("UPDATE contactos SET estado='CORREGIDO' WHERE id='cnt-acad-01'").run();
+  const confirmed = async () => {
+    const prepared = await request(server, '/api/export/prepare', 'POST', { tipo: 'ACADEMICO', filters: {} }, admin.cookies);
+    assert.equal(prepared.status, 200, prepared.text);
+    const batch = prepared.json().batch;
+    await request(server, `/api/export/lotes/${batch.id}/received`, 'POST', {}, admin.cookies);
+    const result = await request(server, `/api/export/lotes/${batch.id}/confirm`, 'POST', { confirmed: true }, admin.cookies);
+    assert.equal(result.status, 200, result.text);
+    return batch;
+  };
+  const cancel = id => request(server, `/api/export/lotes/${id}/cancel`, 'POST', { confirmed: true, reason: 'Ensayo de exportación' }, admin.cookies);
+  const first = await confirmed();
+  const before = JSON.stringify(db.prepare('SELECT * FROM contactos ORDER BY id').all());
+  db.exec("CREATE TRIGGER cancel_failure BEFORE INSERT ON auditoria WHEN NEW.accion='ANULACION_LOTE_EXPORTACION' BEGIN SELECT RAISE(ABORT,'simulated cancellation failure'); END;");
+  assert.equal((await cancel(first.id)).status, 500);
+  assert.equal(db.prepare('SELECT estado FROM exportaciones WHERE id=?').get(first.id).estado, 'CONFIRMADO_QS');
+  assert.equal(JSON.stringify(db.prepare('SELECT * FROM contactos ORDER BY id').all()), before);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM auditoria WHERE accion='ANULACION_EXPORTACION'").get().n, 0);
+  db.exec('DROP TRIGGER cancel_failure');
+  const second = await confirmed();
+  assert.equal((await cancel(first.id)).status, 200);
+  assert.equal(db.prepare("SELECT estado FROM contactos WHERE id='cnt-acad-01'").get().estado, 'EXPORTADO');
+  assert.equal((await cancel(second.id)).status, 200);
+  assert.equal(db.prepare("SELECT estado FROM contactos WHERE id='cnt-acad-01'").get().estado, 'CORREGIDO');
+  assert.equal((await request(server, '/api/stats', 'GET', undefined, admin.cookies)).json().stats.exportados, 0);
+  const third = await confirmed();
+  db.prepare("UPDATE contactos SET job_title='',phone='88887777' WHERE id='cnt-acad-01'").run();
+  assert.equal((await cancel(third.id)).status, 200);
+  const changed = db.prepare("SELECT estado,job_title,phone FROM contactos WHERE id='cnt-acad-01'").get();
+  assert.equal(changed.estado, 'NUEVO'); assert.equal(changed.job_title, ''); assert.equal(changed.phone, '88887777');
+  db.prepare("UPDATE contactos SET job_title='Profesor',estado='CORREGIDO' WHERE id='cnt-acad-01'").run();
+  const legacy = await confirmed();
+  // Simula los lotes ya creados en producción, sin instantánea del estado anterior.
+  for (const audit of db.prepare("SELECT id,detalles FROM auditoria WHERE accion='EXPORTACION'").all()) {
+    const details = JSON.parse(audit.detalles); delete details.estado_anterior; delete details.version_confirmada;
+    db.prepare('UPDATE auditoria SET detalles=? WHERE id=?').run(JSON.stringify(details), audit.id);
+  }
+  assert.equal((await cancel(legacy.id)).status, 200);
+  assert.equal(db.prepare("SELECT estado FROM contactos WHERE id='cnt-acad-01'").get().estado, 'VALIDADO');
+  assert.ok(db.prepare("SELECT detalles FROM auditoria WHERE accion='ANULACION_EXPORTACION'").all()
+    .some(a => JSON.parse(a.detalles).criterio === 'REVALIDACION_LOTE_ANTERIOR'));
+  const changedAfter = await confirmed();
+  db.prepare("UPDATE contactos SET estado='POSIBLE_DUPLICADO' WHERE id='cnt-acad-01'").run();
+  assert.equal((await cancel(changedAfter.id)).status, 200);
+  assert.equal(db.prepare("SELECT estado FROM contactos WHERE id='cnt-acad-01'").get().estado, 'POSIBLE_DUPLICADO');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM contactos').get().n, originalCount);
+});
+
+test('vista de exportación anula con motivo y confirmación, evita repeticiones y escapa el historial', async () => {
+  const vm = require('node:vm'), nodes = new Map(), calls = [];
+  const node = id => { if (!nodes.has(id)) nodes.set(id, { innerHTML: '', textContent: '' }); return nodes.get(id); };
+  let reason = null, allow = false;
+  const batch = { id: randomUUID(), estado: 'CONFIRMADO_QS', total: 40, tipo: 'ACADEMICO', created_at: new Date().toISOString() };
+  let batches = [batch];
+  const context = vm.createContext({ document: { getElementById: node }, window: { prompt: () => reason, confirm: () => allow },
+    DirectoryModule: { escapeSelectionText: text => String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') },
+    App: { currentUser: { rol: 'ADMIN' }, showToast() {} }, API: {
+      async get() { return { batches }; }, async post(route, body) {
+        calls.push({ route, body }); batches = [{ ...batch, estado: 'ANULADO', anulado_at: new Date().toISOString(), motivo_anulacion: body.reason }];
+      }
+    }
+  });
+  vm.runInContext(fs.readFileSync(path.join(appRoot, 'public/js/exportView.js'), 'utf8') + '\nthis.mod=ExportModule;', context);
+  await context.mod.loadBatches(); assert.match(node('exp-history').innerHTML, /Anular lote/);
+  await context.mod.cancelExport(batch.id); assert.equal(calls.length, 0);
+  reason = ' '; allow = true;
+  await context.mod.cancelExport(batch.id); assert.equal(calls.length, 0);
+  reason = 'Prueba <img src=x>'; allow = false;
+  await context.mod.cancelExport(batch.id); assert.equal(calls.length, 0);
+  allow = true;
+  await Promise.all([context.mod.cancelExport(batch.id), context.mod.cancelExport(batch.id)]);
+  assert.equal(calls.length, 1); assert.equal(calls[0].route, `/api/export/lotes/${batch.id}/cancel`);
+  assert.equal(calls[0].body.confirmed, true); assert.equal(calls[0].body.reason, reason);
+  const html = node('exp-history').innerHTML;
+  assert.match(html, /Lote anulado/); assert.match(html, /&lt;img/); assert.doesNotMatch(html, /<img|Anular lote|Confirmar envío a QS/);
+  assert.equal(context.mod.busy, false);
+});
+
 test('respaldo descargable, recuperación aislada y limpieza manual protegen datos y archivos recientes', async t => {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-storage-'));
   const server = await startServer(storage);

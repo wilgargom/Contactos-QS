@@ -650,7 +650,7 @@ header.bg-tec-primary {
 .personal-person-data p { font-size: .875rem; line-height: 1.5; margin: .25rem 0 0; color: #475569; }
 .personal-person-data .personal-person-sede { font-size: .8rem; color: #64748b; }
 .personal-person-email { display: block; margin-top: .55rem; color: var(--tec-primary); font-size: .8rem; }
-.personal-sources { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.personal-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
 .personal-source { display: flex; align-items: center; gap: .85rem; text-align: left; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem; background: #fff; color: #475569; cursor: pointer; }
 .personal-source:hover { border-color: #94a3b8; }
 .personal-source:focus-visible { outline: 3px solid #93c5fd; outline-offset: 2px; }

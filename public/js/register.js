@@ -74,8 +74,26 @@ const RegisterModule = {
     return this.isReporterVerified() ? this.funcionarioIdentificado.sede : 'Sede del TEC';
   },
 
+  reporterDepartments() {
+    const f = this.funcionarioIdentificado;
+    return f?.dependencias_autorizadas || (f ? [{ id: f.departamento_id, nombre: f.dependencia, sede_id: f.sede_id }] : []);
+  },
+
   getSelectedDeptoNombre() {
-    return this.isReporterVerified() ? this.funcionarioIdentificado.dependencia : 'Oficina o Departamento';
+    return this.reporterDepartments().find(d => d.id === this.selectedDeptoId)?.nombre || (this.funcionarioIdentificado ? 'Seleccione la dependencia del aporte' : 'Oficina o Departamento');
+  },
+
+  selectReporterDepartment(id) {
+    this.selectedDeptoId = this.reporterDepartments().some(d => d.id === id) ? id : '';
+    this.selectedSedeId = this.reporterDepartments().find(d => d.id === id)?.sede_id || this.funcionarioIdentificado?.sede_id || '';
+    this.updateCardDisplay();
+  },
+
+  renderReporterDepartment() {
+    const select = document.getElementById('reg-reporter-department');
+    if (!select) return;
+    select.innerHTML = '<option value="">Seleccione la dependencia del aporte</option>' + this.reporterDepartments().map(d => '<option value="'+this.escapeReporterText(d.id)+'" '+(d.id === this.selectedDeptoId ? 'selected' : '')+'>'+this.escapeReporterText(d.nombre)+(d.origen === 'CONSOLIDADO' ? ' (asignada en consolidado)' : '')+'</option>').join('');
+    select.disabled = !this.isReporterVerified();
   },
 
   getInitials(name) {
@@ -197,6 +215,13 @@ const RegisterModule = {
               </div>
             </div>
           </div>
+        </div>
+
+        <div class="mb-6">
+          <label class="form-label" for="reg-reporter-department">Dependencia a la que corresponde el aporte *</label>
+          <select id="reg-reporter-department" class="form-control" onchange="RegisterModule.selectReporterDepartment(this.value)"></select>
+          <div class="error-feedback" id="err-reporter-department"></div>
+          <p class="text-sm text-slate-600 mt-2">Seleccione una dependencia asignada en el padrón o en el consolidado. Cada aporte se registra en una sola dependencia.</p>
         </div>
 
         <!-- 2. Selector de Tipo de Contacto (Dentro del Registro Individual) -->
@@ -377,7 +402,7 @@ const RegisterModule = {
         this.funcionarioIdentificado = f;
         this.recomiendaNombre = f.nombre;
         this.selectedSedeId = f.sede_id;
-        this.selectedDeptoId = f.departamento_id;
+        this.selectedDeptoId = this.reporterDepartments().length === 1 ? this.reporterDepartments()[0].id : '';
       } else {
         this.reporterValidationError = res.exists
           ? 'El funcionario tiene datos institucionales incompletos. Revise su registro en el padrón.'
@@ -624,6 +649,7 @@ const RegisterModule = {
 
   updateCardDisplay() {
     const verified = this.isReporterVerified();
+    this.renderReporterDepartment();
     const input = document.getElementById('reg-recomienda-email');
     if (input) {
       input.value = this.getRecomiendaPrefix();
@@ -1453,8 +1479,8 @@ const RegisterModule = {
       country_name: document.getElementById('field-country_name')?.value.trim() || '',
       email: document.getElementById('field-email')?.value.trim() || '',
       phone: document.getElementById('field-phone')?.value.trim() || '',
-      sede_id: this.isReporterVerified() ? this.funcionarioIdentificado.sede_id : '',
-      departamento_id: this.isReporterVerified() ? this.funcionarioIdentificado.departamento_id : null
+      sede_id: this.isReporterVerified() ? this.selectedSedeId : '',
+      departamento_id: this.isReporterVerified() ? this.selectedDeptoId : null
     };
 
     if (isAcademic) {
@@ -1548,7 +1574,7 @@ const RegisterModule = {
 
     // 2. Procedencia Institucional de quien recomienda el contacto
     checkField('reg-sede-id', 'err-sede', data.sede_id && data.sede_id.length > 0, 'Seleccione la sede de procedencia.');
-    checkField('reg-departamento-id', 'err-departamento', data.departamento_id && data.departamento_id.length > 0, 'Seleccione la escuela o unidad.');
+    checkField('reg-reporter-department', 'err-reporter-department', data.departamento_id && data.departamento_id.length > 0, 'Seleccione la escuela o unidad.');
 
     // 3. Tratamiento, Nombre y Apellido
     checkField('field-title', 'err-title', data.title.length > 0, 'Debe seleccionar un tratamiento o título oficial.');

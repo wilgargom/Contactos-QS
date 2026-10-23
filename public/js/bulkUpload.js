@@ -46,8 +46,26 @@ const BulkUploadModule = {
     return this.isReporterVerified() ? this.funcionarioIdentificado.sede : 'Sede del TEC';
   },
 
+  reporterDepartments() {
+    const f = this.funcionarioIdentificado;
+    return f?.dependencias_autorizadas || (f ? [{ id: f.departamento_id, nombre: f.dependencia, sede_id: f.sede_id }] : []);
+  },
+
   getSelectedDeptoNombre() {
-    return this.isReporterVerified() ? this.funcionarioIdentificado.dependencia : 'Oficina o Departamento';
+    return this.reporterDepartments().find(d => d.id === this.selectedDeptoId)?.nombre || (this.funcionarioIdentificado ? 'Seleccione la dependencia del aporte' : 'Oficina o Departamento');
+  },
+
+  selectReporterDepartment(id) {
+    this.selectedDeptoId = this.reporterDepartments().some(d => d.id === id) ? id : '';
+    this.selectedSedeId = this.reporterDepartments().find(d => d.id === id)?.sede_id || this.funcionarioIdentificado?.sede_id || '';
+    this.updateCardDisplay();
+  },
+
+  renderReporterDepartment() {
+    const select = document.getElementById('bulk-reporter-department');
+    if (!select) return;
+    select.innerHTML = '<option value="">Seleccione la dependencia del aporte</option>' + this.reporterDepartments().map(d => '<option value="'+this.escapeReporterText(d.id)+'" '+(d.id === this.selectedDeptoId ? 'selected' : '')+'>'+this.escapeReporterText(d.nombre)+(d.origen === 'CONSOLIDADO' ? ' (asignada en consolidado)' : '')+'</option>').join('');
+    select.disabled = !this.isReporterVerified();
   },
 
   isInstitutionalEmail(email) {
@@ -109,7 +127,7 @@ const BulkUploadModule = {
         this.funcionarioIdentificado = f;
         this.recomiendaNombre = f.nombre;
         this.selectedSedeId = f.sede_id;
-        this.selectedDeptoId = f.departamento_id;
+        this.selectedDeptoId = this.reporterDepartments().length === 1 ? this.reporterDepartments()[0].id : '';
       } else {
         this.reporterValidationError = res.exists
           ? 'El funcionario tiene datos institucionales incompletos. Revise su registro en el padrón.'
@@ -344,6 +362,7 @@ const BulkUploadModule = {
 
   updateCardDisplay() {
     const verified = this.isReporterVerified();
+    this.renderReporterDepartment();
     const input = document.getElementById('bulk-recomienda-email');
     if (input) {
       input.value = this.getRecomiendaPrefix();
@@ -369,7 +388,7 @@ const BulkUploadModule = {
       if (el) el.textContent = value;
     }
     document.getElementById('bulk-rec-email-spinner')?.classList.toggle('hidden', !this.reporterLookupPending);
-    const blocked = !['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !verified;
+    const blocked = !['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!verified || !this.selectedDeptoId);
     const consolidatedCount = this.analysisResult ? this.analysisResult.summary.correctos - (this.includeConsolidatedPending ? 0 : this.analysisResult.summary.pendientesRevision) : 0;
     for (const id of ['excel-file-input', 'bulk-file-select', 'btn-import-valid', 'btn-import-potential']) {
       const el = document.getElementById(id);
@@ -563,6 +582,13 @@ const BulkUploadModule = {
           </div>
         ` : ''}
 
+        ${!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) ? `        <div class="mb-6">
+          <label class="form-label" for="bulk-reporter-department">Dependencia a la que corresponde el aporte *</label>
+          <select id="bulk-reporter-department" class="form-control" onchange="BulkUploadModule.selectReporterDepartment(this.value)"></select>
+          <p class="text-sm text-slate-600 mt-2">Seleccione una dependencia asignada en el padrón o en el consolidado. Cada aporte se registra en una sola dependencia.</p>
+        </div>
+
+` : ''}
         ${this.tipoContacto === 'CONSOLIDADO' && !this.analysisResult ? `<div class="alert alert-info mb-5"><div>Procedencia TEC: <strong>Administrador</strong>, el tablero agrupará por <strong>Escuela Proponente</strong> y la consulta de funcionarios se vinculará mediante <strong>Correo director</strong> validado en el padrón, revise la vista previa antes de importar nuevos contactos o actualizar procedencias existentes.</div></div>` : ''}
         <!-- 2. Selección de Tipo de Contacto y Ubicación del Archivo -->
         ${!this.analysisResult ? `
@@ -786,7 +812,7 @@ const BulkUploadModule = {
   },
 
   handleFileSelect(event) {
-    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !this.isReporterVerified()) {
+    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!this.isReporterVerified() || !this.selectedDeptoId)) {
       App.showToast('Verifique el correo del funcionario en el padrón antes de cargar el archivo.', 'warning');
       event.target.value = '';
       return;
@@ -816,7 +842,7 @@ const BulkUploadModule = {
   },
 
   async analyzeFile() {
-    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !this.isReporterVerified()) {
+    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!this.isReporterVerified() || !this.selectedDeptoId)) {
       App.showToast('Verifique el correo del funcionario antes de analizar el archivo.', 'warning');
       return;
     }
@@ -835,7 +861,8 @@ const BulkUploadModule = {
         fileName: this.selectedFile.name,
         tipo_contacto: this.tipoContacto,
         fileBase64: this.fileBase64,
-        recomienda_email: this.recomiendaEmail
+        recomienda_email: this.recomiendaEmail,
+        departamento_id: this.selectedDeptoId
       });
 
       if (analysisVersion !== this.analysisVersion || selectedFile !== this.selectedFile || App.suspended || sessionVersion !== App.sessionVersion || selectedType !== this.tipoContacto || (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && reporterVersion !== this.reporterLookupVersion)) return;
@@ -1196,7 +1223,7 @@ const BulkUploadModule = {
   },
 
   async confirmImport(includePotentialDuplicates = false) {
-    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && !this.isReporterVerified()) {
+    if (!['FUNCIONARIOS', 'CONSOLIDADO'].includes(this.tipoContacto) && (!this.isReporterVerified() || !this.selectedDeptoId)) {
       App.showToast('Verifique el correo del funcionario en el padrón antes de confirmar la carga.', 'warning');
       return;
     }
@@ -1211,6 +1238,7 @@ const BulkUploadModule = {
           email: r.data.email || r.data['Correo electrónico'],
           dependencia: r.data.dependencia || r.data['Dependencia'],
           sede: r.data.sede || r.data['Sede'],
+          cargo: r.data.cargo || r.data.puesto || '',
           status: r.status
         }));
 

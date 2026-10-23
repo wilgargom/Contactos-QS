@@ -53,6 +53,7 @@ function getDb() {
     for (const name of ['anulado_at', 'anulado_por', 'motivo_anulacion']) {
       if (!exportColumns.some(c => c.name === name)) dbInstance.exec('ALTER TABLE exportaciones ADD COLUMN ' + name + ' TEXT');
     }
+    if (!exportColumns.some(c => c.name === 'incluye_historicos')) dbInstance.exec('ALTER TABLE exportaciones ADD COLUMN incluye_historicos INTEGER NOT NULL DEFAULT 0');
     if (!columns.some(c => c.name === 'campania_id')) {
       dbInstance.exec('ALTER TABLE contactos ADD COLUMN campania_id TEXT REFERENCES campanias(id)');
     }

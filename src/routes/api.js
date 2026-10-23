@@ -135,11 +135,14 @@ function handleApi(req, res, pathname, query, body, user) {
       const service = require('../services/exportService');
       if (pathname === '/api/export/lotes' && method === 'GET') return res.json({ success: true, batches: service.listBatches(user) });
       if (pathname === '/api/export/prepare' && method === 'POST') {
+        if (body.includeHistorical !== undefined && typeof body.includeHistorical !== 'boolean') {
+          return res.status(400).json({ success: false, message: 'La inclusión del consolidado histórico debe ser verdadera o falsa.' });
+        }
         if (typeof body.tipo !== 'string' || !body.filters || typeof body.filters !== 'object' || Array.isArray(body.filters) ||
             Object.values(body.filters).some(v => typeof v !== 'string')) {
           return res.status(400).json({ success: false, message: 'Indique un tipo y filtros válidos.' });
         }
-        return res.json({ success: true, batch: service.prepareExport(body.tipo, body.filters, user) });
+        return res.json({ success: true, batch: service.prepareExport(body.tipo, body.filters, user, { includeHistorical: body.includeHistorical }) });
       }
       const route = pathname.match(/^\/api\/export\/lotes\/([a-f0-9-]+)\/(download|received|confirm|cancel)$/);
       if (route && route[2] === 'download' && method === 'GET') {

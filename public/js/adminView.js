@@ -225,6 +225,14 @@ const AdminModule = {
           </div>
         </div>
 
+        <section class="bg-slate-50 border border-slate-200 rounded-xl p-5 mb-6">
+          <h3 class="font-bold text-slate-900 mb-3">Calidad del consolidado histórico</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="kpi-card"><div class="kpi-title">Completos</div><div class="kpi-value">${this.stats.consolidadoCompletos || 0}</div></div>
+            <div class="kpi-card"><div class="kpi-title">Con observaciones</div><div class="kpi-value">${this.stats.consolidadoConObservaciones || 0}</div></div>
+          </div>
+          <p class="text-sm mt-3">Ambos grupos se incluyen al exportar el consolidado histórico previamente aceptado por QS, conservando los datos disponibles.</p>
+        </section>
         <!-- Distribución por Sedes y Departamentos -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           <div class="bg-slate-50 border border-slate-200 rounded-xl p-5">

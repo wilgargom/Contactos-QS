@@ -1,4 +1,5 @@
 const { getDb } = require('../database/db');
+const { quality } = require('./contactQuality');
 function fail(message) { throw Object.assign(new Error(message), { statusCode: 400 }); }
 function list(reporter, query = {}) {
   const db = getDb(), f = reporter.funcionario;
@@ -30,7 +31,7 @@ function list(reporter, query = {}) {
     consolidado: db.prepare('SELECT COUNT(*) AS n FROM contactos c WHERE '+consolidated).get(...scope).n };
   const directors = db.prepare('SELECT DISTINCT f.id, f.nombre, f.email_normalized AS email FROM contactos c JOIN funcionarios f ON f.id = c.director_funcionario_id OR (c.director_funcionario_id IS NULL AND f.email_normalized = c.director_email) WHERE '+consolidated+' ORDER BY f.nombre, f.email_normalized').all(...scope);
   const departments = db.prepare('SELECT DISTINCT d.id, d.nombre FROM contactos c JOIN departamentos d ON c.departamento_id = d.id WHERE ('+own+') OR ('+consolidated+') ORDER BY d.nombre').all(f.id, ...scope);
-  return { contacts, total, page: currentPage, pages, pageSize: 25, counts, directors, departments, origen,
+  return { contacts: contacts.map(quality), total, page: currentPage, pages, pageSize: 25, counts, directors, departments, origen,
     funcionario: { nombre: f.nombre, email: f.email_normalized, dependencia: f.dependencia, sede: f.sede } };
 }
 module.exports = { list };

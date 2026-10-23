@@ -5,6 +5,7 @@ const ExportModule = {
   batches: [],
   pendingBatch: null,
   busy: false,
+  includeHistorical: true,
 
   init(catalogs) {
     this.catalogs = catalogs;
@@ -91,10 +92,15 @@ const ExportModule = {
             </div>
           </div>
 
+          <label class="flex items-start gap-3 mb-4" for="exp-include-historical">
+            <input type="checkbox" id="exp-include-historical" ${this.includeHistorical ? 'checked' : ''} onchange="ExportModule.includeHistorical=this.checked;">
+            <span><strong>Incluir el consolidado histórico previamente aceptado por QS</strong><br>
+            Los contactos completos y los históricos con observaciones se exportan con sus datos disponibles, incluidos los campos vacíos.</span>
+          </label>
           <div class="alert alert-info mb-6">
             <i class="fa-solid fa-circle-info text-sky-600 mt-0.5"></i>
             <div>
-              <strong>Control de Calidad QS Activo:</strong> El sistema re-valida automáticamente cada registro antes de incluirlo en el archivo Excel. Cualquier contacto con duplicidad pendiente o datos faltantes será excluido para proteger el ranking institucional.
+              <strong>Dos indicadores de calidad:</strong> Completos e históricos con observaciones. La inclusión histórica aplica al consolidado administrativo, conserva sus valores y queda registrada en el lote. Los registros individuales y las cargas de funcionarios requieren los campos completos, las duplicidades pendientes se mantienen fuera del archivo.
             </div>
           </div>
 
@@ -136,11 +142,12 @@ const ExportModule = {
 
     try {
       App.showToast('Generando archivo consolidado...', 'info');
-      const response = await API.post('/api/export/prepare', { tipo: this.currentTipo, filters });
+      const response = await API.post('/api/export/prepare', { tipo: this.currentTipo, filters, includeHistorical: this.includeHistorical });
       this.pendingBatch = response.batch;
       const esc = value => DirectoryModule.escapeSelectionText(value);
       document.getElementById('exp-result').innerHTML = `<div class="alert alert-info"><div>
-        <strong>Lote preparado:</strong> ${esc(response.batch.total)} contactos completos y ${esc(response.batch.excluidos)} excluidos.
+        <strong>Lote preparado:</strong> ${esc(response.batch.total)} contactos incluidos y ${esc(response.batch.excluidos)} excluidos.
+        <p>Completos: <strong>${esc(response.batch.completos)}</strong> · Históricos con observaciones: <strong>${esc(response.batch.historicos_con_observaciones)}</strong>, ambos grupos están incluidos en el archivo.</p>
         <p>Descargue y revise el archivo, realice el envío a QS y registre la confirmación desde la tabla.</p>
         ${(response.batch.inconsistencias || []).map(row => `<p class="text-xs">Registro ${esc(row.id)}: ${esc(Object.values(row.errors).join('; '))}</p>`).join('')}
         </div></div>`;
@@ -164,7 +171,7 @@ const ExportModule = {
       const labels = { GENERADO: 'Archivo preparado', RECIBIDO_NAVEGADOR: 'Recibido por el navegador', CONFIRMADO_QS: 'Envío a QS confirmado', ANULADO: 'Lote anulado' };
       target.innerHTML = `<table class="data-table"><thead><tr><th>Fecha / lote</th><th>Tipo y contactos</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
         ${this.batches.map(b => `<tr><td>${esc(new Date(b.created_at).toLocaleString())}<br><small>${esc(b.id)}</small></td>
-        <td>${esc(b.tipo)} · ${esc(b.total)}</td><td>${esc(labels[b.estado] || b.estado)}
+        <td>${esc(b.tipo)} · ${esc(b.total)}<br><small>${esc(b.completos ?? b.total)} completos · ${esc(b.historicos_con_observaciones || 0)} históricos con observaciones</small></td><td>${esc(labels[b.estado] || b.estado)}
         ${b.estado === 'ANULADO' ? `<br><small>${esc(new Date(b.anulado_at).toLocaleString())}<br>Motivo: ${esc(b.motivo_anulacion)}</small>` : ''}</td><td>
         <button type="button" class="btn btn-outline btn-xs" onclick="ExportModule.downloadBatch('${b.id}')">Descargar</button>
         ${b.estado === 'RECIBIDO_NAVEGADOR' ? `<button type="button" class="btn btn-tec btn-xs" onclick="ExportModule.confirmExport('${b.id}')">Confirmar envío a QS</button>` : ''}

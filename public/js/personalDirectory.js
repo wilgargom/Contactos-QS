@@ -154,7 +154,7 @@ const PersonalDirectoryModule = {
     return `<details class="personal-contact">
       <summary><div class="personal-contact-person"><span class="personal-contact-type">${academic ? 'Académico' : 'Empleador'}</span><strong>${esc(name)}</strong><span>${esc(c.email || 'Correo sin completar')}</span></div>
         <div class="personal-contact-organization"><strong>${esc(c.institution || c.company_name || 'Institución sin completar')}</strong><span>${esc(c.departamento_nombre || c.escuela_proponente || 'Dependencia sin completar')}</span></div>
-        <div class="personal-contact-status"><span class="personal-state">${esc(c.estado === 'NUEVO' ? 'Pendiente de completar' : c.estado || 'Sin estado')}</span><span>${origin}</span></div>
+        <div class="personal-contact-status"><span class="personal-state">${esc(c.es_consolidado ? c.calidad_datos === 'COMPLETO' ? 'Completo' : 'Histórico con observaciones' : c.estado === 'NUEVO' ? 'Pendiente de completar' : c.estado || 'Sin estado')}</span><span>${origin}</span></div>
         <span class="personal-contact-toggle">Ver información <i class="fa-solid fa-chevron-down" aria-hidden="true"></i></span>
       </summary>
       <div class="personal-contact-detail"><section><h5>Datos del contacto</h5><dl>${info([['Correo',c.email],['Teléfono',c.phone],['País',c.country_name],['Cargo',c.job_title || c.position],['Departamento externo',c.department_unit],['Disciplina / Industria',c.subject_area || c.industry]])}</dl></section>

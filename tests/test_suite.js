@@ -284,6 +284,110 @@ test('vista de exportación anula con motivo y confirmación, evita repeticiones
   assert.equal(context.mod.busy, false);
 });
 
+test('exportación histórica incluye 181 consolidados completos y con observaciones, conserva campos y respeta el alcance', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-historical-export-'));
+  const server = await startServer(storage);
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  t.after(async () => { db.close(); await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  db.exec('DELETE FROM contactos');
+  const { generateMultiSheetXlsx, parseXlsx } = require(path.join(appRoot, 'src/services/excelService'));
+  const commonHeaders = ['Title', 'First Name', 'Last Name'];
+  const academicHeaders = [...commonHeaders, 'Job Title', 'Department', 'Institution', 'Country', 'Email', 'Subject', 'Escuela Proponente', 'Correo director'];
+  const employerHeaders = [...commonHeaders, 'Position', 'Industry', 'Company Name', 'Country', 'Email', 'Escuela Proponente', 'Correo director'];
+  const academicRows = Array.from({ length: 94 }, (_, i) => [i < 40 ? 'Dr' : '', `Academico ${i}`, i === 41 ? 'Apellido <>' : 'Prueba',
+    i < 40 ? 'Profesor' : '-', i < 40 ? 'Física' : '', 'Universidad de Prueba', 'España',
+    i === 40 ? 'historico@itcr.ac.cr' : `academico${i}@example.org`, i < 40 ? 'Física' : '', 'Unidad Histórica', 'cbrenes@itcr.ac.cr']);
+  const employerRows = Array.from({ length: 87 }, (_, i) => [i < 30 ? 'Mr' : '', `Empleador ${i}`, 'Prueba',
+    i < 30 ? 'Gerente' : '', i < 30 ? 'Servicios' : '-', 'Empresa de Prueba', 'Costa Rica', `empleador${i}@example.org`, 'Unidad Histórica', 'cbrenes@itcr.ac.cr']);
+  const body = { fileName: 'consolidado-181.xlsx', includePending: true, fileBase64: generateMultiSheetXlsx([
+    { name: 'Académicos', headers: academicHeaders, rows: academicRows },
+    { name: 'Empleadores', headers: employerHeaders, rows: employerRows }
+  ]).toString('base64') };
+  const imported = await request(server, '/api/bulk/consolidated/import', 'POST', body, admin.cookies);
+  assert.equal(imported.status, 200, imported.text); assert.equal(imported.json().importedCount, 181);
+  const rowsBefore = db.prepare('SELECT * FROM contactos ORDER BY id').all();
+  const stats = (await request(server, '/api/stats', 'GET', undefined, admin.cookies)).json().stats;
+  assert.equal(stats.consolidadoCompletos, 70); assert.equal(stats.consolidadoConObservaciones, 111);
+  const qualityList = (await request(server, '/api/contacts?page_size=100', 'GET', undefined, admin.cookies)).json();
+  assert.ok(qualityList.contacts.every(c => c.exportable_historico));
+  assert.ok(qualityList.contacts.every(c => ['COMPLETO', 'CON_OBSERVACIONES'].includes(c.calidad_datos)));
+  const prepared = [];
+  for (const [tipo, total, complete, withObservations] of [['ACADEMICO', 94, 40, 54], ['EMPLEADOR', 87, 30, 57]]) {
+    const payload = { tipo, filters: {}, includeHistorical: true };
+    assert.equal((await request(server, '/api/export/prepare', 'POST', payload, guest.cookies)).status, 403);
+    assert.equal((await request(server, '/api/export/prepare', 'POST', { ...payload, includeHistorical: 'true' }, admin.cookies)).status, 400);
+    const strict = await request(server, '/api/export/prepare', 'POST', { ...payload, includeHistorical: false }, admin.cookies);
+    assert.equal(strict.json().batch.total, complete);
+    const historical = await request(server, '/api/export/prepare', 'POST', payload, admin.cookies);
+    assert.equal(historical.status, 200, historical.text);
+    const batch = historical.json().batch; prepared.push(batch);
+    assert.equal(batch.total, total); assert.equal(batch.completos, complete);
+    assert.equal(batch.historicos_con_observaciones, withObservations); assert.equal(batch.incluye_historicos, true);
+    const file = await request(server, batch.downloadUrl, 'GET', undefined, admin.cookies);
+    const exported = parseXlsx(file.buffer).rows;
+    assert.equal(exported.length, total);
+    for (const c of rowsBefore.filter(c => c.tipo_contacto === tipo)) {
+      const actual = exported.find(row => row.Email === c.email);
+      assert.ok(actual, c.email);
+      assert.equal(actual.Title, c.title); assert.equal(actual['Last Name'], c.last_name);
+      if (tipo === 'ACADEMICO') { assert.equal(actual['Job Title'], c.job_title); assert.equal(actual.Subject, c.subject_area); }
+      else { assert.equal(actual.Position, c.position); assert.equal(actual.Industry, c.industry); }
+    }
+  }
+  assert.deepEqual(db.prepare('SELECT * FROM contactos ORDER BY id').all(), rowsBefore);
+  for (const batch of prepared) {
+    await request(server, `/api/export/lotes/${batch.id}/received`, 'POST', {}, admin.cookies);
+    const result = await request(server, `/api/export/lotes/${batch.id}/confirm`, 'POST', { confirmed: true }, admin.cookies);
+    assert.equal(result.status, 200, result.text);
+  }
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM contactos WHERE estado='EXPORTADO'").get().n, 181);
+  for (const batch of prepared) assert.equal((await request(server, `/api/export/lotes/${batch.id}/cancel`, 'POST', { confirmed: true, reason: 'Prueba del histórico completo' }, admin.cookies)).status, 200);
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM contactos WHERE estado='EXPORTADO'").get().n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM contactos').get().n, 181);
+  const sample = db.prepare("SELECT * FROM contactos WHERE email='empleador30@example.org'").get();
+  const clone = (id, email, consolidated, state) => {
+    const row = { ...sample, id, email, email_normalized: email, es_consolidado: consolidated, estado: state };
+    db.prepare(`INSERT INTO contactos (${Object.keys(row).join(',')}) VALUES (${Object.keys(row).map(() => '?').join(',')})`).run(...Object.values(row));
+  };
+  clone('individual-pending', 'individual.pending@example.org', 0, 'NUEVO');
+  clone('consolidated-duplicate', 'consolidated.duplicate@example.org', 1, 'POSIBLE_DUPLICADO');
+  const afterDuplicates = (await request(server, '/api/stats', 'GET', undefined, admin.cookies)).json().stats;
+  assert.equal(afterDuplicates.consolidadoCompletos, 70); assert.equal(afterDuplicates.consolidadoConObservaciones, 111);
+  const last = (await request(server, '/api/export/prepare', 'POST', { tipo: 'EMPLEADOR', filters: {}, includeHistorical: true }, admin.cookies)).json().batch;
+  assert.equal(last.total, 87);
+  const outOfScope = (await request(server, '/api/export/prepare', 'POST', { tipo: 'EMPLEADOR', filters: { departamento_id: 'dep-ind' }, includeHistorical: true }, admin.cookies));
+  assert.equal(outOfScope.status, 422);
+  await request(server, `/api/export/lotes/${last.id}/received`, 'POST', {}, admin.cookies);
+  db.prepare("UPDATE contactos SET position='Cargo corregido' WHERE email='empleador30@example.org'").run();
+  assert.equal((await request(server, `/api/export/lotes/${last.id}/confirm`, 'POST', { confirmed: true }, admin.cookies)).status, 409);
+  const audit = db.prepare("SELECT detalles FROM auditoria WHERE accion='PREPARACION_EXPORTACION'").all().map(a => JSON.parse(a.detalles));
+  assert.ok(audit.some(a => a.incluye_historicos && a.historicos_con_observaciones === 57));
+});
+
+test('exportación propone incluir históricos y presenta ambas cantidades sin excluir observaciones', async () => {
+  const vm = require('node:vm'), nodes = new Map(), calls = [];
+  const node = id => { if (!nodes.has(id)) nodes.set(id, { innerHTML: '', value: '', disabled: false }); return nodes.get(id); };
+  const context = vm.createContext({ document: { getElementById: node },
+    DirectoryModule: { escapeSelectionText: text => String(text ?? '') },
+    App: { currentUser: { rol: 'ADMIN' }, showToast() {} }, API: {
+      async get() { return { batches: [] }; }, async post(route, body) {
+        calls.push({ route, body }); return { batch: { total: 94, completos: 40, historicos_con_observaciones: 54, excluidos: 0 } };
+      }
+    }
+  });
+  vm.runInContext(fs.readFileSync(path.join(appRoot, 'public/js/exportView.js'), 'utf8') + '\nthis.mod=ExportModule;', context);
+  context.mod.init({ campanias: [] });
+  assert.match(node('export-view').innerHTML, /id="exp-include-historical" checked/);
+  await context.mod.triggerExport(); assert.equal(calls[0].body.includeHistorical, true);
+  assert.match(node('exp-result').innerHTML, /94 contactos incluidos/);
+  assert.match(node('exp-result').innerHTML, /54/); assert.match(node('exp-result').innerHTML, /ambos grupos están incluidos/);
+  context.mod.includeHistorical = false;
+  await context.mod.triggerExport(); assert.equal(calls[1].body.includeHistorical, false);
+});
+
 test('respaldo descargable, recuperación aislada y limpieza manual protegen datos y archivos recientes', async t => {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-storage-'));
   const server = await startServer(storage);

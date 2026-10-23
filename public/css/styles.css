@@ -650,6 +650,18 @@ header.bg-tec-primary {
 .personal-person-data p { font-size: .875rem; line-height: 1.5; margin: .25rem 0 0; color: #475569; }
 .personal-person-data .personal-person-sede { font-size: .8rem; color: #64748b; }
 .personal-person-email { display: block; margin-top: .55rem; color: var(--tec-primary); font-size: .8rem; }
+.reporter-department-dialog { width: min(40rem, calc(100% - 2rem)); max-height: 85vh; overflow: auto; padding: 1.5rem; border: 0; border-radius: 14px; box-shadow: 0 20px 60px rgb(15 23 42 / 25%); }
+.reporter-department-dialog::backdrop { background: rgb(15 23 42 / 55%); }
+.reporter-department-dialog h2 { font-size: 1.2rem; font-weight: 700; color: #0f172a; margin-bottom: .75rem; }
+.reporter-department-dialog p { color: #475569; line-height: 1.6; margin-bottom: .75rem; }
+.reporter-department-dialog .reporter-department-person { color: var(--tec-primary); font-weight: 600; }
+.reporter-department-dialog fieldset { margin-top: 1rem; min-width: 0; }
+.reporter-department-dialog legend { font-size: .875rem; font-weight: 600; margin-bottom: .6rem; }
+.reporter-department-option { display: flex; align-items: flex-start; gap: .75rem; padding: .9rem; margin-bottom: .6rem; border: 1px solid #cbd5e1; border-radius: 9px; cursor: pointer; overflow-wrap: anywhere; }
+.reporter-department-option:has(input:checked) { border-color: var(--tec-primary); background: #f0f6fc; }
+.reporter-department-option input { margin-top: .25rem; flex: none; }
+.reporter-department-option span { min-width: 0; }
+.reporter-department-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .75rem; margin-top: 1.25rem; }
 .personal-sources { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
 .personal-source { display: flex; align-items: center; gap: .85rem; text-align: left; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1rem; background: #fff; color: #475569; cursor: pointer; }
 .personal-source:hover { border-color: #94a3b8; }

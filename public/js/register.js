@@ -89,12 +89,21 @@ const RegisterModule = {
     this.updateCardDisplay();
   },
 
-  renderReporterDepartment() {
-    const select = document.getElementById('reg-reporter-department');
-    if (!select) return;
-    select.innerHTML = '<option value="">Seleccione la dependencia del aporte</option>' + this.reporterDepartments().map(d => '<option value="'+this.escapeReporterText(d.id)+'" '+(d.id === this.selectedDeptoId ? 'selected' : '')+'>'+this.escapeReporterText(d.nombre)+(d.origen === 'CONSOLIDADO' ? ' (asignada en consolidado)' : '')+'</option>').join('');
-    select.disabled = !this.isReporterVerified();
+  chooseReporterDepartment() {
+    if (typeof ReporterDepartmentDialog !== 'undefined') return ReporterDepartmentDialog.open(this, 'register');
+    return false;
   },
+
+  renderReporterDepartment() {
+    const input = document.getElementById('reg-reporter-department');
+    if (input) { input.value = this.getSelectedDeptoNombre(); input.disabled = !this.isReporterVerified(); }
+    const button = document.getElementById('reg-choose-department');
+    if (button) {
+      button.disabled = !this.isReporterVerified() || this.reporterDepartments().length <= 1;
+      button.textContent = this.selectedDeptoId ? 'Cambiar dependencia' : 'Elegir dependencia';
+    }
+  },
+
 
   getInitials(name) {
     if (!name) return 'TEC';
@@ -219,7 +228,7 @@ const RegisterModule = {
 
         <div class="mb-6">
           <label class="form-label" for="reg-reporter-department">Dependencia a la que corresponde el aporte *</label>
-          <select id="reg-reporter-department" class="form-control" onchange="RegisterModule.selectReporterDepartment(this.value)"></select>
+          <input id="reg-reporter-department" class="form-control" readonly aria-readonly="true"><button type="button" id="reg-choose-department" class="btn btn-outline mt-2" onclick="RegisterModule.chooseReporterDepartment()">Elegir dependencia</button>
           <div class="error-feedback" id="err-reporter-department"></div>
           <p class="text-sm text-slate-600 mt-2">Seleccione una dependencia asignada en el padrón o en el consolidado. Cada aporte se registra en una sola dependencia.</p>
         </div>
@@ -355,6 +364,7 @@ const RegisterModule = {
   },
 
   resetReporter(email = '') {
+    if (typeof ReporterDepartmentDialog !== 'undefined') ReporterDepartmentDialog.close(this);
     clearTimeout(this.recEmailCheckTimeout);
     this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
     this.reporterLookupPending = false;
@@ -383,6 +393,7 @@ const RegisterModule = {
   },
 
   async lookupFuncionario(email) {
+    if (typeof ReporterDepartmentDialog !== 'undefined') ReporterDepartmentDialog.close(this);
     clearTimeout(this.recEmailCheckTimeout);
     if (email !== this.recomiendaEmail || !this.isInstitutionalEmail(email)) return;
     const version = this.reporterLookupVersion = (this.reporterLookupVersion || 0) + 1;
@@ -415,6 +426,7 @@ const RegisterModule = {
       if (version === this.reporterLookupVersion && email === this.recomiendaEmail) {
         this.reporterLookupPending = false;
         this.updateCardDisplay();
+        if (this.isReporterVerified() && this.reporterDepartments().length > 1 && !this.selectedDeptoId) this.chooseReporterDepartment();
       }
     }
   },
@@ -1642,6 +1654,7 @@ const RegisterModule = {
       App.showToast('Verifique el correo del funcionario en el padrón antes de guardar.', 'warning');
       return;
     }
+    if (!this.selectedDeptoId) { this.chooseReporterDepartment(); return; }
     this.submitting = true;
     if (this.emailIsTecDomain) {
       App.showToast('Restricción QS: No se permiten correos del dominio institucional (@itcr.ac.cr / @tec.ac.cr). Los contactos deben ser externos.', 'error');

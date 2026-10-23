@@ -354,6 +354,8 @@ test('exportación histórica incluye 181 consolidados completos y con observaci
   };
   clone('individual-pending', 'individual.pending@example.org', 0, 'NUEVO');
   clone('consolidated-duplicate', 'consolidated.duplicate@example.org', 1, 'POSIBLE_DUPLICADO');
+  const afterDuplicates = (await request(server, '/api/stats', 'GET', undefined, admin.cookies)).json().stats;
+  assert.equal(afterDuplicates.consolidadoCompletos, 70); assert.equal(afterDuplicates.consolidadoConObservaciones, 111);
   const last = (await request(server, '/api/export/prepare', 'POST', { tipo: 'EMPLEADOR', filters: {}, includeHistorical: true }, admin.cookies)).json().batch;
   assert.equal(last.total, 87);
   const outOfScope = (await request(server, '/api/export/prepare', 'POST', { tipo: 'EMPLEADOR', filters: { departamento_id: 'dep-ind' }, includeHistorical: true }, admin.cookies));

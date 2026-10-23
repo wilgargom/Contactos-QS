@@ -360,7 +360,7 @@ function getStatistics() {
   const validados = db.prepare("SELECT COUNT(*) as count FROM contactos WHERE estado IN ('VALIDADO', 'CORREGIDO')").get().count;
   const duplicados = db.prepare("SELECT COUNT(*) as count FROM contactos WHERE estado IN ('POSIBLE_DUPLICADO', 'DUPLICADO')").get().count;
   const exportados = db.prepare("SELECT COUNT(*) as count FROM contactos WHERE estado = 'EXPORTADO'").get().count;
-  const consolidated = db.prepare('SELECT * FROM contactos WHERE es_consolidado = 1').all().map(quality);
+  const consolidated = db.prepare("SELECT * FROM contactos WHERE es_consolidado = 1 AND estado IN ('NUEVO','VALIDADO','CORREGIDO','EXPORTADO')").all().map(quality);
   const consolidadoCompletos = consolidated.filter(c => c.calidad_datos === 'COMPLETO').length;
   const consolidadoConObservaciones = consolidated.length - consolidadoCompletos;
 

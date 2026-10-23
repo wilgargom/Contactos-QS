@@ -1903,6 +1903,45 @@ test('migración separa dependencias antiguas sin mantener coincidencias parcial
   assert.equal(f.dependencias.length,1); assert.equal(f.dependencias[0].id,primary.id);
 });
 
+test('catálogo histórico con acentos duplicados migra y consulta sus IDs sin mezclar otras sedes ni alterar contactos', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(),'qs-duplicate-departments-'));
+  let server = await startServer(storage);
+  t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
+  let guest = await request(server,'/api/auth/guest','POST');
+  const contact = { tipo_contacto:'EMPLEADOR',title:'Mr',first_name:'Prueba',last_name:'Equivalencia',email:'equivalencia@example.org',
+    position:'Gerente',industry:'Servicios',company_name:'Empresa Equivalencia',country_name:'Costa Rica',recomienda_email:'cbrenes@itcr.ac.cr',allow_duplicate_override:true };
+  const first = await request(server,'/api/contacts','POST',contact,guest.cookies);
+  const other = await request(server,'/api/contacts','POST',{...contact,email:'otra.sede@example.org',company_name:'Empresa Otra Sede'},guest.cookies);
+  assert.equal(first.status,201,first.text);assert.equal(other.status,201,other.text);
+  await server.stop();
+  const { DatabaseSync } = require('node:sqlite');
+  let db = new DatabaseSync(path.join(storage,'tec_qs.sqlite'));
+  db.exec('DROP TABLE funcionario_departamentos');
+  db.prepare("INSERT INTO departamentos (id, codigo, nombre, sede_id, activo) VALUES (?, 'ALIAS', ?, ?, 1)")
+    .run('dep-comp-alias','ESCUELA DE INGENIERIA EN COMPUTACION','sede-cartago');
+  db.prepare("INSERT INTO departamentos (id, codigo, nombre, sede_id, activo) VALUES (?, 'OTRA', ?, ?, 1)")
+    .run('dep-comp-otra-sede','ESCUELA DE INGENIERIA EN COMPUTACION','sede-sancarlos');
+  db.prepare('UPDATE contactos SET departamento_id = ? WHERE id = ?').run('dep-comp-alias',first.json().contact.id);
+  db.prepare('UPDATE contactos SET departamento_id = ? WHERE id = ?').run('dep-comp-otra-sede',other.json().contact.id);
+  const before = db.prepare('SELECT id, departamento_id, version FROM contactos WHERE id IN (?, ?) ORDER BY id').all(first.json().contact.id,other.json().contact.id);
+  db.close();
+  server = await startServer(storage);guest = await request(server,'/api/auth/guest','POST');
+  const query = '/api/personal/contacts?email=cbrenes@itcr.ac.cr&origen=escuela';
+  const visible = (await request(server,query,'GET',undefined,guest.cookies)).json();
+  assert.ok(visible.contacts.some(c=>c.email===contact.email));
+  assert.ok(!visible.contacts.some(c=>c.email==='otra.sede@example.org'));
+  assert.equal(visible.departments.filter(d=>/Computaci/i.test(d.nombre)).length,1);
+  const filtered = (await request(server,query+'&departamento_id=dep-comp','GET',undefined,guest.cookies)).json();
+  assert.ok(filtered.contacts.some(c=>c.email===contact.email));
+  assert.equal((await request(server,query+'&departamento_id=dep-comp-otra-sede','GET',undefined,guest.cookies)).json().total,0);
+  const f = (await request(server,'/api/funcionarios/by-email?email=cbrenes@itcr.ac.cr','GET',undefined,guest.cookies)).json().funcionario;
+  assert.equal(f.dependencias_autorizadas.length,1);
+  assert.deepEqual(f.dependencias_autorizadas[0].alias_ids,['dep-comp','dep-comp-alias']);
+  db = new DatabaseSync(path.join(storage,'tec_qs.sqlite'));
+  assert.deepEqual(db.prepare('SELECT id, departamento_id, version FROM contactos WHERE id IN (?, ?) ORDER BY id').all(first.json().contact.id,other.json().contact.id),before);
+  db.close();
+});
+
 test('ventana por correo inicia vacía, limpia datos al escribir y descarta respuestas de otro correo o sesión', async () => {
   const vm=require('node:vm'),nodes=new Map(),timers=new Map();let timerId=0;
   const node=id=>{

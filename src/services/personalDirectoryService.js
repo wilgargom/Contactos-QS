@@ -1,6 +1,7 @@
 const { getDb } = require('../database/db');
 const { quality } = require('./contactQuality');
 const { authorizedDepartments, identity } = require('./funcionarioScope');
+const { equivalentDepartments } = require('../utils/departamentos');
 function fail(message) { throw Object.assign(new Error(message), { statusCode: 400 }); }
 function list(reporter, query = {}) {
   const db = getDb(), f = reporter.funcionario;
@@ -13,7 +14,7 @@ function list(reporter, query = {}) {
   const page = Number(query.page || 1);
   if (!Number.isSafeInteger(page) || page < 1 || page > 100000 || (query.q || '').length > 200) fail('Revise la búsqueda o la página.');
   const own = 'c.es_consolidado = 0 AND c.reportante_funcionario_id = ?';
-  const departments = authorizedDepartments(f), ids = departments.map(d => d.id);
+  const departments = authorizedDepartments(f), ids = [...new Set(departments.flatMap(d => d.alias_ids))];
   const school = ids.length ? 'c.departamento_id IN (' + ids.map(() => '?').join(',') + ')' : '0';
   const currentSchool = 'c.es_consolidado = 0 AND (' + school + ')';
   // Una asignación del libro habilita esa dependencia; una pertenencia del padrón no exige ser director.
@@ -24,7 +25,11 @@ function list(reporter, query = {}) {
   let where = '(' + base + ')';
   if (query.q) { where += ' AND (c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.institution LIKE ? OR c.company_name LIKE ?)'; args.push(...Array(5).fill('%'+query.q.trim()+'%')); }
   if (query.tipo_contacto) { where += ' AND c.tipo_contacto = ?'; args.push(query.tipo_contacto); }
-  if (query.departamento_id) { where += ' AND c.departamento_id = ?'; args.push(query.departamento_id); }
+  if (query.departamento_id) {
+    const aliases = equivalentDepartments(db, query.departamento_id).map(d => d.id);
+    where += aliases.length ? ' AND c.departamento_id IN ('+aliases.map(() => '?').join(',')+')' : ' AND 0';
+    args.push(...aliases);
+  }
   if (query.metodo && origen !== 'consolidado') { where += ' AND c.metodo_ingreso = ?'; args.push(query.metodo); }
   if (query.director_id && origen === 'consolidado') { where += ' AND c.director_funcionario_id = ?'; args.push(query.director_id); }
   const total = db.prepare('SELECT COUNT(*) AS n FROM contactos c WHERE '+where).get(...args).n;
@@ -35,7 +40,9 @@ function list(reporter, query = {}) {
     consolidado: db.prepare('SELECT COUNT(*) AS n FROM contactos c WHERE '+consolidated).get(...scope).n };
   const directors = db.prepare('SELECT DISTINCT f.id, f.nombre, f.email_normalized AS email FROM contactos c JOIN funcionarios f ON f.id = c.director_funcionario_id OR (c.director_funcionario_id IS NULL AND f.email_normalized = c.director_email) WHERE '+consolidated+' ORDER BY f.nombre, f.email_normalized').all(...scope);
   const visibleDepartments = db.prepare('SELECT DISTINCT d.id, d.nombre FROM contactos c JOIN departamentos d ON c.departamento_id = d.id WHERE ('+base+') ORDER BY d.nombre').all(...(origen === 'actuales' ? [f.id] : origen === 'escuela' ? ids : scope));
-  return { contacts: contacts.map(quality), total, page: currentPage, pages, pageSize: 25, counts, directors, departments: visibleDepartments, origen,
+  const facets = new Map();
+  for (const d of visibleDepartments) { const canonical = equivalentDepartments(db, d.id)[0] || d; facets.set(canonical.id, { id: canonical.id, nombre: canonical.nombre }); }
+  return { contacts: contacts.map(quality), total, page: currentPage, pages, pageSize: 25, counts, directors, departments: [...facets.values()], origen,
     funcionario: identity(f) };
 }
 module.exports = { list };

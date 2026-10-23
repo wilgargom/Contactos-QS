@@ -52,7 +52,7 @@ La procedencia queda como Administrador y cada fila conserva su Escuela Proponen
 
 ## Padrón y alcance por dependencias
 
-La columna Dependencia admite varias unidades separadas por `;`. Cada una se registra por separado, con coincidencia exacta normalizada de acentos, mayúsculas y espacios. No se conceden accesos por subcadenas, nombres de personas ni por el campo puesto. La primera actualización migra las fichas existentes sin modificar los contactos ni su procedencia.
+La columna Dependencia admite varias unidades separadas por `;`. Cada una se registra por separado, con coincidencia exacta normalizada de acentos, mayúsculas y espacios. No se conceden accesos por subcadenas, nombres de personas ni por el campo puesto. La primera actualización migra las fichas existentes sin modificar los contactos ni su procedencia. Las variantes históricas del mismo nombre y sede se consultan como equivalencias, conservando los identificadores y versiones originales. Nombres iguales de sedes distintas no se unifican; si una ficha con varias sedes no permite decidir la pertenencia, el historial registra REVISION_DEPENDENCIAS para su asignación administrativa, sin conceder acceso por esa coincidencia.
 
 Para incorporar el padrón de GTH, cargue su hoja principal desde Carga masiva → Funcionarios, revise la vista previa y confirme las filas válidas. Los correos existentes actualizan el padrón y las pertenencias PADRON; las asignaciones MANUAL se conservan. Los correos ausentes del archivo no se eliminan ni desactivan. Las celdas con varias sedes no expresan una correspondencia por dependencia y no se cruzan para generar permisos.
 

@@ -447,7 +447,8 @@ const DirectoryModule = {
                       <i class="fa-solid fa-earth-americas text-slate-400 text-[11px] shrink-0"></i>
                       <span>${this.escapeSelectionText(c.country_name)}</span>
                     </div>
-                    <span class="badge ${badgeClass} text-[10px]">${this.escapeSelectionText(c.estado)}</span>
+                    <span class="badge ${badgeClass} text-[10px]">${this.escapeSelectionText(c.es_consolidado && c.estado === 'NUEVO' ? 'Histórico con observaciones' : c.estado)}</span>
+                    ${c.es_consolidado ? `<span class="text-[11px] block mt-1">Calidad: ${this.escapeSelectionText(c.calidad_datos === 'COMPLETO' ? 'Completo' : 'Con observaciones')}</span><span class="text-[11px] block">${c.exportable_historico ? 'Incluido en exportación histórica' : 'Requiere revisión de estado'}</span>` : ''}
                   </td>
                   <td style="text-align: center;">
                     <div class="flex items-center justify-center gap-1">
@@ -536,6 +537,7 @@ const DirectoryModule = {
                 <div><strong>Puesto/Cargo:</strong> ${this.escapeSelectionText(contact.job_title || contact.position)}</div>
                 <div><strong>Disciplina/Sector:</strong> ${this.escapeSelectionText(contact.subject_area || contact.industry)}</div>
                 <div><strong>Estado:</strong> <span class="badge badge-validado">${this.escapeSelectionText(contact.estado)}</span></div>
+                ${contact.es_consolidado ? `<div><strong>Calidad de datos:</strong> ${this.escapeSelectionText(contact.calidad_datos === 'COMPLETO' ? 'Completo' : 'Histórico con observaciones')}<br>${this.escapeSelectionText(contact.observaciones_datos || 'Sin observaciones de campos')}<br>${contact.exportable_historico ? 'Incluido al exportar el consolidado histórico previamente aceptado por QS.' : 'Requiere revisión de estado antes de exportar.'}</div>` : ''}
                 <div><strong>Método de Ingreso:</strong> ${this.escapeSelectionText(contact.metodo_ingreso)}</div>
               </div>
             </div>

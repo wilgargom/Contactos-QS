@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { getDb, runTransaction } = require('../database/db');
 const { validateContact, normalizeEmail } = require('../utils/validator');
 const { checkDuplicate } = require('./duplicateDetector');
+const { quality } = require('./contactQuality');
 
 function canManage(contact, user) {
   return Boolean(user && (user.rol === 'ADMIN' || contact.created_by === user.id));
@@ -291,10 +292,10 @@ function listContacts(filters = {}, user = null, paginate = false) {
     const pages = Math.max(1, Math.ceil(total / pageSize));
     const page = Math.min(pages, Math.max(1, parseInt(filters.page, 10) || 1));
     const contacts = db.prepare(sql + ' ORDER BY c.created_at DESC, c.id LIMIT ? OFFSET ?').all(...params, pageSize, (page - 1) * pageSize);
-    return { contacts, total, page, pageSize, pages };
+    return { contacts: contacts.map(quality), total, page, pageSize, pages };
   }
   sql += ' ORDER BY c.created_at DESC, c.id';
-  return db.prepare(sql).all(...params);
+  return db.prepare(sql).all(...params).map(quality);
 }
 
 function getContactById(id, user) {
@@ -313,7 +314,7 @@ function getContactById(id, user) {
     SELECT * FROM auditoria WHERE contacto_id = ? ORDER BY created_at DESC
   `).all(id);
 
-  return { contact, auditHistory };
+  return { contact: quality(contact), auditHistory };
 }
 
 function resolveDuplicate(id, action, targetContactId, user) {
@@ -359,6 +360,9 @@ function getStatistics() {
   const validados = db.prepare("SELECT COUNT(*) as count FROM contactos WHERE estado IN ('VALIDADO', 'CORREGIDO')").get().count;
   const duplicados = db.prepare("SELECT COUNT(*) as count FROM contactos WHERE estado IN ('POSIBLE_DUPLICADO', 'DUPLICADO')").get().count;
   const exportados = db.prepare("SELECT COUNT(*) as count FROM contactos WHERE estado = 'EXPORTADO'").get().count;
+  const consolidated = db.prepare('SELECT * FROM contactos WHERE es_consolidado = 1').all().map(quality);
+  const consolidadoCompletos = consolidated.filter(c => c.calidad_datos === 'COMPLETO').length;
+  const consolidadoConObservaciones = consolidated.length - consolidadoCompletos;
 
   const porSede = db.prepare(`
     SELECT COALESCE(s.nombre, 'Sin sede asignada') as sede, COUNT(c.id) as count
@@ -382,6 +386,8 @@ function getStatistics() {
     validados,
     duplicados,
     exportados,
+    consolidadoCompletos,
+    consolidadoConObservaciones,
     porSede,
     porDepto
   };

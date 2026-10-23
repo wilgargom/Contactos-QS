@@ -14,6 +14,81 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('correo único global bloquea consolidado previo, otras categorías, confirmaciones y carreras sin borrar históricos', async t => {
+  const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-email-identity-'));
+  let server=await startServer(storage);
+  t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
+  let admin=await request(server,'/api/auth/login','POST',{username:testUsername,password:testPassword});
+  let guest=await request(server,'/api/auth/guest','POST');
+  const {generateMultiSheetXlsx}=require(path.join(appRoot,'src/services/excelService'));
+  const historical={fileName:'base.xlsx',fileBase64:generateMultiSheetXlsx([{name:'Empleadores',
+    headers:['Title','First Name','Last Name','Position','Industry','Company Name','Country','Email','Escuela Proponente'],
+    rows:[['Mr','Base','Histórica','Gerente','Servicios','Empresa Base','Costa Rica','global@example.org','Escuela de Ingeniería en Computación']]}]).toString('base64')};
+  assert.equal((await request(server,'/api/bulk/consolidated/import','POST',historical,admin.cookies)).status,200);
+  const academic={tipo_contacto:'ACADEMICO',title:'Dr',first_name:'Persona Nueva',last_name:'Identidad',email:' GLOBAL@EXAMPLE.ORG ',
+    job_title:'Profesor',institution:'Universidad Nueva',department_unit:'Física',subject_area:'Física',country_name:'Costa Rica',recomienda_email:'cbrenes@itcr.ac.cr',allow_duplicate_override:true};
+  const lookup=(await request(server,'/api/contacts/check-email?email=GLOBAL%40EXAMPLE.ORG','GET',undefined,guest.cookies)).json();
+  assert.equal(lookup.exists,true);assert.equal(lookup.contact,null);
+  const blocked=await request(server,'/api/contacts','POST',academic,guest.cookies);
+  assert.equal(blocked.status,409,blocked.text);assert.equal(blocked.json().duplicateStatus,'EXACT_MATCH');
+  assert.equal(blocked.json().duplicateDetails.matchType,'EMAIL_EXACT');assert.doesNotMatch(blocked.text,/Empresa Base/);
+  const fresh={...academic,email:'fila.nueva@example.org'};
+  const academicHeaders=['Title','First Name','Last Name','Job Title','Department','Institution','Country or Territory','Email','Subject','Escuela Proponente'];
+  const arow=(name,email)=>['Dr',name,'Identidad','Profesor','Física','Universidad '+name,'Costa Rica',email,'Física','Escuela de Ingeniería en Computación'];
+  const analyzeMass=await request(server,'/api/bulk/analyze','POST',{tipo_contacto:'ACADEMICO',recomienda_email:academic.recomienda_email,fileName:'revisar.xlsx',
+    fileBase64:generateMultiSheetXlsx([{name:'Académicos',headers:academicHeaders,rows:[arow('Existente','GLOBAL@EXAMPLE.ORG'),arow('Disponible',fresh.email)]}]).toString('base64')},guest.cookies);
+  assert.equal(analyzeMass.status,200,analyzeMass.text);assert.equal(analyzeMass.json().summary.duplicadosExactos,1);assert.equal(analyzeMass.json().summary.correctos,1);
+  const mass=await request(server,'/api/bulk/import','POST',{tipo_contacto:'ACADEMICO',recomienda_email:academic.recomienda_email,rowsToImport:[fresh,academic]},guest.cookies);
+  assert.equal(mass.status,409,mass.text);
+  assert.equal((await request(server,'/api/contacts/check-email?email=fila.nueva@example.org','GET',undefined,guest.cookies)).json().exists,false);
+  const concurrent=await Promise.all([1,2].map(()=>request(server,'/api/contacts','POST',{...fresh,email:'simultaneo.unico@example.org'},guest.cookies)));
+  assert.deepEqual(concurrent.map(r=>r.status).sort(),[201,409]);
+  const future={fileName:'futuro.xlsx',fileBase64:generateMultiSheetXlsx([
+    {name:'Académicos',headers:academicHeaders,rows:[arow('OtroRolExistente','global@example.org'),arow('CruceAcademico','cruce.futuro@example.org'),arow('UnicoFuturo','nuevo.consolidado@example.org')]},
+    {name:'Empleadores',headers:['Title','First Name','Last Name','Position','Industry','Company Name','Country','Email','Escuela Proponente'],
+      rows:[['Mr','CruceEmpresa','Prueba','Gerente','Servicios','Empresa Cruce','Costa Rica','cruce.futuro@example.org','Escuela de Ingeniería en Computación']]}
+  ]).toString('base64')};
+  const futurePreview=(await request(server,'/api/bulk/consolidated/analyze','POST',future,admin.cookies)).json();
+  assert.equal(futurePreview.summary.duplicadosExactos,1);assert.equal(futurePreview.summary.posiblesDuplicados,2);
+  const futureImport=await request(server,'/api/bulk/consolidated/import','POST',{...future,includePending:true},admin.cookies);
+  assert.equal(futureImport.status,200,futureImport.text);assert.equal(futureImport.json().importedCount,1);
+  const before=(await request(server,'/api/contacts','GET',undefined,admin.cookies)).json().contacts;
+  const original=before.find(c=>c.email==='global@example.org');
+  await server.stop();
+  const {DatabaseSync}=require('node:sqlite');let db=new DatabaseSync(path.join(storage,'tec_qs.sqlite'));
+  // Simular un histórico anterior a la regla nueva, con dos categorías para el mismo correo.
+  db.exec('DROP TRIGGER contactos_email_unique_insert; DROP TRIGGER contactos_email_unique_update;');
+  const old=db.prepare('SELECT * FROM contactos WHERE id = ?').get(original.id);
+  const legacy={...old,id:randomUUID(),tipo_contacto:'ACADEMICO',job_title:'Profesor',institution:'Universidad Histórica',subject_area:'Física',department_unit:'Física'};
+  const cols=Object.keys(legacy);db.prepare('INSERT INTO contactos ('+cols.join(',')+') VALUES ('+cols.map(()=>'?').join(',')+')').run(...cols.map(k=>legacy[k]));
+  const legacyCount=db.prepare('SELECT COUNT(*) n FROM contactos').get().n;db.close();
+  server=await startServer(storage);admin=await request(server,'/api/auth/login','POST',{username:testUsername,password:testPassword});guest=await request(server,'/api/auth/guest','POST');
+  db=new DatabaseSync(path.join(storage,'tec_qs.sqlite'));
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM contactos').get().n,legacyCount);
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM contactos WHERE email='global@example.org'").get().n,2);
+  assert.throws(()=>db.prepare('INSERT INTO contactos ('+cols.join(',')+') VALUES ('+cols.map(()=>'?').join(',')+')').run(...cols.map(k=>k==='id'?randomUUID():legacy[k])),/CONTACT_EMAIL_ALREADY_EXISTS/);
+  assert.throws(()=>db.prepare("UPDATE contactos SET email=' GLOBAL@EXAMPLE.ORG ' WHERE email='simultaneo.unico@example.org'").run(),/CONTACT_EMAIL_ALREADY_EXISTS/);db.close();
+  assert.equal((await request(server,'/api/contacts','POST',academic,guest.cookies)).status,409);
+  const current=(await request(server,'/api/contacts','GET',undefined,admin.cookies)).json().contacts.find(c=>c.id===original.id);
+  const edit=await request(server,'/api/contacts/'+original.id,'PUT',{...current,phone:'22223333',version:current.version},admin.cookies);
+  assert.equal(edit.status,200,edit.text); // Mantener un correo histórico sin agregar otro registro.
+});
+
+test('correo reservado sin detalles se bloquea en el formulario y una respuesta anterior no lo habilita', async () => {
+  const vm=require('node:vm'),nodes=new Map(),requests=[];
+  const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',classList:{add(){},remove(){}}});return nodes.get(id);};
+  const context=vm.createContext({console,document:{getElementById:node},API:{get:()=>new Promise(resolve=>requests.push(resolve))}});
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/register.js'),'utf8')+'\nglobalThis.mod=RegisterModule;',context);
+  const mod=context.mod;mod.validateLive=()=>{};
+  node('field-email').value='reservado@example.org';
+  const pending=mod.checkEmailAvailability('reservado@example.org');requests.shift()({exists:true,contact:null});await pending;
+  assert.equal(mod.emailExists,true);assert.equal(mod.emailValid,false);assert.match(node('err-email').innerHTML,/no está disponible/);
+  node('field-email').value='anterior@example.org';const old=mod.checkEmailAvailability('anterior@example.org');
+  node('field-email').value='actual@example.org';const latest=mod.checkEmailAvailability('actual@example.org');
+  requests[1]({exists:true,contact:null});await latest;requests[0]({exists:false});await old;
+  assert.equal(mod.emailExists,true);assert.equal(mod.emailValid,false);
+});
+
 test('consolidado resuelve escuelas homónimas por correo y conserva observaciones sin bloquear la carga', async t => {
   const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-consolidated-campus-'));
   const server=await startServer(storage);
@@ -974,12 +1049,14 @@ for (const [file, moduleName, inputId, cardPrefix] of [
     assert.equal(prefs.size, 0);
     assert.equal(mod.isReporterVerified(), false);
     if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled, true);
+    else { assert.equal(element('contact-entry-fields').disabled,true); assert.equal(element('contact-entry-fields').inert,true); }
     mod.onRecomiendaEmailInput('  CBRENES@ITCR.AC.CR ');
     const first = mod.lookupFuncionario(mod.recomiendaEmail);
     pendingResolve({ exists: true, funcionario: { nombre: 'Carlos', email: 'cbrenes@itcr.ac.cr',
       sede_id: 'sede-cartago', departamento_id: 'dep-comp', sede: 'Cartago', dependencia: 'Computación' } });
     await first;
     assert.equal(mod.isReporterVerified(), true);
+    if (inputId !== 'bulk') assert.equal(element('contact-entry-fields').disabled,false);
     assert.equal(element(`${inputId}-recomienda-email`).value, 'cbrenes');
     // Dos asignaciones exigen una elección explícita y las opciones no interpretan HTML.
     const f = mod.funcionarioIdentificado;
@@ -987,17 +1064,20 @@ for (const [file, moduleName, inputId, cardPrefix] of [
       { id: 'dep-centro', nombre: '<img src=x onerror=alert(1)>', origen: 'CONSOLIDADO' }];
     mod.selectedDeptoId = '';
     mod.updateCardDisplay();
+    if (inputId !== 'bulk') assert.equal(element('contact-entry-fields').disabled,true);
     assert.doesNotMatch(element(`${inputId}-reporter-department`).innerHTML, /<img/);
     mod.chooseReporterDepartment();
     assert.equal(dialogCalls.at(-1), inputId === 'bulk' ? 'bulk' : 'register');
     if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled, true);
     mod.selectReporterDepartment('dep-centro');
+    if (inputId !== 'bulk') assert.equal(element('contact-entry-fields').disabled,false);
     assert.equal(mod.selectedDeptoId, 'dep-centro');
     assert.equal(element(`${inputId}-reporter-department`).value, '<img src=x onerror=alert(1)>');
     if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled, false);
     mod.selectReporterDepartment('dep-ajeno');
     assert.equal(mod.selectedDeptoId, '');
     mod.onRecomiendaEmailInput('otra');
+    if (inputId !== 'bulk') assert.equal(element('contact-entry-fields').disabled,true);
     assert.equal(mod.isReporterVerified(), false);
     assert.equal(mod.recomiendaNombre, '');
     assert.equal(element(`${cardPrefix}-display-depto`).textContent, 'Oficina o Departamento');
@@ -2228,7 +2308,7 @@ test('nueva carga con Correo director propone conservar incompletos y confirma e
   assert.match(confirmations[0],/1 registros pendientes/);
 });
 
-test('consolidado histórico conserva faltantes, texto literal, correos TEC y el mismo correo en categorías distintas', async t => {
+test('consolidado histórico conserva faltantes, texto literal y correos TEC con identidades únicas', async t => {
   const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-historico-relaciones-'));
   const server=await startServer(storage);
   t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
@@ -2245,7 +2325,7 @@ test('consolidado histórico conserva faltantes, texto literal, correos TEC y el
       ['Dr','Contacto','SinFicha','Profesor','Física','Universidad Tres','Costa Rica','sin.ficha@example.org','Física','Centro Dos','pendiente.director@itcr.ac.cr','si']
     ]},
     {name:'Resumen Empleadores',headers:employerHeaders,rows:[
-      ['Mr','Ana',attack,'Directora','Servicios','Empresa Uno','Spain','historico.dual@example.org','Centro Dos','cbrenes@itcr.ac.cr','si']
+      ['Mr','Ana',attack,'Directora','Servicios','Empresa Uno','Spain','historico.empleador@example.org','Centro Dos','cbrenes@itcr.ac.cr','si']
     ]}
   ]).toString('base64')};
   const analyze=(await request(server,'/api/bulk/consolidated/analyze','POST',payload,admin.cookies)).json();
@@ -2255,7 +2335,7 @@ test('consolidado histórico conserva faltantes, texto literal, correos TEC y el
   const imported=await request(server,'/api/bulk/consolidated/import','POST',{...payload,includePending:true,analysisHash:analyze.analysisHash},admin.cookies);
   assert.equal(imported.status,200,imported.text);assert.equal(imported.json().importedCount,4);
   const all=(await request(server,'/api/contacts','GET',undefined,admin.cookies)).json().contacts.filter(c=>c.es_consolidado);
-  assert.equal(all.length,4);assert.equal(all.filter(c=>c.email==='historico.dual@example.org').length,2);
+  assert.equal(all.length,4);assert.equal(all.filter(c=>c.email==='historico.dual@example.org').length,1);
   const academic=all.find(c=>c.email==='historico.dual@example.org'&&c.tipo_contacto==='ACADEMICO');
   assert.equal(academic.last_name,attack);assert.equal(academic.job_title,'');assert.equal(academic.subject_area,'');
   assert.equal(academic.country_name,'Spain');assert.equal(academic.escuela_proponente,'Centro Uno');

@@ -60,35 +60,23 @@ function checkDuplicate(candidate, excludeId = null) {
   const candOrg = cleanName(candType === 'ACADEMICO' ? candidate.institution : candidate.company_name);
 
   // 1. Búsqueda exacta por correo electrónico
-  let queryEmail = 'SELECT * FROM contactos WHERE email_normalized = ?';
+  let queryEmail = "SELECT * FROM contactos WHERE TRIM(email) <> '' AND LOWER(TRIM(email)) = ?";
   const paramsEmail = [candEmailNorm];
   if (excludeId) {
     queryEmail += ' AND id != ?';
     paramsEmail.push(excludeId);
   }
-  const emailMatches = db.prepare(queryEmail).all(...paramsEmail);
+  const emailMatches = candEmailNorm ? db.prepare(queryEmail).all(...paramsEmail) : [];
 
   if (emailMatches.length > 0) {
     const matched = emailMatches[0];
-    // Verificar si es del mismo tipo
-    if (matched.tipo_contacto === candType) {
       return {
         status: 'EXACT_MATCH',
         matchType: 'EMAIL_EXACT',
         existingContact: matched,
         similarityScore: 1.0,
-        explanation: `El correo electrónico "${candEmailNorm}" ya se encuentra registrado para este mismo tipo de contacto.`
+        explanation: `El correo electrónico "${candEmailNorm}" ya se encuentra registrado en el sistema. El correo identifica al contacto y no admite otro registro, aunque cambie su tipo, escuela o procedencia.`
       };
-    } else {
-      // Conflicto de doble rol (Académico registrado como Empleador o viceversa)
-      return {
-        status: 'POTENTIAL_DUPLICATE',
-        matchType: 'CROSS_ROLE_CONFLICT',
-        existingContact: matched,
-        similarityScore: 0.95,
-        explanation: `Conflicto de roles cruzados: Este correo ya pertenece a un contacto registrado como "${matched.tipo_contacto}". En QS no se recomienda postular a la misma persona en ambos roles durante el mismo ciclo.`
-      };
-    }
   }
 
   // 2. Obtener todos los contactos del mismo tipo o potenciales para análisis de similitud

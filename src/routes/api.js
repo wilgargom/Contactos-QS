@@ -20,7 +20,7 @@ const { verifyReporter } = require('../services/funcionarioService');
 
 function visibleDuplicate(info, user) {
   if (!info?.existingContact || user.rol === 'ADMIN' || info.existingContact.created_by === user.id) return info;
-  return { ...info, explanation: 'Existe una coincidencia con un contacto registrado. Solicite revisión administrativa.',
+  return { ...info, explanation: info.matchType === 'EMAIL_EXACT' ? 'El correo ya está registrado en el sistema y no admite otro registro.' : 'Existe una coincidencia con un contacto registrado. Solicite revisión administrativa.',
     existingContact: { first_name: 'Registro', last_name: 'existente', institution: 'Datos reservados', tipo_contacto: info.existingContact.tipo_contacto } };
 }
 
@@ -252,7 +252,7 @@ function handleApi(req, res, pathname, query, body, user) {
     const existing = db.prepare(`
       SELECT id, first_name, last_name, email, institution, company_name, tipo_contacto, created_by, created_by_name, created_at, es_consolidado, reportante_funcionario_id
       FROM contactos
-      WHERE email_normalized = ?
+      WHERE TRIM(email) <> '' AND LOWER(TRIM(email)) = ?
       LIMIT 1
     `).get(rawEmail);
 
@@ -641,6 +641,7 @@ function handleApi(req, res, pathname, query, body, user) {
       if (emailNorm) {
         if (inBatchEmails.has(emailNorm)) {
           rowStatus = 'DUPLICADO_EXACTO';
+          duplicadosExactos++;
           errorDetails.push({
             row: rowNum,
             column: 'Email',

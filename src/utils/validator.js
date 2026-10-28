@@ -127,7 +127,7 @@ const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-
 
 // Lista de dominios institucionales prohibidos como pares externos
 const SELF_NOMINATION_DOMAINS = ['itcr.ac.cr', 'tec.ac.cr'];
-const SELF_NOMINATION_KEYWORDS = ['tecnologico de costa rica', 'instituto tecnologico de costa rica', 'tec costa rica', 'itcr'];
+const { isTecOrganization, message: organizationMessage } = require('../../public/js/organizationPolicy');
 
 /**
  * Valida un contacto de manera individual y devuelve { isValid, errors, warnings, sanitized }
@@ -266,11 +266,9 @@ function validateContact(data, tipo) {
       errors.institution = 'La institución universitaria o centro de investigación es obligatoria.';
     } else if (inst.length > 150) {
       errors.institution = 'La institución no debe superar 150 caracteres.';
+    } else if (isTecOrganization(inst)) {
+      errors.institution = organizationMessage;
     } else {
-      const cleanInst = inst.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      if (SELF_NOMINATION_KEYWORDS.some(k => cleanInst.includes(k))) {
-        warnings.institution = 'Nota institucional: Se recomienda indicar una universidad o centro externo para pares de reputación académica en QS.';
-      }
       sanitized.institution = inst;
     }
 
@@ -305,6 +303,8 @@ function validateContact(data, tipo) {
       errors.company_name = 'El nombre de la empresa o institución empleadora es obligatorio.';
     } else if (company.length > 150) {
       errors.company_name = 'El nombre de la empresa no debe superar 150 caracteres.';
+    } else if (isTecOrganization(company)) {
+      errors.company_name = organizationMessage;
     } else {
       sanitized.company_name = company;
     }

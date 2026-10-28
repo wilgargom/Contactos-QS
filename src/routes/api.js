@@ -623,7 +623,7 @@ function handleApi(req, res, pathname, query, body, user) {
       if (!validation.isValid) {
         rowStatus = 'ERROR';
         for (const [field, msg] of Object.entries(validation.errors)) {
-          const colName = Object.keys(row).find(k => k.toLowerCase().includes(field.toLowerCase())) || field;
+          const colName = Object.keys(row).find(k => k.toLowerCase().replace(/[ _]/g, '').includes(field.toLowerCase().replace(/[ _]/g, ''))) || field;
           errorDetails.push({
             row: rowNum,
             column: colName,

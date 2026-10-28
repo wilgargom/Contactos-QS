@@ -51,6 +51,10 @@ test('instituciones TEC se bloquean en registro, vista previa y confirmación ma
     const consolidated={fileName:'internos.xlsx',includePending:true,fileBase64:generateMultiSheetXlsx([{name:tipo==='ACADEMICO'?'Académicos':'Empleadores',headers:[...headers,'Escuela Proponente'],rows:[[...values,'Escuela de Ingeniería en Computación']]}]).toString('base64')};
     const conso=(await request(server,'/api/bulk/consolidated/analyze','POST',consolidated,admin.cookies)).json();assert.equal(conso.summary.conErrores,1);assert.equal(conso.summary.correctos,0);
     assert.equal((await request(server,'/api/bulk/consolidated/import','POST',consolidated,admin.cookies)).status,400);
+    const mixedValues=values.slice();mixedValues[5]='Organización Externa';
+    const mixed={fileName:'columnas-mixtas.xlsx',fileBase64:generateMultiSheetXlsx([{name:tipo==='ACADEMICO'?'Académicos':'Empleadores',headers:[...headers,tipo==='ACADEMICO'?'Company Name':'Institution','Escuela Proponente'],
+      rows:[[...mixedValues,'ITCR','Escuela de Ingeniería en Computación']]}]).toString('base64')};
+    assert.equal((await request(server,'/api/bulk/consolidated/analyze','POST',mixed,admin.cookies)).json().summary.conErrores,1);
     data[field]='Organización Externa '+tipo;assert.equal((await request(server,'/api/contacts','POST',data,guest.cookies)).status,201);
   }
 });

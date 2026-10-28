@@ -107,8 +107,7 @@ function extractRows(buffer) {
       const invalidFields = Object.keys(validation.errors).filter(k => k === 'email' && !missing(data.email) && !/@(?:itcr|tec)\.ac\.cr$/i.test(data.email));
       const blockers = invalidFields.map(k => validation.errors[k]);
       const orgPolicy = require('../../public/js/organizationPolicy');
-      const organizationField = type === 'ACADEMICO' ? 'institution' : 'company_name';
-      if (orgPolicy.isTecOrganization(data[organizationField])) blockers.push(orgPolicy.message);
+      if ([data.institution, data.company_name].some(orgPolicy.isTecOrganization)) blockers.push(orgPolicy.message);
       const director = mapping.director_email ? resolveDirector(original.director_email) : null;
       const review = Object.entries(validation.errors).map(([field, message]) => missing(data[fieldSource[field] || field])
         ? `${aliases[fieldSource[field] || field]?.[0] || field}: sin dato, se conserva vacío.`

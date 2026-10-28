@@ -1122,6 +1122,9 @@ const RegisterModule = {
     const el = document.getElementById(fieldId);
     if (!el) return;
     const val = el.value;
+    if (['field-institution', 'field-company_name'].includes(fieldId) && typeof TecOrganizationPolicy !== 'undefined' && TecOrganizationPolicy.isTecOrganization(val)) {
+      this.touchedFields[fieldId] = true;
+    }
     const errId = 'err-' + fieldId.replace('field-', '').replace('reg-', '');
     const errEl = document.getElementById(errId);
     if (!errEl) return;
@@ -1615,13 +1618,12 @@ const RegisterModule = {
     if (isAcademic) {
       checkField('field-job_title', 'err-job_title', data.job_title.length >= 2, 'El puesto o cargo formal es obligatorio (mínimo 2 caracteres).');
       checkField('field-department_unit', 'err-department_unit', data.department_unit.length >= 2, 'La facultad, departamento o unidad es obligatoria (mínimo 2 caracteres).');
-      const isTecInst = data.institution.toLowerCase().includes('tecnologico de costa rica') || data.institution.toLowerCase() === 'tec';
+      const isTecInst = typeof TecOrganizationPolicy !== 'undefined' && TecOrganizationPolicy.isTecOrganization(data.institution);
       checkField(
         'field-institution',
         'err-institution',
-        data.institution.length >= 2,
-        'La institución universitaria o centro externo es obligatoria (mínimo 2 caracteres).',
-        isTecInst ? 'Nota: Se recomienda indicar una universidad externa para pares académicos QS.' : ''
+        data.institution.length >= 2 && !isTecInst,
+        isTecInst ? TecOrganizationPolicy.message : 'La institución universitaria o centro externo es obligatoria (mínimo 2 caracteres).'
       );
 
       const isCustomSubj = this.isCustomSubject || document.getElementById('field-subject_area')?.value === '__OTRA__';
@@ -1635,7 +1637,9 @@ const RegisterModule = {
     } else {
       checkField('field-position', 'err-position', data.position.length >= 2, 'El cargo o posición en la empresa es obligatorio (mínimo 2 caracteres).');
       checkField('field-industry', 'err-industry', data.industry.length > 0, 'Debe seleccionar el sector empresarial o industria.');
-      checkField('field-company_name', 'err-company_name', data.company_name.length >= 2, 'La razón social o nombre de la empresa es obligatorio (mínimo 2 caracteres).');
+      const isTecCompany = typeof TecOrganizationPolicy !== 'undefined' && TecOrganizationPolicy.isTecOrganization(data.company_name);
+      checkField('field-company_name', 'err-company_name', data.company_name.length >= 2 && !isTecCompany,
+        isTecCompany ? TecOrganizationPolicy.message : 'La razón social o nombre de la empresa es obligatorio (mínimo 2 caracteres).');
     }
 
     if (data.phone.length > 0) {

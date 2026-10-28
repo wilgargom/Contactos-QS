@@ -14,6 +14,62 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('institución externa obligatoria reconoce variantes TEC e ITCR sin bloquear palabras que solo contienen tec', () => {
+  const policy=require(path.join(appRoot,'public/js/organizationPolicy'));
+  const {validateContact}=require(path.join(appRoot,'src/utils/validator'));
+  const data={title:'Dr',first_name:'Persona',last_name:'Externa',email:'externa@example.org',country_name:'Costa Rica',
+    job_title:'Profesor',department_unit:'Física',subject_area:'Física',institution:'Universidad Externa',position:'Gerente',industry:'Servicios',company_name:'Empresa Externa'};
+  const blocked=['Tecnologico de Costa Rica','Instituto Tecnológico de Costa Rica','Tecnológico de Costa Rica',
+    ' TEC ','ITCR','T.E.C.','I.T.C.R.','T-E-C / Cartago','I T C R','ＴＥＣ','TEC\u200b',
+    'Escuela de Ingeniería del TEC','InstitutoTecnologicoDeCostaRica','Tecnologico Costa Rica',
+    'Instituto Tecnológico de C.R.','Costa Rica Institute of Technology','Technological Institute of Costa Rica',
+    'FUNDATEC','Fundación Tecnológica de Costa Rica','TEC Digital','Editorial Tecnológica de Costa Rica','www.itcr.ac.cr'];
+  const allowed=['Instituto Tecnológico de Monterrey','Universidad Tecnológica de Panamá','Biblioteca Nacional','Stantec','Biotec S.A.','Tech Data','TecnoSoluciones'];
+  for(const [tipo,field] of [['ACADEMICO','institution'],['EMPLEADOR','company_name']]) {
+    for(const name of blocked) {const result=validateContact({...data,[field]:name},tipo);assert.equal(policy.isTecOrganization(name),true,name);assert.equal(result.isValid,false,name);assert.equal(result.errors[field],policy.message,name);}
+    for(const name of allowed) {assert.equal(policy.isTecOrganization(name),false,name);assert.equal(validateContact({...data,[field]:name},tipo).isValid,true,name);}
+  }
+});
+
+test('instituciones TEC se bloquean en registro, vista previa y confirmación masiva para ambos tipos', async t => {
+  const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-organization-'));
+  const server=await startServer(storage);t.after(async()=>{await server.stop();fs.rmSync(storage,{recursive:true,force:true});});
+  const admin=await request(server,'/api/auth/login','POST',{username:testUsername,password:testPassword});
+  const guest=await request(server,'/api/auth/guest','POST');
+  const {generateMultiSheetXlsx}=require(path.join(appRoot,'src/services/excelService'));
+  for(const [tipo,field] of [['ACADEMICO','institution'],['EMPLEADOR','company_name']]) {
+    const data={tipo_contacto:tipo,title:'Dr',first_name:'Persona '+tipo,last_name:'Prueba',email:tipo.toLowerCase()+'@example.org',country_name:'Costa Rica',
+      job_title:'Profesor',department_unit:'Física',subject_area:'Física',institution:'Universidad Externa',position:'Gerente',industry:'Servicios',company_name:'Empresa Externa',
+      recomienda_email:'cbrenes@itcr.ac.cr',allow_duplicate_override:true,[field]:'Instituto Tecnológico de Costa Rica'};
+    const single=await request(server,'/api/contacts','POST',data,guest.cookies);assert.equal(single.status,400,single.text);assert.match(single.json().validationErrors[field],/Restricción institucional/);
+    const headers=tipo==='ACADEMICO'?['Title','First Name','Last Name','Job Title','Department','Institution','Country or Territory','Email','Subject']:['Title','First Name','Last Name','Position','Industry','Company Name','Country or Territory','Email'];
+    const values=tipo==='ACADEMICO'?['Dr',data.first_name,data.last_name,'Profesor','Física',data.institution,'Costa Rica',data.email,'Física']:['Dr',data.first_name,data.last_name,'Gerente','Servicios',data.company_name,'Costa Rica',data.email];
+    const file={tipo_contacto:tipo,recomienda_email:data.recomienda_email,fileName:'externos.xlsx',fileBase64:generateMultiSheetXlsx([{name:tipo==='ACADEMICO'?'Académicos':'Empleadores',headers,rows:[values]}]).toString('base64')};
+    const preview=await request(server,'/api/bulk/analyze','POST',file,guest.cookies);assert.equal(preview.status,200,preview.text);assert.equal(preview.json().summary.conErrores,1);assert.equal(preview.json().summary.correctos,0);
+    assert.ok(preview.json().errorDetails.some(e=>e.problem.includes('Restricción institucional')&&e.foundValue==='Instituto Tecnológico de Costa Rica'));
+    const mass=await request(server,'/api/bulk/import','POST',{tipo_contacto:tipo,recomienda_email:data.recomienda_email,rowsToImport:[data],allow_duplicate_override:true},guest.cookies);assert.equal(mass.status,422,mass.text);
+    const consolidated={fileName:'internos.xlsx',includePending:true,fileBase64:generateMultiSheetXlsx([{name:tipo==='ACADEMICO'?'Académicos':'Empleadores',headers:[...headers,'Escuela Proponente'],rows:[[...values,'Escuela de Ingeniería en Computación']]}]).toString('base64')};
+    const conso=(await request(server,'/api/bulk/consolidated/analyze','POST',consolidated,admin.cookies)).json();assert.equal(conso.summary.conErrores,1);assert.equal(conso.summary.correctos,0);
+    assert.equal((await request(server,'/api/bulk/consolidated/import','POST',consolidated,admin.cookies)).status,400);
+    data[field]='Organización Externa '+tipo;assert.equal((await request(server,'/api/contacts','POST',data,guest.cookies)).status,201);
+  }
+});
+
+test('formulario bloquea institución y empresa TEC con el mismo mensaje que el servidor', () => {
+  const vm=require('node:vm'),nodes=new Map();
+  const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'válido',textContent:'',innerHTML:'',classList:{add(){},remove(){}}});return nodes.get(id);};
+  const context=vm.createContext({document:{getElementById:node}});
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/organizationPolicy.js'),'utf8')+'\n'+fs.readFileSync(path.join(appRoot,'public/js/register.js'),'utf8')+'\nglobalThis.mod=RegisterModule;',context);
+  const mod=context.mod;mod.isReporterVerified=()=>true;mod.submitting=true;
+  const data={title:'Dr',first_name:'Persona',last_name:'Externa',email:'externa@example.org',country_name:'Costa Rica',phone:'',sede_id:'sede-cartago',departamento_id:'dep-comp',recomienda_nombre:'Persona TEC',recomienda_email:'cbrenes@itcr.ac.cr',
+    job_title:'Profesor',department_unit:'Física',subject_area:'Física',institution:'Universidad Externa',position:'Gerente',industry:'Servicios',company_name:'Empresa Externa'};
+  mod.getFormData=()=>data;
+  for(const [tipo,field]of[['ACADEMICO','institution'],['EMPLEADOR','company_name']]) {
+    mod.currentType=tipo;data[field]='I.T.C.R.';assert.equal(mod.validateLive(),false);assert.equal(node('btn-save').disabled,true);assert.match(node('err-'+field).innerHTML,/Restricción institucional/);
+    data[field]='Organización Externa';assert.equal(mod.validateLive(),true);
+  }
+});
+
 test('correo único global bloquea consolidado previo, otras categorías, confirmaciones y carreras sin borrar históricos', async t => {
   const storage=fs.mkdtempSync(path.join(os.tmpdir(),'qs-email-identity-'));
   let server=await startServer(storage);

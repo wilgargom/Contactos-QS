@@ -62,6 +62,11 @@ test('registro académico y de empleador muestra búsqueda sobre el catálogo co
   assert.equal((source.match(/<datalist id="country-options">/g) || []).length, 2);
   assert.match(source, /Escriba parte del nombre y seleccione una opción del catálogo/);
   assert.match(source, /resolveCountryFromCatalog/);
+  assert.equal((source.match(/autocomplete="new-password"/g) || []).length, 2);
+  assert.equal((source.match(/name="qs-choice-249"/g) || []).length, 2);
+  assert.equal((source.match(/data-lpignore="true" data-1p-ignore="true"/g) || []).length, 2);
+  assert.match(source, /onCountryFocus/);
+  assert.match(source, /input\.readOnly = true/);
 });
 
 test('institución externa obligatoria reconoce variantes TEC e ITCR sin bloquear palabras que solo contienen tec', () => {

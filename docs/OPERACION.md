@@ -81,3 +81,8 @@ La consulta de un correo en el padrón identifica el registro del funcionario; n
 ## Estilos y caché
 
 Para desarrollo ejecute `npm ci` y `npm run build:css` después de cambiar las clases de las vistas. El despliegue compila los estilos antes de las pruebas y entrega un CSS estático; el servidor no requiere Tailwind en ejecución. Los recursos locales enlazados desde el documento llevan una huella de contenido y admiten caché. HTML y API mantienen la prevención de caché y la recarga sigue revocando la administración.
+
+
+## Catálogo de países y territorios
+
+El registro individual de contactos académicos y empleadores utiliza las 249 regiones de ISO 3166-1 con nombres en español y orden alfabético, el campo permite escribir para filtrar el catálogo y exige seleccionar un valor reconocido, mientras que la carga masiva acepta nombres equivalentes en español o inglés, códigos ISO de dos letras y abreviaturas comunes como CR, USA y UK, luego guarda el nombre homologado en español.

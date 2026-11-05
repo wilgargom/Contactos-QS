@@ -14,6 +14,35 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('catálogo de países y territorios ISO está completo, ordenado y normaliza nombres de carga', () => {
+  const { REGION_CODES, COUNTRIES, resolveCountry, validateContact } = require(path.join(appRoot, 'src/utils/validator'));
+  assert.equal(REGION_CODES.length, 249);
+  assert.equal(COUNTRIES.length, 249);
+  assert.equal(new Set(COUNTRIES).size, 249);
+  const collator = new Intl.Collator('es', { sensitivity: 'base', usage: 'sort' });
+  assert.deepEqual(COUNTRIES, [...COUNTRIES].sort(collator.compare));
+  for (const country of ['Afganistán', 'Costa Rica', 'España', 'Estados Unidos', 'Anguila', 'Mayotte', 'Zimbabue']) {
+    assert.ok(COUNTRIES.includes(country), country);
+  }
+  assert.equal(resolveCountry('Spain'), 'España');
+  assert.equal(resolveCountry('ES'), 'España');
+  assert.equal(resolveCountry('U.S.A.'), 'Estados Unidos');
+  assert.equal(resolveCountry('costa-rica'), 'Costa Rica');
+  assert.equal(resolveCountry('Atlantis'), null);
+  const base = { tipo_contacto: 'EMPLEADOR', title: 'Mr', first_name: 'País', last_name: 'Prueba',
+    email: 'pais@example.org', position: 'Gerente', industry: 'Servicios', company_name: 'Empresa Externa' };
+  assert.equal(validateContact({ ...base, country_name: 'Japan' }, 'EMPLEADOR').sanitized.country_name, 'Japón');
+  assert.match(validateContact({ ...base, country_name: 'Atlantis' }, 'EMPLEADOR').errors.country, /válido/);
+});
+
+test('registro académico y de empleador muestra búsqueda sobre el catálogo completo de países', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'public/js/register.js'), 'utf8');
+  assert.equal((source.match(/list="country-options"/g) || []).length, 2);
+  assert.equal((source.match(/<datalist id="country-options">/g) || []).length, 2);
+  assert.match(source, /Escriba parte del nombre y seleccione una opción del catálogo/);
+  assert.match(source, /resolveCountryFromCatalog/);
+});
+
 test('institución externa obligatoria reconoce variantes TEC e ITCR sin bloquear palabras que solo contienen tec', () => {
   const policy=require(path.join(appRoot,'public/js/organizationPolicy'));
   const {validateContact}=require(path.join(appRoot,'src/utils/validator'));

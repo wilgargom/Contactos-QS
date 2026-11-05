@@ -866,6 +866,12 @@ const RegisterModule = {
     return (this.catalogs?.paises || []).find(country => this.normalizeCountryKey(country) === key) || '';
   },
 
+  onCountryFocus() {
+    const input = document.getElementById('field-country_name');
+    if (!input) return;
+    input.readOnly = false;
+  },
+
   onCountryInput() {
     this.onFieldInput('field-country_name');
   },
@@ -875,6 +881,7 @@ const RegisterModule = {
     if (!input) return;
     const resolved = this.resolveCountryFromCatalog(input.value);
     if (resolved) input.value = resolved;
+    input.readOnly = true;
     this.touchedFields['field-country_name'] = true;
     this.captureDraft();
     this.validateLive();
@@ -919,7 +926,7 @@ const RegisterModule = {
     const industriesOptions = (this.catalogs?.industrias_qs || []).map(i => `<option value="${this.escapeReporterText(i)}">${this.escapeReporterText(i)}</option>`).join('');
 
     return `
-      <form id="contact-form" onsubmit="event.preventDefault(); RegisterModule.handleSubmit();" novalidate class="mt-4 pt-4 border-t border-slate-100">
+      <form id="contact-form" onsubmit="event.preventDefault(); RegisterModule.handleSubmit();" autocomplete="off" data-form-type="other" novalidate class="mt-4 pt-4 border-t border-slate-100">
         <div class="mb-5 flex items-center justify-between">
           <span class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
             <span class="w-5 h-5 rounded-full bg-blue-900 text-white flex items-center justify-center text-[11px] font-bold">2</span>
@@ -1065,9 +1072,12 @@ const RegisterModule = {
                 País o territorio <span class="req">*</span>
               </label>
               <input type="search" class="form-control text-sm bg-white" id="field-country_name"
-                     list="country-options" placeholder="Escriba para buscar un país o territorio..."
-                     autocomplete="off" spellcheck="false" required
-                     aria-describedby="country-search-help err-country_name"
+                     name="qs-choice-249" list="country-options"
+                     placeholder="Escriba para buscar un país o territorio..."
+                     autocomplete="new-password" spellcheck="false" autocorrect="off" autocapitalize="none"
+                     data-lpignore="true" data-1p-ignore="true" data-form-type="other"
+                     aria-autocomplete="list" aria-describedby="country-search-help err-country_name"
+                     readonly required onfocus="RegisterModule.onCountryFocus()"
                      oninput="RegisterModule.onCountryInput()" onblur="RegisterModule.onCountryBlur()">
               <datalist id="country-options">${countriesOptions}</datalist>
               <p id="country-search-help" class="text-[11px] text-slate-500 mt-1">Escriba parte del nombre y seleccione una opción del catálogo.</p>
@@ -1120,9 +1130,12 @@ const RegisterModule = {
                 País o territorio <span class="req">*</span>
               </label>
               <input type="search" class="form-control text-sm bg-white" id="field-country_name"
-                     list="country-options" placeholder="Escriba para buscar un país o territorio..."
-                     autocomplete="off" spellcheck="false" required
-                     aria-describedby="country-search-help err-country_name"
+                     name="qs-choice-249" list="country-options"
+                     placeholder="Escriba para buscar un país o territorio..."
+                     autocomplete="new-password" spellcheck="false" autocorrect="off" autocapitalize="none"
+                     data-lpignore="true" data-1p-ignore="true" data-form-type="other"
+                     aria-autocomplete="list" aria-describedby="country-search-help err-country_name"
+                     readonly required onfocus="RegisterModule.onCountryFocus()"
                      oninput="RegisterModule.onCountryInput()" onblur="RegisterModule.onCountryBlur()">
               <datalist id="country-options">${countriesOptions}</datalist>
               <p id="country-search-help" class="text-[11px] text-slate-500 mt-1">Escriba parte del nombre y seleccione una opción del catálogo.</p>

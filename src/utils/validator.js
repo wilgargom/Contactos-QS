@@ -57,6 +57,23 @@ for (const [alias, code] of Object.entries(COUNTRY_ALIAS_CODES)) {
   COUNTRY_NAME_MAP.set(normalizeCountryKey(alias), COUNTRY_BY_CODE.get(code));
 }
 
+const COUNTRY_VARIANTS_BY_CANONICAL = new Map();
+for (const country of COUNTRY_ENTRIES) {
+  COUNTRY_VARIANTS_BY_CANONICAL.set(country.name, new Set([country.name, country.englishName, country.code]));
+}
+for (const [alias, code] of Object.entries(COUNTRY_ALIAS_CODES)) {
+  COUNTRY_VARIANTS_BY_CANONICAL.get(COUNTRY_BY_CODE.get(code))?.add(alias);
+}
+
+function countryVariants(value) {
+  const canonical = resolveCountry(value);
+  if (!canonical) {
+    const original = String(value || '').trim();
+    return original ? [original] : [];
+  }
+  return [...(COUNTRY_VARIANTS_BY_CANONICAL.get(canonical) || new Set([canonical]))];
+}
+
 // Tratamientos / Títulos habituales
 const TITLES = [
   'Dr', 'Dra', 'Prof', 'Miss', 'Mr', 'Mrs', 'Ms', 'Ing', 'Lic', 'MSc', 'PhD'
@@ -334,6 +351,7 @@ module.exports = {
   COUNTRIES,
   COUNTRY_SYNONYMS,
   normalizeCountryKey,
+  countryVariants,
   TITLES,
   QS_SUBJECTS,
   QS_INDUSTRIES,

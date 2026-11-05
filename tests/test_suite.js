@@ -15,7 +15,7 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
 test('catálogo de países y territorios ISO está completo, ordenado y normaliza nombres de carga', () => {
-  const { REGION_CODES, COUNTRIES, resolveCountry, validateContact } = require(path.join(appRoot, 'src/utils/validator'));
+  const { REGION_CODES, COUNTRIES, resolveCountry, countryVariants, validateContact } = require(path.join(appRoot, 'src/utils/validator'));
   assert.equal(REGION_CODES.length, 249);
   assert.equal(COUNTRIES.length, 249);
   assert.equal(new Set(COUNTRIES).size, 249);
@@ -29,10 +29,31 @@ test('catálogo de países y territorios ISO está completo, ordenado y normaliz
   assert.equal(resolveCountry('U.S.A.'), 'Estados Unidos');
   assert.equal(resolveCountry('costa-rica'), 'Costa Rica');
   assert.equal(resolveCountry('Atlantis'), null);
+  assert.ok(countryVariants('Estados Unidos').includes('United States'));
+  assert.ok(countryVariants('Spain').includes('España'));
   const base = { tipo_contacto: 'EMPLEADOR', title: 'Mr', first_name: 'País', last_name: 'Prueba',
     email: 'pais@example.org', position: 'Gerente', industry: 'Servicios', company_name: 'Empresa Externa' };
   assert.equal(validateContact({ ...base, country_name: 'Japan' }, 'EMPLEADOR').sanitized.country_name, 'Japón');
   assert.match(validateContact({ ...base, country_name: 'Atlantis' }, 'EMPLEADOR').errors.country, /válido/);
+});
+
+test('filtro de país conserva contactos históricos guardados en inglés', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-country-filter-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  db.prepare(`INSERT INTO contactos
+    (id,tipo_contacto,title,first_name,last_name,email,email_normalized,country_name,estado,metodo_ingreso,created_by,created_at)
+    VALUES (?, 'EMPLEADOR', 'Mr', 'Histórico', 'País', ?, ?, 'United States', 'NUEVO', 'CONSOLIDADO', 'test', ?)`)
+    .run('country-historical', 'country.historical@example.org', 'country.historical@example.org', new Date().toISOString());
+  db.close();
+  for (const filter of ['Estados%20Unidos', 'United%20States', 'US']) {
+    const result = await request(server, '/api/contacts?country_name=' + filter, 'GET', undefined, admin.cookies);
+    assert.equal(result.status, 200, result.text);
+    assert.ok(result.json().contacts.some(contact => contact.id === 'country-historical'));
+  }
 });
 
 test('registro académico y de empleador muestra búsqueda sobre el catálogo completo de países', () => {

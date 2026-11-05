@@ -116,7 +116,7 @@
           <div class="sidebar-item" data-tooltip="Mis contactos por funcionario" id="nav-item-personal">
             <button onclick="App.navigate('personal')" id="nav-btn-personal" class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100">
               <i class="fa-solid fa-user-check w-5 text-center text-slate-400"></i>
-              <span class="sidebar-text truncate">Mis contactos TEC</span>
+              <span class="sidebar-text truncate">Mis contactos</span>
             </button>
           </div>
 
@@ -135,6 +135,13 @@
                     class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors group">
               <i class="fa-solid fa-chart-pie w-5 text-center text-slate-400 group-hover:text-blue-800 text-base"></i>
               <span class="sidebar-text truncate">Tablero / Drive</span>
+            </button>
+          </div>
+
+          <div class="sidebar-item" data-tooltip="Acerca de la aplicación" id="nav-item-about">
+            <button onclick="App.navigate('about')" id="nav-btn-about" class="sidebar-link w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100">
+              <i class="fa-solid fa-circle-info w-5 text-center text-slate-400"></i>
+              <span class="sidebar-text truncate">Acerca de la aplicación</span>
             </button>
           </div>
 
@@ -200,6 +207,7 @@
         <section id="personal-view" style="display: none;"></section>
         <section id="export-view" style="display: none;"></section>
         <section id="admin-view" style="display: none;"></section>
+        <section id="about-view" style="display: none;"></section>
 
       </div>
     </main>
@@ -252,6 +260,7 @@
   <script src="js/personalDirectory.js"></script>
   <script src="js/exportView.js"></script>
   <script src="js/adminView.js"></script>
+  <script src="js/aboutView.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const { getDb, runTransaction } = require('../database/db');
 const { normalizeEmail, normalizeText } = require('../utils/validator');
+const { normalizeOrganization, isValidOrganization, validReporterEmail } = require('../utils/reporterOrganizations');
 
 function resolveSedeId(sedeText) {
   if (!sedeText) return 'sede-cartago';
@@ -17,6 +18,7 @@ const { enrich } = require('./funcionarioScope');
 
 function departmentPlan(data) {
   const db = getDb();
+  const organization = normalizeOrganization(data.organizacion);
   const sedes = [...new Set(String(data.sede || '').split(';').filter(s => s.trim()).map(resolveSedeId))];
   const selections = data.sedes_dependencias || {};
   if (typeof selections !== 'object' || Array.isArray(selections)) throw new Error('Revise las sedes seleccionadas por dependencia.');
@@ -25,7 +27,7 @@ function departmentPlan(data) {
   const catalog = db.prepare('SELECT nombre, sede_id FROM departamentos WHERE activo = 1').all();
   const candidates = name => [...new Set(catalog.filter(d => departmentKey(d.nombre) === departmentKey(name) && sedes.includes(d.sede_id)).map(d => d.sede_id))];
   const previousPrimary = typeof data.email === 'string' ? db.prepare(`SELECT d.nombre, COALESCE(d.sede_id, f.sede_id) AS sede_id FROM funcionarios f
-    JOIN departamentos d ON d.id = f.departamento_id AND d.activo = 1 WHERE f.email_normalized = ?`).get(normalizeEmail(data.email)) : null;
+    JOIN departamentos d ON d.id = f.departamento_id AND d.activo = 1 WHERE f.organizacion = ? AND f.email_normalized = ?`).get(organization, normalizeEmail(data.email)) : null;
   // Principal explícita vigente; para una ficha nueva, primera dependencia del padrón.
   const keepPrincipal = previousPrimary && names.some(name => departmentKey(name) === departmentKey(previousPrimary.nombre)) && sedes.includes(previousPrimary.sede_id);
   const principal = keepPrincipal ? previousPrimary.sede_id : names.length && candidates(names[0]).length === 1 ? candidates(names[0])[0] : null;
@@ -43,10 +45,11 @@ function departmentPlan(data) {
 /**
  * Busca un funcionario por su correo institucional normalizado
  */
-function getFuncionarioByEmail(email) {
+function getFuncionarioByEmail(email, organization = 'TEC') {
   if (!email) return null;
   const norm = normalizeEmail(email);
-  if (!norm) return null;
+  const org = normalizeOrganization(organization, null);
+  if (!norm || !org) return null;
 
   const db = getDb();
   let f = db.prepare(`
@@ -54,8 +57,8 @@ function getFuncionarioByEmail(email) {
     FROM funcionarios f
     LEFT JOIN sedes s ON f.sede_id = s.id
     LEFT JOIN departamentos d ON f.departamento_id = d.id
-    WHERE f.email_normalized = ? AND f.activo = 1
-  `).get(norm);
+    WHERE f.organizacion = ? AND f.email_normalized = ? AND f.activo = 1
+  `).get(org, norm);
 
   if (!f) return null;
 
@@ -65,19 +68,21 @@ function getFuncionarioByEmail(email) {
 /**
  * Busca funcionarios que coincidan con un término en nombre, email o dependencia
  */
-function searchFuncionarios(term = '', limit = 10) {
+function searchFuncionarios(term = '', organization = 'TEC', limit = 10) {
   const db = getDb();
+  const org = normalizeOrganization(organization, null);
+  if (!org) return [];
   const clean = (term || '').trim();
   if (!clean) {
-    return db.prepare('SELECT * FROM funcionarios WHERE activo = 1 ORDER BY nombre ASC LIMIT ?').all(limit);
+    return db.prepare('SELECT * FROM funcionarios WHERE organizacion = ? AND activo = 1 ORDER BY nombre ASC LIMIT ?').all(org, limit).map(enrich);
   }
   const likeTerm = `%${clean}%`;
   return db.prepare(`
     SELECT * FROM funcionarios
-    WHERE activo = 1 AND (nombre LIKE ? OR email LIKE ? OR dependencia LIKE ?)
-    ORDER BY nombre ASC
+    WHERE organizacion = ? AND activo = 1 AND (nombre LIKE ? OR email LIKE ? OR dependencia LIKE ?)
+    ORDER BY nombre ASC, email_normalized ASC
     LIMIT ?
-  `).all(likeTerm, likeTerm, likeTerm, limit);
+  `).all(org, likeTerm, likeTerm, likeTerm, limit).map(enrich);
 }
 
 /**
@@ -87,6 +92,8 @@ function upsertFuncionario(data, user = null, includeDetails = true) {
   const db = getDb();
   if (!db.isTransaction) return runTransaction(() => upsertFuncionario(data, user, includeDetails));
   const { nombre, email, dependencia, sede, sede_id, departamento_id, cargo, puesto } = data;
+  if (data.organizacion !== undefined && !isValidOrganization(data.organizacion)) throw new Error('Seleccione una organización válida para el padrón.');
+  const organization = normalizeOrganization(data.organizacion);
   if (typeof nombre !== 'string' || typeof email !== 'string' || !nombre.trim() || !email.trim()) {
     throw new Error('El nombre y correo del funcionario son obligatorios.');
   }
@@ -102,21 +109,21 @@ function upsertFuncionario(data, user = null, includeDetails = true) {
   const cleanEmail = email.trim().toLowerCase();
   const emailNorm = normalizeEmail(cleanEmail);
 
-  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(emailNorm)) {
-    throw new Error('El correo del funcionario debe pertenecer al dominio institucional del TEC (@itcr.ac.cr o @tec.ac.cr).');
+  if (!validReporterEmail(emailNorm, organization)) {
+    throw new Error(organization === 'TEC' ? 'El correo del funcionario debe pertenecer al dominio institucional del TEC (@itcr.ac.cr o @tec.ac.cr).' : 'Ingrese un correo electrónico completo y válido.');
   }
 
   const cleanDependencia = normalizeText(dependencia) || 'Dependencia no especificada';
-  const cleanSede = normalizeText(sede) || 'Campus Central Cartago';
+  const cleanSede = organization === 'TEC' ? (normalizeText(sede) || 'Campus Central Cartago') : 'Campus Tecnológico Central Cartago';
 
-  const existing = db.prepare('SELECT * FROM funcionarios WHERE email_normalized = ?').get(emailNorm);
+  const existing = db.prepare('SELECT * FROM funcionarios WHERE organizacion = ? AND email_normalized = ?').get(organization, emailNorm);
   const now = new Date().toISOString();
 
   // Resolver IDs de sede y departamento
-  let finalSedeId = sede_id || resolveSedeId(cleanSede.split(';')[0]);
+  let finalSedeId = organization === 'TEC' ? (sede_id || resolveSedeId(cleanSede.split(';')[0])) : 'sede-cartago';
   const names = splitDependencies(cleanDependencia);
   if (!names.length || names.length > 30 || names.some(n => n.length < 2 || n.length > 200)) throw new Error('Revise las dependencias separadas por punto y coma.');
-  const plan = departmentPlan({ email: cleanEmail, dependencia: cleanDependencia, sede: cleanSede, sedes_dependencias: data.sedes_dependencias });
+  const plan = departmentPlan({ email: cleanEmail, organizacion: organization, dependencia: cleanDependencia, sede: cleanSede, sedes_dependencias: data.sedes_dependencias });
   const pending = plan.filter(p => !p.sedeId);
   if (pending.length) throw Object.assign(new Error('Seleccione la sede de las dependencias indicadas antes de importar. No se guardó ninguna fila.'), {
     code: 'STAFF_DEPARTMENT_REVIEW', conflicts: pending.map(p => ({ email: emailNorm, nombre: cleanNombre, dependencia: p.name, key: p.key, opciones: p.opciones })) });
@@ -161,9 +168,9 @@ function upsertFuncionario(data, user = null, includeDetails = true) {
     const id = crypto.randomUUID();
     db.prepare(`
       INSERT INTO funcionarios (
-        id, nombre, email, email_normalized, dependencia, sede, sede_id, departamento_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, cleanNombre, cleanEmail, emailNorm, cleanDependencia, cleanSede, finalSedeId, finalDeptoId, now, now);
+        id, nombre, email, email_normalized, organizacion, dependencia, sede, sede_id, departamento_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, cleanNombre, cleanEmail, emailNorm, organization, cleanDependencia, cleanSede, finalSedeId, finalDeptoId, now, now);
 
     sync(id);
     if (!includeDetails) return { isNew: true };
@@ -181,11 +188,13 @@ function upsertFuncionario(data, user = null, includeDetails = true) {
 /**
  * Importación masiva de funcionarios desde archivo Excel/CSV
  */
-function bulkImportFuncionarios(rows, user = null) {
+function bulkImportFuncionarios(rows, user = null, organization = 'TEC') {
   if (!rows || !Array.isArray(rows) || rows.length === 0) {
     return { success: false, message: 'No se encontraron filas para importar.' };
   }
 
+  if (!isValidOrganization(organization)) throw new Error('Seleccione la organización del padrón.');
+  const org = normalizeOrganization(organization);
   if (rows.length > 10000) throw new Error('El padrón admite hasta 10000 filas por carga.');
   return runTransaction(() => {
     let imported = 0;
@@ -195,6 +204,7 @@ function bulkImportFuncionarios(rows, user = null) {
     for (const row of rows) {
       if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('El padrón contiene una fila inválida.');
       const data = {
+        organizacion: org,
         nombre: row.nombre || row['Nombre de funcionario'] || row['Nombre'] || row['Funcionario'],
         email: row.email || row['Correo electrónico'] || row['Correo'] || row['Email'],
         dependencia: row.dependencia || row['Dependencia'] || row['Departamento'] || row['Escuela'],
@@ -226,18 +236,21 @@ function bulkImportFuncionarios(rows, user = null) {
   });
 }
 
-function listFuncionarios() {
+function listFuncionarios(organization = 'TEC') {
   const db = getDb();
-  return db.prepare('SELECT * FROM funcionarios WHERE activo = 1 ORDER BY nombre ASC').all();
+  const org = normalizeOrganization(organization, null);
+  if (!org) return [];
+  return db.prepare('SELECT * FROM funcionarios WHERE organizacion = ? AND activo = 1 ORDER BY nombre ASC').all(org).map(enrich);
 }
 
 // Validación común de la persona reportante para registro individual y carga de contactos.
 // Comprueba su existencia en el padrón; no sustituye una autenticación del buzón.
-function verifyReporter(email) {
+function verifyReporter(email, organization = 'TEC') {
   if (typeof email !== 'string') return null;
+  const org = normalizeOrganization(organization, null);
   const normalized = email.trim().toLowerCase();
-  if (!/^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(normalized)) return null;
-  const funcionario = getFuncionarioByEmail(normalized);
+  if (!org || !validReporterEmail(normalized, org)) return null;
+  const funcionario = getFuncionarioByEmail(normalized, org);
   if (!funcionario || !funcionario.nombre?.trim() || !funcionario.sede_id || !funcionario.departamento_id) return null;
   return funcionario;
 }

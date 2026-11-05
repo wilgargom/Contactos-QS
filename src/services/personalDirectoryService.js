@@ -18,8 +18,8 @@ function list(reporter, query = {}) {
   const school = ids.length ? 'c.departamento_id IN (' + ids.map(() => '?').join(',') + ')' : '0';
   const currentSchool = 'c.es_consolidado = 0 AND (' + school + ')';
   // Una asignación del libro habilita esa dependencia; una pertenencia del padrón no exige ser director.
-  const consolidated = 'c.es_consolidado = 1 AND ((' + school + ') OR c.director_funcionario_id = ? OR (c.director_funcionario_id IS NULL AND c.director_email = ?))';
-  const scope = [...ids, f.id, f.email_normalized];
+  const consolidated = "c.es_consolidado = 1 AND ((" + school + ") OR c.director_funcionario_id = ? OR (c.director_funcionario_id IS NULL AND ? = 'TEC' AND c.director_email = ?))";
+  const scope = [...ids, f.id, f.organizacion || 'TEC', f.email_normalized];
   const base = origen === 'actuales' ? own : origen === 'escuela' ? currentSchool : consolidated;
   const args = origen === 'actuales' ? [f.id] : origen === 'escuela' ? [...ids] : [...scope];
   let where = '(' + base + ')';
@@ -38,7 +38,7 @@ function list(reporter, query = {}) {
   const counts = { actuales: db.prepare('SELECT COUNT(*) AS n FROM contactos c WHERE '+own).get(f.id).n,
     escuela: db.prepare('SELECT COUNT(*) AS n FROM contactos c WHERE '+currentSchool).get(...ids).n,
     consolidado: db.prepare('SELECT COUNT(*) AS n FROM contactos c WHERE '+consolidated).get(...scope).n };
-  const directors = db.prepare('SELECT DISTINCT f.id, f.nombre, f.email_normalized AS email FROM contactos c JOIN funcionarios f ON f.id = c.director_funcionario_id OR (c.director_funcionario_id IS NULL AND f.email_normalized = c.director_email) WHERE '+consolidated+' ORDER BY f.nombre, f.email_normalized').all(...scope);
+  const directors = db.prepare("SELECT DISTINCT f.id, f.nombre, f.email_normalized AS email FROM contactos c JOIN funcionarios f ON f.id = c.director_funcionario_id OR (c.director_funcionario_id IS NULL AND f.organizacion = 'TEC' AND f.email_normalized = c.director_email) WHERE "+consolidated+' ORDER BY f.nombre, f.email_normalized').all(...scope);
   const visibleDepartments = db.prepare('SELECT DISTINCT d.id, d.nombre FROM contactos c JOIN departamentos d ON c.departamento_id = d.id WHERE ('+base+') ORDER BY d.nombre').all(...(origen === 'actuales' ? [f.id] : origen === 'escuela' ? ids : scope));
   const facets = new Map();
   for (const d of visibleDepartments) { const canonical = equivalentDepartments(db, d.id)[0] || d; facets.set(canonical.id, { id: canonical.id, nombre: canonical.nombre }); }

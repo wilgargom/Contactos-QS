@@ -125,12 +125,13 @@ CREATE TABLE IF NOT EXISTS auditoria (
   created_at TEXT NOT NULL
 );
 
--- 8. Padrón Oficial de Funcionarios del TEC
+-- 8. Padrones oficiales de personas funcionarias por organización
 CREATE TABLE IF NOT EXISTS funcionarios (
   id TEXT PRIMARY KEY,
   nombre TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-  email_normalized TEXT NOT NULL UNIQUE,
+  email TEXT NOT NULL COLLATE NOCASE,
+  email_normalized TEXT NOT NULL,
+  organizacion TEXT NOT NULL DEFAULT 'TEC' CHECK(organizacion IN ('TEC', 'FUNDATEC', 'DOCINADE')),
   dependencia TEXT NOT NULL,
   sede TEXT NOT NULL,
   sede_id TEXT,
@@ -139,7 +140,8 @@ CREATE TABLE IF NOT EXISTS funcionarios (
   updated_at TEXT NOT NULL,
   FOREIGN KEY (sede_id) REFERENCES sedes(id),
   FOREIGN KEY (departamento_id) REFERENCES departamentos(id)
+  ,UNIQUE (organizacion, email_normalized)
 );
 
-CREATE INDEX IF NOT EXISTS idx_funcionarios_email_norm ON funcionarios(email_normalized);
+CREATE INDEX IF NOT EXISTS idx_funcionarios_email_norm ON funcionarios(organizacion, email_normalized);
 

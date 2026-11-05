@@ -5,6 +5,47 @@ const config = require('../config');
 
 let dbInstance = null;
 
+function migrateFuncionarioOrganizations(db) {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'funcionarios'").get();
+  if (!table) return;
+  const columns = db.prepare('PRAGMA table_info(funcionarios)').all();
+  if (!columns.some(column => column.name === 'organizacion')) {
+    db.exec("ALTER TABLE funcionarios ADD COLUMN organizacion TEXT NOT NULL DEFAULT 'TEC'");
+  }
+  const currentSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'funcionarios'").get().sql || '';
+  if (!/email_normalized\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(currentSql) &&
+      !/email\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(currentSql)) return;
+  db.exec('PRAGMA foreign_keys = OFF;');
+  try {
+    db.exec(`BEGIN IMMEDIATE;
+      DROP TRIGGER IF EXISTS funcionarios_version;
+      DROP INDEX IF EXISTS idx_funcionarios_email_norm;
+      CREATE TABLE funcionarios_new (
+        id TEXT PRIMARY KEY, nombre TEXT NOT NULL, email TEXT NOT NULL COLLATE NOCASE,
+        email_normalized TEXT NOT NULL, organizacion TEXT NOT NULL DEFAULT 'TEC'
+          CHECK(organizacion IN ('TEC', 'FUNDATEC', 'DOCINADE')),
+        dependencia TEXT NOT NULL, sede TEXT NOT NULL, sede_id TEXT, departamento_id TEXT,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        cargo TEXT NOT NULL DEFAULT '', activo INTEGER NOT NULL DEFAULT 1,
+        version INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (sede_id) REFERENCES sedes(id),
+        FOREIGN KEY (departamento_id) REFERENCES departamentos(id),
+        UNIQUE (organizacion, email_normalized)
+      );
+      INSERT INTO funcionarios_new (id,nombre,email,email_normalized,organizacion,dependencia,sede,sede_id,departamento_id,created_at,updated_at,cargo,activo,version)
+        SELECT id,nombre,email,email_normalized,COALESCE(NULLIF(organizacion,''),'TEC'),dependencia,sede,sede_id,departamento_id,created_at,updated_at,
+          COALESCE(cargo,''),COALESCE(activo,1),COALESCE(version,1) FROM funcionarios;
+      DROP TABLE funcionarios;
+      ALTER TABLE funcionarios_new RENAME TO funcionarios;
+      COMMIT;`);
+  } catch (error) {
+    try { db.exec('ROLLBACK;'); } catch (_) {}
+    throw error;
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON;');
+  }
+}
+
 function getDb() {
   if (!dbInstance) {
     dbInstance = new DatabaseSync(config.DB_PATH);
@@ -95,8 +136,9 @@ function getDb() {
         CREATE INDEX IF NOT EXISTS idx_funcionarios_email_norm ON funcionarios(email_normalized);
       `);
     } catch (_) {}
+    migrateFuncionarioOrganizations(dbInstance);
     const funcionarioColumns = dbInstance.prepare('PRAGMA table_info(funcionarios)').all();
-    for (const [name, definition] of [['cargo', "TEXT NOT NULL DEFAULT ''"], ['activo', 'INTEGER NOT NULL DEFAULT 1'], ['version', 'INTEGER NOT NULL DEFAULT 1']]) {
+    for (const [name, definition] of [['organizacion', "TEXT NOT NULL DEFAULT 'TEC'"], ['cargo', "TEXT NOT NULL DEFAULT ''"], ['activo', 'INTEGER NOT NULL DEFAULT 1'], ['version', 'INTEGER NOT NULL DEFAULT 1']]) {
       if (!funcionarioColumns.some(c => c.name === name)) dbInstance.exec('ALTER TABLE funcionarios ADD COLUMN ' + name + ' ' + definition);
     }
     dbInstance.exec(`CREATE TRIGGER IF NOT EXISTS funcionarios_version AFTER UPDATE ON funcionarios
@@ -108,14 +150,19 @@ function getDb() {
         usuario_id TEXT NOT NULL, usuario_nombre TEXT NOT NULL, accion TEXT NOT NULL,
         detalles TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_funcionarios_historial ON funcionarios_historial(funcionario_id, created_at DESC);`);
+    dbInstance.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_funcionarios_org_email ON funcionarios(organizacion, email_normalized);');
     const contactColumns = dbInstance.prepare('PRAGMA table_info(contactos)').all();
     for (const [name, definition] of [['director_email', "TEXT NOT NULL DEFAULT ''"], ['director_funcionario_id', 'TEXT REFERENCES funcionarios(id)'],
-      ['autorizacion_contacto', "TEXT NOT NULL DEFAULT ''"], ['reportante_funcionario_id', 'TEXT REFERENCES funcionarios(id)']]) {
+      ['autorizacion_contacto', "TEXT NOT NULL DEFAULT ''"], ['reportante_funcionario_id', 'TEXT REFERENCES funcionarios(id)'],
+      ['organizacion_reportante', "TEXT NOT NULL DEFAULT 'TEC'"]]) {
       if (!contactColumns.some(c => c.name === name)) dbInstance.exec('ALTER TABLE contactos ADD COLUMN ' + name + ' ' + definition);
     }
     dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_contactos_reportante_origen ON contactos(reportante_funcionario_id, es_consolidado, created_at DESC)");
     if (!contactColumns.some(c => c.name === 'reportante_funcionario_id')) dbInstance.exec("UPDATE contactos SET reportante_funcionario_id = (SELECT f.id FROM funcionarios f WHERE f.email_normalized = LOWER(TRIM(contactos.recomienda_email))) WHERE es_consolidado = 0");
-    dbInstance.exec("CREATE TRIGGER IF NOT EXISTS contactos_reportante AFTER INSERT ON contactos WHEN NEW.es_consolidado = 0 AND NEW.reportante_funcionario_id IS NULL BEGIN UPDATE contactos SET reportante_funcionario_id = (SELECT f.id FROM funcionarios f WHERE f.email_normalized = LOWER(TRIM(NEW.recomienda_email))) WHERE id = NEW.id; END;");
+    dbInstance.exec("DROP TRIGGER IF EXISTS contactos_reportante;");
+    dbInstance.exec("CREATE TRIGGER contactos_reportante AFTER INSERT ON contactos WHEN NEW.es_consolidado = 0 AND NEW.reportante_funcionario_id IS NULL BEGIN UPDATE contactos SET reportante_funcionario_id = (SELECT f.id FROM funcionarios f WHERE f.organizacion = COALESCE(NULLIF(NEW.organizacion_reportante,''), 'TEC') AND f.email_normalized = LOWER(TRIM(NEW.recomienda_email)) LIMIT 1) WHERE id = NEW.id; END;");
+    const batchColumns = dbInstance.prepare('PRAGMA table_info(lotes_carga)').all();
+    if (!batchColumns.some(c => c.name === 'organizacion_reportante')) dbInstance.exec("ALTER TABLE lotes_carga ADD COLUMN organizacion_reportante TEXT NOT NULL DEFAULT 'TEC'");
     dbInstance.exec("CREATE INDEX IF NOT EXISTS idx_contactos_consolidado_departamento ON contactos(es_consolidado, departamento_id, director_funcionario_id)");
     require('../utils/departamentos').initializeMemberships(dbInstance);
   }

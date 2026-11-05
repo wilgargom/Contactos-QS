@@ -17,9 +17,12 @@ const RegisterModule = {
   emailCheckTimeout: null,
   recEmailCheckTimeout: null,
   funcionarioIdentificado: null,
+  reporterOrganization: 'TEC',
+  reporterSearchTimeout: null,
 
   init(catalogs) {
     this.catalogs = catalogs;
+    this.reporterOrganization = 'TEC';
     this.loadDraft();
     this.resetReporter();
     this.render();
@@ -66,12 +69,13 @@ const RegisterModule = {
   },
 
   getRecomiendaPrefix() {
+    if (this.reporterOrganization !== 'TEC') return this.recomiendaEmail;
     return this.recomiendaEmail.includes('@') && this.isInstitutionalEmail(this.recomiendaEmail)
       ? this.recomiendaEmail.split('@')[0] : this.recomiendaEmail;
   },
 
   getSelectedSedeNombre() {
-    return this.isReporterVerified() ? this.funcionarioIdentificado.sede : 'Sede del TEC';
+    return this.isReporterVerified() ? this.funcionarioIdentificado.sede : (this.reporterOrganization === 'TEC' ? 'Sede del TEC' : 'Campus Tecnológico Central Cartago');
   },
 
   reporterDepartments() {
@@ -151,14 +155,15 @@ const RegisterModule = {
           </div>
         </div>
 
-        <!-- 1. Bloque: Datos de la persona del TEC que registra el contacto -->
+        <!-- 1. Bloque: Datos de la persona que registra el contacto -->
         <div class="bg-white border border-slate-200/90 rounded-2xl p-5 sm:p-6 mb-6 shadow-2xs">
+          ${this.renderOrganizationTabs()}
           <div class="mb-4 pb-2 border-b border-slate-100 flex items-center justify-between">
             <h3 class="text-xs sm:text-sm font-bold text-blue-950 uppercase tracking-wider m-0 flex items-center gap-2">
               <span class="w-6 h-6 rounded-md bg-blue-900 text-white flex items-center justify-center text-xs">
                 <i class="fa-solid fa-id-card"></i>
               </span>
-              Datos de la persona del TEC que registra el contacto
+              Datos de la persona de ${this.escapeReporterText(this.reporterOrganization)} que registra el contacto
             </h3>
             <button type="button" 
                     class="btn btn-outline btn-xs text-blue-900 border-blue-200 bg-white hover:bg-blue-50 py-1.5 px-3 text-xs font-semibold flex items-center gap-1.5 rounded-lg shadow-2xs transition-colors shrink-0"
@@ -174,7 +179,7 @@ const RegisterModule = {
             <!-- COLUMNA IZQUIERDA: 1. Correo institucional del TEC * (Largo acortado a 360px y alto 76px) -->
             <div>
               <label class="form-label text-xs sm:text-sm font-bold text-slate-800 mb-2 block" for="reg-recomienda-email">
-                1. Correo institucional del TEC <span class="req text-red-500 font-bold">*</span>
+                1. ${this.reporterOrganization === 'TEC' ? 'Correo institucional del TEC' : 'Correo electrónico completo'} <span class="req text-red-500 font-bold">*</span>
               </label>
               <div class="flex rounded-xl shadow-2xs overflow-hidden border border-slate-300 focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-100 bg-white transition-all h-[76px] w-full max-w-[360px]" id="rec-input-group">
                 <input type="text"
@@ -186,15 +191,16 @@ const RegisterModule = {
                        onblur="RegisterModule.onRecomiendaBlur('reg-recomienda-email')"
                        autocomplete="off"
                        spellcheck="false">
-                <div id="reg-recomienda-domain" class="bg-slate-100 border-l border-slate-300 px-4 sm:px-5 flex items-center justify-center font-mono text-xs sm:text-sm text-slate-700 font-semibold select-none shrink-0 h-full">
-                  itcr.ac.cr
+                <div id="reg-recomienda-domain" ${this.reporterOrganization === 'TEC' ? '' : 'hidden'} class="bg-slate-100 border-l border-slate-300 px-4 sm:px-5 flex items-center justify-center font-mono text-xs sm:text-sm text-slate-700 font-semibold select-none shrink-0 h-full">
+                  @itcr.ac.cr
                 </div>
               </div>
               <div class="error-feedback mt-1.5" id="err-recomienda-email"></div>
               <div id="rec-email-spinner" class="hidden text-xs text-blue-800 font-medium mt-1.5 flex items-center gap-1.5">
                 <i class="fa-solid fa-spinner fa-spin"></i>
-                <span>Consultando padrón del TEC...</span>
+                <span>Consultando padrón de ${this.escapeReporterText(this.reporterOrganization)}...</span>
               </div>
+              ${this.reporterOrganization === 'TEC' ? '' : `<div class="mt-4"><label class="form-label" for="reg-reporter-name-search">O buscar por nombre</label><input id="reg-reporter-name-search" type="search" class="form-control" maxlength="120" autocomplete="off" placeholder="Escriba el nombre de la persona" oninput="RegisterModule.searchFuncionarios(this.value)"><div id="reg-reporter-search-results" class="reporter-search-results" aria-live="polite"></div></div>`}
             </div>
 
             <!-- COLUMNA DERECHA: Tarjeta con ícono verde y datos en 3 filas (Mismo alto 76px) -->
@@ -356,14 +362,16 @@ const RegisterModule = {
   },
 
   isInstitutionalEmail(email) {
-    return typeof email === 'string' && /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(email);
+    if (typeof email !== 'string') return false;
+    const generic = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+    return generic.test(email) && (this.reporterOrganization !== 'TEC' || /@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(email));
   },
 
   isReporterVerified() {
     const f = this.funcionarioIdentificado;
     return Boolean(f && !this.reporterLookupPending && this.isInstitutionalEmail(this.recomiendaEmail) &&
       f.email?.trim().toLowerCase() === this.recomiendaEmail && f.nombre?.trim() &&
-      f.sede_id && f.departamento_id && this.recomiendaNombre === f.nombre);
+      f.sede_id && f.departamento_id && this.recomiendaNombre === f.nombre && (f.organizacion || 'TEC') === this.reporterOrganization);
   },
 
   resetReporter(email = '') {
@@ -384,10 +392,10 @@ const RegisterModule = {
 
   onRecomiendaEmailInput(value) {
     const clean = String(value || '').trim().toLowerCase();
-    const email = clean ? (clean.includes('@') ? clean : `${clean}@itcr.ac.cr`) : '';
+    const email = clean ? (this.reporterOrganization === 'TEC' && !clean.includes('@') ? `${clean}@itcr.ac.cr` : clean) : '';
     this.resetReporter(email);
     if (email && !this.isInstitutionalEmail(email)) {
-      this.reporterValidationError = 'Ingrese un correo institucional válido (@itcr.ac.cr o @tec.ac.cr).';
+      this.reporterValidationError = this.reporterOrganization === 'TEC' ? 'Ingrese un correo institucional válido (@itcr.ac.cr o @tec.ac.cr).' : 'Ingrese el correo electrónico completo.';
     } else if (email) {
       this.reporterLookupPending = true;
       this.recEmailCheckTimeout = setTimeout(() => this.lookupFuncionario(email), 250);
@@ -408,7 +416,7 @@ const RegisterModule = {
     this.reporterValidationError = '';
     this.updateCardDisplay();
     try {
-      const res = await API.get('/api/funcionarios/by-email', { email });
+      const res = await API.get('/api/funcionarios/by-email', { email, organizacion: this.reporterOrganization });
       if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
       const f = res.funcionario;
       if (res.exists && f?.email?.trim().toLowerCase() === email && f.nombre?.trim() &&
@@ -420,7 +428,7 @@ const RegisterModule = {
       } else {
         this.reporterValidationError = res.exists
           ? 'El funcionario tiene datos institucionales incompletos. Revise su registro en el padrón.'
-          : 'Correo no encontrado en el padrón del TEC. Solicite al administrador su incorporación o corrección.';
+          : `Correo no encontrado en el padrón de ${this.reporterOrganization}. Solicite al administrador su incorporación o corrección.`;
       }
     } catch (_) {
       if (version !== this.reporterLookupVersion || email !== this.recomiendaEmail) return;
@@ -437,6 +445,38 @@ const RegisterModule = {
   limpiarFuncionario() {
     this.resetReporter();
     this.updateCardDisplay();
+  },
+
+  renderOrganizationTabs() {
+    return `<div class="reporter-org-tabs" role="tablist" aria-label="Organización de la persona que aporta el contacto">${[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([value,label]) => `<button type="button" role="tab" aria-selected="${this.reporterOrganization === value}" class="reporter-org-tab ${this.reporterOrganization === value ? 'is-active' : ''}" onclick="RegisterModule.changeReporterOrganization('${value}')">${label}</button>`).join('')}</div>`;
+  },
+
+  changeReporterOrganization(organization) {
+    if (!['TEC','FUNDATEC','DOCINADE'].includes(organization) || organization === this.reporterOrganization) return;
+    this.captureDraft(); this.reporterOrganization = organization; this.resetReporter(); this.render();
+  },
+
+  searchFuncionarios(value) {
+    clearTimeout(this.reporterSearchTimeout);
+    const host = document.getElementById('reg-reporter-search-results');
+    const term = String(value || '').trim();
+    if (!host) return;
+    if (term.length < 2) { host.replaceChildren(); return; }
+    host.textContent = 'Buscando en el padrón…';
+    const organization = this.reporterOrganization;
+    this.reporterSearchTimeout = setTimeout(async () => {
+      try {
+        const result = await API.get('/api/funcionarios/search', { q: term, organizacion: organization });
+        if (organization !== this.reporterOrganization || !document.getElementById('reg-reporter-search-results')) return;
+        host.innerHTML = result.funcionarios.length ? result.funcionarios.map(f => `<button type="button" class="reporter-search-option" data-email="${this.escapeReporterText(f.email)}" onclick="RegisterModule.selectSearchedFuncionario(this.dataset.email)"><strong>${this.escapeReporterText(f.nombre)}</strong><span>${this.escapeReporterText(f.email)} · ${this.escapeReporterText(f.dependencia)}</span></button>`).join('') : '<p class="reporter-search-empty">No se encontraron personas en este padrón.</p>';
+      } catch (error) { if (organization === this.reporterOrganization) host.textContent = error.message; }
+    }, 300);
+  },
+
+  selectSearchedFuncionario(email) {
+    const input = document.getElementById('reg-recomienda-email');
+    if (input) input.value = email;
+    this.onRecomiendaEmailInput(email);
   },
 
   openNuevoUsuarioModal() {
@@ -677,8 +717,8 @@ const RegisterModule = {
       input.classList.toggle('is-invalid', Boolean(this.reporterValidationError));
     }
     const domain = document.getElementById('reg-recomienda-domain');
-    if (domain) domain.textContent = this.isInstitutionalEmail(this.recomiendaEmail)
-      ? '@' + this.recomiendaEmail.split('@')[1] : '@itcr.ac.cr';
+    if (domain) { domain.hidden = this.reporterOrganization !== 'TEC'; domain.textContent = this.isInstitutionalEmail(this.recomiendaEmail)
+      ? '@' + this.recomiendaEmail.split('@')[1] : '@itcr.ac.cr'; }
     const icon = document.getElementById('card-funcionario-icon');
     if (icon) {
       icon.className = `w-12 h-12 rounded-lg flex items-center justify-center text-2xl shrink-0 border ${verified ? 'bg-emerald-50 text-emerald-600 border-emerald-200' : 'bg-slate-100 text-slate-400 border-slate-200'}`;
@@ -1552,6 +1592,7 @@ const RegisterModule = {
       tipo_contacto: this.currentType,
       recomienda_nombre: this.isReporterVerified() ? this.funcionarioIdentificado.nombre : '',
       recomienda_email: recEmailClean,
+      organizacion_reportante: this.reporterOrganization,
       title: document.getElementById('field-title')?.value.trim() || '',
       first_name: document.getElementById('field-first_name')?.value.trim() || '',
       last_name: document.getElementById('field-last_name')?.value.trim() || '',

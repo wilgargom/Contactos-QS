@@ -69,6 +69,24 @@ test('registro académico y de empleador muestra búsqueda sobre el catálogo co
   assert.match(source, /input\.readOnly = true/);
 });
 
+test('interfaz ofrece las tres organizaciones, búsqueda externa y página Acerca de la aplicación adaptable', () => {
+  for (const file of ['register.js', 'bulkUpload.js', 'personalDirectory.js']) {
+    const source = fs.readFileSync(path.join(appRoot, 'public/js', file), 'utf8');
+    for (const label of ['Funcionarios TEC', 'FUNDATEC', 'DOCINADE']) assert.match(source, new RegExp(label));
+    assert.match(source, /buscar por nombre/i);
+    assert.match(source, /organizacion/);
+  }
+  const about = fs.readFileSync(path.join(appRoot, 'public/js/aboutView.js'), 'utf8');
+  for (const text of ['Sistema de Gestión de Contactos para el Ranking Internacional QS', 'Wilson Garita Gómez',
+    'Eddye Carrillo Ulloa', 'Año de creación:', '2026']) assert.match(about, new RegExp(text));
+  const html = fs.readFileSync(path.join(appRoot, 'public/index.html'), 'utf8');
+  assert.match(html, /Acerca de la aplicación/);
+  assert.match(html, /id="about-view"/);
+  const css = fs.readFileSync(path.join(appRoot, 'public/css/styles.css'), 'utf8');
+  assert.match(css, /@media \(max-width:640px\)/);
+  assert.match(css, /\.reporter-org-tabs/);
+});
+
 test('institución externa obligatoria reconoce variantes TEC e ITCR sin bloquear palabras que solo contienen tec', () => {
   const policy=require(path.join(appRoot,'public/js/organizationPolicy'));
   const {validateContact}=require(path.join(appRoot,'src/utils/validator'));
@@ -1126,6 +1144,65 @@ test('ambas cargas exigen correo en padrón y guardan los datos oficiales del re
   }, admin.cookies);
   assert.equal(blocked.status, 422);
   assert.equal((await request(server, '/api/contacts', 'GET', undefined, admin.cookies)).json().count, list.length);
+});
+
+test('TEC, FUNDATEC y DOCINADE mantienen padrones, atribuciones, cargas y consultas separadas', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-reporter-organizations-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const guest = await request(server, '/api/auth/guest', 'POST');
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const endpoint = '/api/admin/funcionarios';
+  const base = { email: 'identidad.compartida@itcr.ac.cr', cargo: 'Gestor', sede_id: 'sede-cartago', departamento_id: 'dep-comp', activo: true };
+  const people = {};
+  for (const organization of ['TEC', 'FUNDATEC', 'DOCINADE']) {
+    const response = await request(server, endpoint, 'POST', { ...base, sede_id: organization === 'TEC' ? 'sede-cartago' : 'sede-sanjose', organizacion: organization, nombre: `Persona ${organization}` }, admin.cookies);
+    assert.equal(response.status, 200, response.text);
+    people[organization] = response.json().funcionario;
+    assert.equal(people[organization].organizacion, organization);
+    assert.equal(people[organization].sede_id, 'sede-cartago');
+  }
+  assert.equal(new Set(Object.values(people).map(person => person.id)).size, 3);
+  for (const organization of ['TEC', 'FUNDATEC', 'DOCINADE']) {
+    const lookup = (await request(server, `/api/funcionarios/by-email?email=${encodeURIComponent(base.email)}&organizacion=${organization}`, 'GET', undefined, guest.cookies)).json();
+    assert.equal(lookup.funcionario.id, people[organization].id);
+    const search = (await request(server, `/api/funcionarios/search?q=Persona&organizacion=${organization}`, 'GET', undefined, guest.cookies)).json();
+    assert.ok(search.funcionarios.some(person => person.id === people[organization].id && person.email === base.email));
+  }
+
+  const external = { ...base, email: 'solo.fundatec@example.org', nombre: 'Persona Exclusiva FUNDATEC', organizacion: 'FUNDATEC' };
+  assert.equal((await request(server, endpoint, 'POST', external, admin.cookies)).status, 200);
+  const contact = { tipo_contacto: 'EMPLEADOR', title: 'Ms', first_name: 'Contacto', last_name: 'Organización', position: 'Directora', industry: 'Servicios', company_name: 'Empresa Externa', country_name: 'Costa Rica' };
+  const missing = await request(server, '/api/contacts', 'POST', { ...contact, email: 'ausente@example.org', recomienda_email: external.email, organizacion_reportante: 'DOCINADE' }, guest.cookies);
+  assert.equal(missing.status, 422, missing.text);
+  assert.equal(missing.json().code, 'REPORTER_NOT_VERIFIED');
+
+  for (const [index, organization] of ['TEC', 'FUNDATEC', 'DOCINADE'].entries()) {
+    const saved = await request(server, '/api/contacts', 'POST', { ...contact, email: `contacto.${index}@example.org`, first_name: organization,
+      recomienda_email: base.email, organizacion_reportante: organization, allow_duplicate_override: true }, guest.cookies);
+    assert.equal(saved.status, 201, saved.text);
+    assert.equal(saved.json().contact.organizacion_reportante, organization);
+    assert.equal(saved.json().contact.reportante_funcionario_id, people[organization].id);
+    const own = (await request(server, `/api/personal/contacts?email=${encodeURIComponent(base.email)}&organizacion=${organization}`, 'GET', undefined, guest.cookies)).json();
+    assert.equal(own.counts.actuales, 1);
+    assert.equal(own.funcionario.organizacion, organization);
+    assert.equal(own.contacts[0].email, `contacto.${index}@example.org`);
+  }
+
+  const mass = await request(server, '/api/bulk/import', 'POST', { tipo_contacto: 'EMPLEADOR', recomienda_email: base.email,
+    organizacion_reportante: 'DOCINADE', rowsToImport: [{ ...contact, email: 'masivo.docinade@example.org', first_name: 'Masivo' }] }, guest.cookies);
+  assert.equal(mass.status, 200, mass.text);
+  const docinade = (await request(server, `/api/personal/contacts?email=${encodeURIComponent(base.email)}&organizacion=DOCINADE`, 'GET', undefined, guest.cookies)).json();
+  assert.equal(docinade.counts.actuales, 2);
+
+  const roster = row => ({ nombre: row, email: row.toLowerCase().replace(/ /g, '.') + '@example.org', dependencia: 'Escuela de Ingeniería en Computación', sede: 'Campus Central Cartago' });
+  const firstRoster = await request(server, '/api/bulk/import', 'POST', { tipo_contacto: 'FUNCIONARIOS', organizacion_reportante: 'FUNDATEC', rowsToImport: [roster('Lista Uno'), roster('Lista Dos')] }, admin.cookies);
+  assert.equal(firstRoster.status, 200, firstRoster.text);
+  const secondRoster = await request(server, '/api/bulk/import', 'POST', { tipo_contacto: 'FUNCIONARIOS', organizacion_reportante: 'FUNDATEC', rowsToImport: [{ ...roster('Lista Uno'), nombre: 'Lista Uno Actualizada' }] }, admin.cookies);
+  assert.equal(secondRoster.status, 200, secondRoster.text);
+  const finalRoster = (await request(server, '/api/funcionarios?organizacion=FUNDATEC&q=Lista', 'GET', undefined, admin.cookies)).json().funcionarios;
+  assert.ok(finalRoster.some(person => person.nombre === 'Lista Uno Actualizada'));
+  assert.ok(finalRoster.some(person => person.nombre === 'Lista Dos'));
 });
 
 for (const [file, moduleName, inputId, cardPrefix] of [

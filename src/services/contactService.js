@@ -79,6 +79,8 @@ function createContact(rawData, user, options = {}) {
     const deptoId = s.departamento_id || user.departamento_id || null;
     const recomiendaNombre = (rawData.recomienda_nombre || user.nombre_completo || '').trim();
     const recomiendaEmail = (rawData.recomienda_email || user.email || '').trim().toLowerCase();
+    const organization = rawData.organizacion_reportante || 'TEC';
+    const reporterId = rawData.reportante_funcionario_id || null;
 
     {
       const stmt = trx.prepare(`
@@ -86,9 +88,9 @@ function createContact(rawData, user, options = {}) {
           id, tipo_contacto, source, title, first_name, last_name, email, email_normalized, phone,
           country_name, sede_id, departamento_id, job_title, department_unit, institution, subject_area,
           position, industry, company_name, estado, metodo_ingreso, lote_id,
-          recomienda_nombre, recomienda_email,
+          recomienda_nombre, recomienda_email, organizacion_reportante, reportante_funcionario_id,
           created_by, created_by_name, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
@@ -116,6 +118,8 @@ function createContact(rawData, user, options = {}) {
         loteId,
         recomiendaNombre,
         recomiendaEmail,
+        organization,
+        reporterId,
         user.id,
         user.nombre_completo,
         now

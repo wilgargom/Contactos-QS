@@ -722,3 +722,24 @@ header.bg-tec-primary {
   .personal-heading h2 { font-size: 1.1rem; }
   .personal-email-domain { padding: 0 .6rem; font-size: .75rem; }
 }
+
+.reporter-org-tabs { display:flex; gap:.5rem; flex-wrap:wrap; padding:.25rem; margin-bottom:1rem; border-radius:.85rem; background:#f1f5f9; width:fit-content; max-width:100%; }
+.reporter-org-tab { border:1px solid transparent; border-radius:.65rem; padding:.65rem 1rem; color:#475569; background:transparent; font-weight:700; font-size:.875rem; cursor:pointer; }
+.reporter-org-tab:hover { background:#fff; color:#172554; }
+.reporter-org-tab.is-active { background:#172554; color:#fff; border-color:#172554; box-shadow:0 1px 3px rgba(15,23,42,.18); }
+.reporter-search-results { display:grid; gap:.35rem; margin-top:.5rem; max-height:15rem; overflow:auto; }
+.reporter-search-option { display:flex; flex-direction:column; align-items:flex-start; gap:.15rem; width:100%; padding:.7rem .8rem; border:1px solid #cbd5e1; border-radius:.65rem; background:#fff; text-align:left; }
+.reporter-search-option:hover, .reporter-search-option:focus { border-color:#1e3a8a; background:#eff6ff; outline:none; }
+.reporter-search-option span, .reporter-search-empty { color:#64748b; font-size:.78rem; }
+.about-page { max-width:56rem; margin:0 auto; overflow:hidden; border:1px solid #e2e8f0; border-radius:1rem; background:#fff; box-shadow:0 1px 3px rgba(15,23,42,.08); }
+.about-hero { display:flex; gap:1rem; align-items:center; padding:2rem; color:#fff; background:#172554; }
+.about-hero h2 { margin:0; font-size:clamp(1.35rem,3vw,2rem); font-weight:800; line-height:1.2; }
+.about-hero p { margin:.35rem 0 0; color:#cbd5e1; font-weight:600; }
+.about-icon { display:grid; place-items:center; width:3.5rem; height:3.5rem; flex:0 0 auto; border-radius:.9rem; background:#f59e0b; color:#172554; font-size:1.4rem; }
+.about-page section { padding:1.5rem 2rem 0; color:#334155; line-height:1.75; }
+.about-page section p + p { margin-top:1rem; }
+.about-page h3 { margin:0 0 1rem; color:#172554; font-size:1.3rem; font-weight:800; }
+.about-page h4 { margin:1rem 0 .65rem; color:#1e293b; font-weight:800; }
+.about-credit { display:flex; flex-direction:column; padding:1rem; border-left:4px solid #f59e0b; border-radius:.25rem .75rem .75rem .25rem; background:#f8fafc; }
+.about-page footer { margin-top:1.5rem; padding:1.25rem 2rem; border-top:1px solid #e2e8f0; background:#f8fafc; color:#334155; }
+@media (max-width:640px) { .reporter-org-tabs { display:grid; grid-template-columns:1fr; width:100%; } .reporter-org-tab { width:100%; } .about-hero { align-items:flex-start; padding:1.4rem; } .about-page section { padding:1.25rem 1.4rem 0; } .about-page footer { padding:1rem 1.4rem; } }

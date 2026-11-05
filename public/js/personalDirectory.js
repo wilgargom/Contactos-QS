@@ -1,6 +1,7 @@
 // Consulta por correo: el padrón determina la ficha y la dependencia de los resultados.
 const PersonalDirectoryModule = {
   sequence: 0, lookupTimer: null, email: '', filters: { origen: 'actuales', q: '', tipo_contacto: '', metodo: '', director_id: '', departamento_id: '' }, page: 1,
+  organization: 'TEC', searchTimer: null,
   reset() {
     this.sequence++; clearTimeout(this.lookupTimer); this.lookupTimer = null; this.email = '';
     this.filters = { origen: 'actuales', q: '', tipo_contacto: '', metodo: '', director_id: '', departamento_id: '' }; this.page = 1;
@@ -8,10 +9,14 @@ const PersonalDirectoryModule = {
   esc(value) { return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); },
   normalizeEmail(value) {
     const clean = String(value || '').trim().toLowerCase();
-    return clean && !clean.includes('@') ? clean + '@itcr.ac.cr' : clean;
+    return clean && this.organization === 'TEC' && !clean.includes('@') ? clean + '@itcr.ac.cr' : clean;
   },
-  isInstitutionalEmail(value) { return /^[a-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(value); },
-  init() {
+  isInstitutionalEmail(value) {
+    const generic = /^[a-z0-9.!#$%&'*+/=?^_\x60{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+    return generic.test(value) && (this.organization !== 'TEC' || /@(itcr\.ac\.cr|tec\.ac\.cr)$/.test(value));
+  },
+  init(preserveOrganization = false) {
+    if (!preserveOrganization) this.organization = 'TEC';
     this.reset();
     if (App.currentUser?.rol !== 'USUARIO' || App.suspended) return;
     document.getElementById('personal-view').innerHTML = `
@@ -19,18 +24,20 @@ const PersonalDirectoryModule = {
         <section class="personal-panel" aria-labelledby="personal-title">
           <div class="personal-heading">
             <span class="personal-heading-icon" aria-hidden="true"><i class="fa-solid fa-address-book"></i></span>
-            <div><h2 id="personal-title">Contactos por funcionario</h2><p>Consulte los registros de una persona del TEC y el consolidado de su dependencia.</p></div>
+            <div><h2 id="personal-title">Mis contactos</h2><p>Consulte los registros asociados a una persona dentro de la organización seleccionada.</p></div>
           </div>
           <section class="personal-reporter" aria-labelledby="personal-reporter-title">
-            <h3 id="personal-reporter-title" class="personal-section-title"><i class="fa-solid fa-id-card" aria-hidden="true"></i> Datos de la persona del TEC</h3>
+            ${this.renderOrganizationTabs()}
+            <h3 id="personal-reporter-title" class="personal-section-title"><i class="fa-solid fa-id-card" aria-hidden="true"></i> Datos de la persona de ${this.esc(this.organization)}</h3>
             <div class="personal-lookup-grid">
               <form id="personal-email-form" class="personal-email-form">
-                <label class="form-label" for="personal-email">Correo institucional del TEC <span class="req">*</span></label>
+                <label class="form-label" for="personal-email">${this.organization === 'TEC' ? 'Correo institucional del TEC' : 'Correo electrónico completo'} <span class="req">*</span></label>
                 <div class="personal-email-group">
                   <input id="personal-email" type="text" inputmode="email" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="254" required placeholder="Digite el correo" aria-describedby="personal-email-help personal-email-error">
-                  <span id="personal-email-domain" class="personal-email-domain">@itcr.ac.cr</span>
+                  <span id="personal-email-domain" class="personal-email-domain" ${this.organization === 'TEC' ? '' : 'hidden'}>@itcr.ac.cr</span>
                 </div>
-                <p id="personal-email-help" class="personal-help">Escriba el usuario o el correo completo, también se admite @tec.ac.cr.</p>
+                <p id="personal-email-help" class="personal-help">${this.organization === 'TEC' ? 'Escriba el usuario o el correo completo, también se admite @tec.ac.cr.' : `El correo debe figurar en el padrón de ${this.esc(this.organization)}.`}</p>
+                ${this.organization === 'TEC' ? '' : `<label class="form-label" for="personal-name-search">O buscar por nombre</label><input id="personal-name-search" type="search" class="form-control" maxlength="120" autocomplete="off" placeholder="Escriba el nombre de la persona"><div id="personal-name-results" class="reporter-search-results" aria-live="polite"></div>`}
                 <div class="personal-actions"><button type="submit" class="btn btn-tec">Consultar</button><button type="button" id="personal-email-clear" class="btn btn-outline">Limpiar consulta</button></div>
                 <p id="personal-email-error" class="personal-error" role="alert"></p>
               </form>
@@ -46,6 +53,14 @@ const PersonalDirectoryModule = {
     document.getElementById('personal-email-clear').onclick = () => {
       document.getElementById('personal-email').value = ''; this.onEmailInput(); document.getElementById('personal-email').focus();
     };
+    if (document.getElementById('personal-name-search')) document.getElementById('personal-name-search').oninput = event => this.searchByName(event.target.value);
+  },
+  renderOrganizationTabs() {
+    return `<div class="reporter-org-tabs" role="tablist" aria-label="Organización de la persona consultada">${[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([value,label]) => `<button type="button" role="tab" aria-selected="${this.organization === value}" class="reporter-org-tab ${this.organization === value ? 'is-active' : ''}" onclick="PersonalDirectoryModule.changeOrganization('${value}')">${label}</button>`).join('')}</div>`;
+  },
+  changeOrganization(organization) {
+    if (!['TEC','FUNDATEC','DOCINADE'].includes(organization) || organization === this.organization) return;
+    this.organization = organization; this.init(true);
   },
   renderIdentity(funcionario = null, pending = false) {
     const esc = value => this.esc(value);
@@ -67,7 +82,7 @@ const PersonalDirectoryModule = {
     document.getElementById('personal-email-error').textContent = '';
     this.renderIdentity();
     const raw = document.getElementById('personal-email').value;
-    document.getElementById('personal-email-domain').hidden = raw.includes('@');
+    document.getElementById('personal-email-domain').hidden = this.organization !== 'TEC' || raw.includes('@');
     const value = this.normalizeEmail(raw);
     if (this.isInstitutionalEmail(value)) this.lookupTimer = setTimeout(() => this.lookupEmail(), 500);
   },
@@ -77,11 +92,31 @@ const PersonalDirectoryModule = {
     const email = this.normalizeEmail(document.getElementById('personal-email').value);
     if (!this.isInstitutionalEmail(email)) {
       this.email = ''; this.sequence++; document.getElementById('personal-results').replaceChildren(); this.renderIdentity();
-      document.getElementById('personal-email-error').textContent = 'Ingrese un correo institucional @itcr.ac.cr o @tec.ac.cr.';
+      document.getElementById('personal-email-error').textContent = this.organization === 'TEC' ? 'Ingrese un correo institucional @itcr.ac.cr o @tec.ac.cr.' : 'Ingrese el correo electrónico completo.';
       return;
     }
     this.email = email;
     return this.load();
+  },
+  searchByName(value) {
+    clearTimeout(this.searchTimer);
+    const host = document.getElementById('personal-name-results'), term = String(value || '').trim();
+    if (!host) return;
+    if (term.length < 2) { host.replaceChildren(); return; }
+    host.textContent = 'Buscando en el padrón…';
+    const organization = this.organization;
+    this.searchTimer = setTimeout(async () => {
+      try {
+        const data = await API.get('/api/funcionarios/search', { q: term, organizacion: organization });
+        if (organization !== this.organization || !document.getElementById('personal-name-results')) return;
+        host.innerHTML = data.funcionarios.length ? data.funcionarios.map(f => `<button type="button" class="reporter-search-option" data-email="${this.esc(f.email)}" onclick="PersonalDirectoryModule.selectPerson(this.dataset.email)"><strong>${this.esc(f.nombre)}</strong><span>${this.esc(f.email)} · ${this.esc(f.dependencia)}</span></button>`).join('') : '<p class="reporter-search-empty">No se encontraron personas en este padrón.</p>';
+      } catch (error) { if (organization === this.organization) host.textContent = error.message; }
+    }, 300);
+  },
+  selectPerson(email) {
+    const input = document.getElementById('personal-email');
+    if (input) input.value = email;
+    this.lookupEmail();
   },
   valid(seq, session) {
     return seq === this.sequence && session === App.sessionVersion && App.currentUser?.rol === 'USUARIO' && !App.suspended;
@@ -94,7 +129,7 @@ const PersonalDirectoryModule = {
     host.innerHTML = '<div class="personal-loading" role="status"><i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i> Consultando contactos…</div>';
     document.getElementById('personal-email-error').textContent = '';
     try {
-      const data = await API.get('/api/personal/contacts', { ...this.filters, email: this.email, page: String(page) });
+      const data = await API.get('/api/personal/contacts', { ...this.filters, email: this.email, organizacion: this.organization, page: String(page) });
       if (!this.valid(seq, session)) return;
       this.page = data.page;
       this.render(data);

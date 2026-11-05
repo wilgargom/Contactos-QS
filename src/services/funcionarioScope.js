@@ -28,7 +28,7 @@ function authorizedDepartments(f) {
   const assigned = db.prepare(`SELECT DISTINCT d.id, d.nombre, d.sede_id FROM contactos c
     JOIN departamentos d ON d.id = c.departamento_id AND d.activo = 1
     WHERE c.es_consolidado = 1 AND (c.director_funcionario_id = ? OR
-      (c.director_funcionario_id IS NULL AND c.director_email = ?))`).all(f.id, f.email_normalized);
+      (c.director_funcionario_id IS NULL AND ? = 'TEC' AND c.director_email = ?))`).all(f.id, f.organizacion || 'TEC', f.email_normalized);
   for (const d of assigned) {
     add({ ...d, origen: 'CONSOLIDADO', asignado_consolidado: true });
   }
@@ -42,7 +42,8 @@ function enrich(f) {
 }
 function identity(f) {
   return { nombre: f.nombre, email: f.email_normalized, dependencia: f.dependencia, sede: f.sede,
-    dependencias: authorizedDepartments(f) };
+    organizacion: f.organizacion || 'TEC', sede_id: f.sede_id, departamento_id: f.departamento_id,
+    dependencias: authorizedDepartments(f), dependencias_autorizadas: authorizedDepartments(f) };
 }
 function selectDepartment(f, requested) {
   const departments = authorizedDepartments(f);

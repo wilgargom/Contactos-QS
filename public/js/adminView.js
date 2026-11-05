@@ -5,6 +5,7 @@ const AdminModule = {
   funcionariosPage: 1,
   funcionariosQuery: '',
   funcionariosEstado: 'todos',
+  funcionariosOrganizacion: 'TEC',
   funcionarioEditing: null,
   funcionariosBusy: false,
 
@@ -21,6 +22,7 @@ const AdminModule = {
     this.funcionariosPage = 1;
     this.funcionariosQuery = '';
     this.funcionariosEstado = 'todos';
+    this.funcionariosOrganizacion = 'TEC';
     document.getElementById('admin-funcionarios-dialog').showModal();
     this.loadFuncionarios();
   },
@@ -33,24 +35,25 @@ const AdminModule = {
     this.funcionarioEditing = null;
     host.textContent = 'Cargando padrón…';
     try {
-      const data = await API.get('/api/admin/funcionarios', { q: this.funcionariosQuery, estado: this.funcionariosEstado, page: String(page) });
+      const data = await API.get('/api/admin/funcionarios', { q: this.funcionariosQuery, estado: this.funcionariosEstado, organizacion: this.funcionariosOrganizacion, page: String(page) });
       if (seq !== this.funcionariosRequest || session !== App.sessionVersion || App.currentUser?.rol !== 'ADMIN' || App.suspended || !host.isConnected) return;
       this.funcionariosPage = page;
       if (!data.funcionarios.length && page > 1) return this.loadFuncionarios(page - 1);
       const esc = value => DirectoryModule.escapeSelectionText(value);
       host.innerHTML = '<p class="text-sm text-slate-600 mb-4">Los cambios se aplican a los nuevos reportes. Los contactos existentes conservan la procedencia registrada. Un funcionario inactivo no se identifica como reportante.</p>' +
         '<form id="funcionarios-search" class="flex flex-wrap gap-3 mb-4"><label for="funcionarios-query">Buscar</label><input id="funcionarios-query" class="form-control" maxlength="200" placeholder="Nombre, correo, cargo o dependencia" value="' + esc(this.funcionariosQuery) + '">' +
+        '<label for="funcionarios-organizacion">Organización</label><select id="funcionarios-organizacion" class="form-control">'+[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([v,t]) => '<option value="'+v+'" '+(v===this.funcionariosOrganizacion?'selected':'')+'>'+t+'</option>').join('')+'</select>'+
         '<label for="funcionarios-estado">Estado</label><select id="funcionarios-estado" class="form-control">' +
         [['todos','Todos'],['activos','Activos'],['inactivos','Inactivos']].map(([v,t]) => '<option value="'+v+'" '+(v===this.funcionariosEstado?'selected':'')+'>'+t+'</option>').join('') +
         '</select><button type="submit" class="btn btn-outline">Buscar</button><button type="button" class="btn btn-tec" id="funcionario-new">Agregar funcionario</button></form>' +
         '<p role="status" class="mb-3">' + data.total + ' funcionarios · Página ' + page + ' de ' + Math.max(1,Math.ceil(data.total / data.pageSize)) + '</p>' +
-        '<div class="table-responsive"><table class="data-table"><thead><tr><th>Nombre / correo</th><th>Cargo</th><th>Dependencia / sede</th><th>Estado</th><th>Acción</th></tr></thead><tbody>' +
-        data.funcionarios.map((f,i) => '<tr><td>'+esc(f.nombre)+'<br>'+esc(f.email)+'</td><td>'+esc(f.cargo || 'Sin especificar')+'</td><td>'+esc(f.dependencias?.map(d => d.nombre).join('; ') || f.dependencia)+'<br>'+esc(f.sede)+'</td><td>'+(f.activo?'Activo':'Inactivo')+'</td><td><button type="button" class="btn btn-outline btn-sm" data-funcionario-index="'+i+'">Editar ficha</button></td></tr>').join('') +
-        (data.total ? '' : '<tr><td colspan="5">No se encontraron funcionarios.</td></tr>') +
+        '<div class="table-responsive"><table class="data-table"><thead><tr><th>Nombre / correo</th><th>Organización</th><th>Cargo</th><th>Dependencia / sede</th><th>Estado</th><th>Acción</th></tr></thead><tbody>' +
+        data.funcionarios.map((f,i) => '<tr><td>'+esc(f.nombre)+'<br>'+esc(f.email)+'</td><td>'+esc(f.organizacion || 'TEC')+'</td><td>'+esc(f.cargo || 'Sin especificar')+'</td><td>'+esc(f.dependencias?.map(d => d.nombre).join('; ') || f.dependencia)+'<br>'+esc(f.sede)+'</td><td>'+(f.activo?'Activo':'Inactivo')+'</td><td><button type="button" class="btn btn-outline btn-sm" data-funcionario-index="'+i+'">Editar ficha</button></td></tr>').join('') +
+        (data.total ? '' : '<tr><td colspan="6">No se encontraron funcionarios.</td></tr>') +
         '</tbody></table></div><div class="flex gap-3 mt-4"><button type="button" id="funcionarios-prev" class="btn btn-outline" '+(page<=1?'disabled':'')+'>Anterior</button><button type="button" id="funcionarios-next" class="btn btn-outline" '+(page*data.pageSize>=data.total?'disabled':'')+'>Siguiente</button></div>';
       document.getElementById('funcionarios-search').onsubmit = event => {
         event.preventDefault(); this.funcionariosQuery = document.getElementById('funcionarios-query').value.trim();
-        this.funcionariosEstado = document.getElementById('funcionarios-estado').value; this.loadFuncionarios(1);
+        this.funcionariosEstado = document.getElementById('funcionarios-estado').value; this.funcionariosOrganizacion = document.getElementById('funcionarios-organizacion').value; this.loadFuncionarios(1);
       };
       document.getElementById('funcionario-new').onclick = () => this.editFuncionario();
       document.getElementById('funcionarios-prev').onclick = () => this.loadFuncionarios(page - 1);
@@ -69,7 +72,7 @@ const AdminModule = {
     const seq = ++this.funcionariosRequest, session = App.sessionVersion;
     const host = document.getElementById('admin-funcionarios-content');
     try {
-      const data = id ? await API.get('/api/admin/funcionarios/' + encodeURIComponent(id)) : { funcionario: { activo: 1 }, history: [] };
+      const data = id ? await API.get('/api/admin/funcionarios/' + encodeURIComponent(id)) : { funcionario: { activo: 1, organizacion: this.funcionariosOrganizacion }, history: [] };
       // Refrescar catálogos: una carga reciente del padrón puede haber creado dependencias.
       const catalogs = await API.get('/api/catalogs');
       if (seq !== this.funcionariosRequest || session !== App.sessionVersion || App.currentUser?.rol !== 'ADMIN' || App.suspended || !host?.isConnected) return;
@@ -80,6 +83,7 @@ const AdminModule = {
       const departmentLabel = d => d.nombre + (catalogs.departamentos.filter(other => other.nombre === d.nombre).length > 1
         ? ' — ' + (catalogs.sedes.find(s => s.id === d.sede_id)?.nombre || 'Sede por revisar') : '');
       host.innerHTML = '<h4 class="font-bold mb-3">'+(id?'Actualizar ficha':'Agregar funcionario')+'</h4><form id="funcionario-form">' +
+        '<label class="block mb-3">Organización<select id="funcionario-organizacion" class="form-control" '+(id?'disabled':'')+'>'+[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([v,t])=>'<option value="'+v+'" '+((f.organizacion||'TEC')===v?'selected':'')+'>'+t+'</option>').join('')+'</select></label>'+
         input('nombre','Nombre completo')+input('email','Correo institucional','email')+input('cargo','Cargo / puesto (opcional)','text',false)+
         '<label class="block mb-3">Sede<select id="funcionario-sede_id" class="form-control" required>'+options(catalogs.sedes,f.sede_id)+'</select></label>'+
         '<label class="block mb-3">Dependencia principal<select id="funcionario-departamento_id" class="form-control" required></select></label>'+
@@ -94,6 +98,7 @@ const AdminModule = {
           return '<tr><td>'+esc(new Date(h.created_at).toLocaleString())+'<br>'+esc(h.usuario_nombre)+'</td><td>'+esc(h.accion)+'</td><td>'+esc(changes)+'</td></tr>';
         }).join('')+(data.history.length?'':'<tr><td colspan="3">Sin cambios registrados desde la habilitación de esta gestión.</td></tr>')+'</tbody></table></div>';
       const sede = document.getElementById('funcionario-sede_id'), depto = document.getElementById('funcionario-departamento_id');
+      if ((f.organizacion || 'TEC') !== 'TEC') { sede.value = 'sede-cartago'; sede.disabled = true; }
       const refresh = selected => { depto.innerHTML = options(catalogs.departamentos.filter(d => !d.sede_id || d.sede_id === sede.value), selected); };
       refresh(f.departamento_id); sede.onchange = () => refresh('');
       depto.onchange = () => { const checkbox = [...host.querySelectorAll('[data-membership]')].find(c => c.dataset.membership === depto.value); if (checkbox) checkbox.checked = true; };
@@ -107,6 +112,7 @@ const AdminModule = {
     if (!f || this.funcionariosBusy || App.currentUser?.rol !== 'ADMIN' || App.suspended) return;
     const data = {};
     for (const k of ['nombre','email','cargo','sede_id','departamento_id']) data[k] = document.getElementById('funcionario-'+k).value.trim();
+    data.organizacion = document.getElementById('funcionario-organizacion').value;
     data.departamento_ids = [...document.querySelectorAll('[data-membership]:checked')].map(c => c.dataset.membership);
     if (data.departamento_id && !data.departamento_ids.includes(data.departamento_id)) data.departamento_ids.unshift(data.departamento_id);
     data.activo = document.getElementById('funcionario-activo').checked;

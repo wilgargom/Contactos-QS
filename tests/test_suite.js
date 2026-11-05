@@ -46,7 +46,7 @@ test('filtro de país conserva contactos históricos guardados en inglés', asyn
   const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
   db.prepare(`INSERT INTO contactos
     (id,tipo_contacto,title,first_name,last_name,email,email_normalized,country_name,estado,metodo_ingreso,created_by,created_at)
-    VALUES (?, 'EMPLEADOR', 'Mr', 'Histórico', 'País', ?, ?, 'United States', 'NUEVO', 'CONSOLIDADO', 'test', ?)`)
+    VALUES (?, 'EMPLEADOR', 'Mr', 'Histórico', 'País', ?, ?, 'United States', 'NUEVO', 'CARGA_MASIVA', 'test', ?)`)
     .run('country-historical', 'country.historical@example.org', 'country.historical@example.org', new Date().toISOString());
   db.close();
   for (const filter of ['Estados%20Unidos', 'United%20States', 'US']) {

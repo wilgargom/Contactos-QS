@@ -1,43 +1,78 @@
-// Catálogo oficial de Países (ISO 3166 con nombres comunes en Español e Inglés)
-const COUNTRIES = [
-  'Costa Rica', 'Malaysia', 'United States', 'United Kingdom', 'Spain', 'Mexico',
-  'Colombia', 'Germany', 'France', 'Chile', 'Argentina', 'Brazil', 'Canada',
-  'Australia', 'Japan', 'South Korea', 'Singapore', 'Italy', 'Netherlands',
-  'Switzerland', 'Sweden', 'Panama', 'Guatemala', 'Peru', 'Ecuador', 'Uruguay',
-  'Portugal', 'Ireland', 'Belgium', 'Austria', 'New Zealand', 'India', 'China',
-  'South Africa', 'Norway', 'Denmark', 'Finland', 'Poland'
-];
+// Catálogo completo de países y territorios ISO 3166-1.
+// Intl.DisplayNames usa los nombres regionales de CLDR incluidos en Node y evita mantener
+// manualmente 249 traducciones; la API entrega esta lista ya ordenada en español.
+const REGION_CODES = Object.freeze(`AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW`.split(' '));
+const REGION_NAMES_ES = new Intl.DisplayNames(['es'], { type: 'region' });
+const REGION_NAMES_EN = new Intl.DisplayNames(['en'], { type: 'region' });
+const COUNTRY_COLLATOR = new Intl.Collator('es', { sensitivity: 'base', usage: 'sort' });
+const COUNTRY_ENTRIES = Object.freeze(REGION_CODES.map(code => Object.freeze({
+  code,
+  name: REGION_NAMES_ES.of(code),
+  englishName: REGION_NAMES_EN.of(code)
+})));
+const COUNTRY_BY_CODE = new Map(COUNTRY_ENTRIES.map(country => [country.code, country.name]));
+const COUNTRIES = Object.freeze(COUNTRY_ENTRIES.map(country => country.name).sort(COUNTRY_COLLATOR.compare));
 
-// Sinónimos comunes para normalización automática de países
-const COUNTRY_SYNONYMS = {
-  'cr': 'Costa Rica',
-  'c.r.': 'Costa Rica',
-  'costa-rica': 'Costa Rica',
-  'usa': 'United States',
-  'u.s.a.': 'United States',
-  'us': 'United States',
-  'estados unidos': 'United States',
-  'eeuu': 'United States',
-  'ee.uu.': 'United States',
-  'uk': 'United Kingdom',
-  'u.k.': 'United Kingdom',
-  'reino unido': 'United Kingdom',
-  'gran bretaña': 'United Kingdom',
-  'españa': 'Spain',
-  'méxico': 'Mexico',
-  'colombia': 'Colombia',
-  'alemania': 'Germany',
-  'francia': 'France',
-  'brasil': 'Brazil',
-  'japón': 'Japan',
-  'malasia': 'Malaysia',
-  'canadá': 'Canada',
-  'panamá': 'Panama',
-  'perú': 'Peru',
-  'italia': 'Italy',
-  'suecia': 'Sweden',
-  'suiza': 'Switzerland'
-};
+function normalizeCountryKey(value) {
+  return String(value || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+const COUNTRY_NAME_MAP = new Map();
+for (const country of COUNTRY_ENTRIES) {
+  COUNTRY_NAME_MAP.set(normalizeCountryKey(country.code), country.name);
+  COUNTRY_NAME_MAP.set(normalizeCountryKey(country.name), country.name);
+  COUNTRY_NAME_MAP.set(normalizeCountryKey(country.englishName), country.name);
+}
+
+const COUNTRY_ALIAS_CODES = Object.freeze({
+  'c.r.': 'CR',
+  'costa-rica': 'CR',
+  'eeuu': 'US',
+  'ee.uu.': 'US',
+  'e.e.u.u.': 'US',
+  'usa': 'US',
+  'u.s.a.': 'US',
+  'uk': 'GB',
+  'u.k.': 'GB',
+  'gran bretaña': 'GB',
+  'republica checa': 'CZ',
+  'corea del norte': 'KP',
+  'corea del sur': 'KR',
+  'palestina': 'PS',
+  'rusia': 'RU',
+  'vaticano': 'VA'
+});
+
+// Se conserva la exportación histórica para consumidores internos y pruebas.
+const COUNTRY_SYNONYMS = Object.freeze(Object.fromEntries(
+  Object.entries(COUNTRY_ALIAS_CODES).map(([alias, code]) => [alias, COUNTRY_BY_CODE.get(code)])
+));
+for (const [alias, code] of Object.entries(COUNTRY_ALIAS_CODES)) {
+  COUNTRY_NAME_MAP.set(normalizeCountryKey(alias), COUNTRY_BY_CODE.get(code));
+}
+
+const COUNTRY_VARIANTS_BY_CANONICAL = new Map();
+for (const country of COUNTRY_ENTRIES) {
+  COUNTRY_VARIANTS_BY_CANONICAL.set(country.name, new Set([country.name, country.englishName, country.code]));
+}
+for (const [alias, code] of Object.entries(COUNTRY_ALIAS_CODES)) {
+  COUNTRY_VARIANTS_BY_CANONICAL.get(COUNTRY_BY_CODE.get(code))?.add(alias);
+}
+
+function countryVariants(value) {
+  const canonical = resolveCountry(value);
+  if (!canonical) {
+    const original = String(value || '').trim();
+    return original ? [original] : [];
+  }
+  return [...(COUNTRY_VARIANTS_BY_CANONICAL.get(canonical) || new Set([canonical]))];
+}
 
 // Tratamientos / Títulos habituales
 const TITLES = [
@@ -109,17 +144,7 @@ function normalizeEmail(email) {
 // Resolver país homologado
 function resolveCountry(val) {
   if (!val) return null;
-  const trimmed = val.trim();
-  const lower = trimmed.toLowerCase();
-  
-  if (COUNTRY_SYNONYMS[lower]) {
-    return COUNTRY_SYNONYMS[lower];
-  }
-  
-  const exact = COUNTRIES.find(c => c.toLowerCase() === lower);
-  if (exact) return exact;
-
-  return trimmed; // Retorna el valor si no está en catálogo para validación
+  return COUNTRY_NAME_MAP.get(normalizeCountryKey(val)) || null;
 }
 
 // Regex estándar RFC 5322 simplificado para email
@@ -322,8 +347,11 @@ function validateContact(data, tipo) {
 }
 
 module.exports = {
+  REGION_CODES,
   COUNTRIES,
   COUNTRY_SYNONYMS,
+  normalizeCountryKey,
+  countryVariants,
   TITLES,
   QS_SUBJECTS,
   QS_INDUSTRIES,

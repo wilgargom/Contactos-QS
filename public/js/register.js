@@ -850,6 +850,36 @@ const RegisterModule = {
     this.render();
   },
 
+  normalizeCountryKey(value) {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ');
+  },
+
+  resolveCountryFromCatalog(value) {
+    const key = this.normalizeCountryKey(value);
+    if (!key) return '';
+    return (this.catalogs?.paises || []).find(country => this.normalizeCountryKey(country) === key) || '';
+  },
+
+  onCountryInput() {
+    this.onFieldInput('field-country_name');
+  },
+
+  onCountryBlur() {
+    const input = document.getElementById('field-country_name');
+    if (!input) return;
+    const resolved = this.resolveCountryFromCatalog(input.value);
+    if (resolved) input.value = resolved;
+    this.touchedFields['field-country_name'] = true;
+    this.captureDraft();
+    this.validateLive();
+  },
+
   renderFormFields() {
     const isAcademic = this.currentType === 'ACADEMICO';
     const countriesOptions = (this.catalogs?.paises || []).map(c => `<option value="${this.escapeReporterText(c)}">${this.escapeReporterText(c)}</option>`).join('');
@@ -1034,10 +1064,13 @@ const RegisterModule = {
               <label class="form-label text-xs font-bold text-slate-700" for="field-country_name">
                 País o territorio <span class="req">*</span>
               </label>
-              <select class="form-control text-sm bg-white" id="field-country_name" required onchange="RegisterModule.onFieldInput('field-country_name')">
-                <option value="">Seleccione país...</option>
-                ${countriesOptions}
-              </select>
+              <input type="search" class="form-control text-sm bg-white" id="field-country_name"
+                     list="country-options" placeholder="Escriba para buscar un país o territorio..."
+                     autocomplete="off" spellcheck="false" required
+                     aria-describedby="country-search-help err-country_name"
+                     oninput="RegisterModule.onCountryInput()" onblur="RegisterModule.onCountryBlur()">
+              <datalist id="country-options">${countriesOptions}</datalist>
+              <p id="country-search-help" class="text-[11px] text-slate-500 mt-1">Escriba parte del nombre y seleccione una opción del catálogo.</p>
               <div class="error-feedback" id="err-country_name"></div>
             </div>
 
@@ -1086,10 +1119,13 @@ const RegisterModule = {
               <label class="form-label text-xs font-bold text-slate-700" for="field-country_name">
                 País o territorio <span class="req">*</span>
               </label>
-              <select class="form-control text-sm bg-white" id="field-country_name" required onchange="RegisterModule.onFieldInput('field-country_name')">
-                <option value="">Seleccione país...</option>
-                ${countriesOptions}
-              </select>
+              <input type="search" class="form-control text-sm bg-white" id="field-country_name"
+                     list="country-options" placeholder="Escriba para buscar un país o territorio..."
+                     autocomplete="off" spellcheck="false" required
+                     aria-describedby="country-search-help err-country_name"
+                     oninput="RegisterModule.onCountryInput()" onblur="RegisterModule.onCountryBlur()">
+              <datalist id="country-options">${countriesOptions}</datalist>
+              <p id="country-search-help" class="text-[11px] text-slate-500 mt-1">Escriba parte del nombre y seleccione una opción del catálogo.</p>
               <div class="error-feedback" id="err-country_name"></div>
             </div>
 
@@ -1613,7 +1649,15 @@ const RegisterModule = {
     const hasInvalidLastChars = /[<>{}[\]\\\/=^$*+?|]/.test(data.last_name);
     checkField('field-last_name', 'err-last_name', data.last_name.length >= 2 && !hasInvalidLastChars, hasInvalidLastChars ? 'El apellido no debe contener caracteres especiales (<, >, /, =, etc.).' : 'El apellido debe tener al menos 2 caracteres (solo letras y espacios).');
 
-    checkField('field-country_name', 'err-country_name', data.country_name.length > 0, 'Debe seleccionar un país o territorio de la lista homologada.');
+    const resolvedCountry = this.resolveCountryFromCatalog(data.country_name);
+    checkField(
+      'field-country_name',
+      'err-country_name',
+      Boolean(resolvedCountry),
+      data.country_name.length > 0
+        ? 'Seleccione un país o territorio válido del catálogo.'
+        : 'Debe seleccionar un país o territorio de la lista homologada.'
+    );
 
     if (isAcademic) {
       checkField('field-job_title', 'err-job_title', data.job_title.length >= 2, 'El puesto o cargo formal es obligatorio (mínimo 2 caracteres).');

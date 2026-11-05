@@ -1,6 +1,6 @@
 const crypto = require('node:crypto');
 const { getDb, runTransaction } = require('../database/db');
-const { validateContact, normalizeEmail } = require('../utils/validator');
+const { validateContact, normalizeEmail, countryVariants } = require('../utils/validator');
 const { checkDuplicate } = require('./duplicateDetector');
 const { quality } = require('./contactQuality');
 const { equivalentDepartments, departmentKey } = require('../utils/departamentos');
@@ -250,8 +250,11 @@ function listContacts(filters = {}, user = null, paginate = false) {
   }
 
   if (filters.country_name) {
-    sql += ' AND c.country_name = ?';
-    params.push(filters.country_name);
+    const variants = countryVariants(filters.country_name);
+    sql += variants.length
+      ? ' AND LOWER(c.country_name) IN (' + variants.map(() => '?').join(',') + ')'
+      : ' AND 0';
+    params.push(...variants.map(country => country.toLowerCase()));
   }
 
   if (filters.subject_area) {

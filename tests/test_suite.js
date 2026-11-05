@@ -14,6 +14,56 @@ const testPasswordHash = `scrypt:${testSalt}:${scryptSync(testPassword, testSalt
 
 const appRoot = path.resolve(__dirname, '..', process.env.APP_ROOT || '.');
 
+test('catálogo de países y territorios ISO está completo, ordenado y normaliza nombres de carga', () => {
+  const { REGION_CODES, COUNTRIES, resolveCountry, countryVariants, validateContact } = require(path.join(appRoot, 'src/utils/validator'));
+  assert.equal(REGION_CODES.length, 249);
+  assert.equal(COUNTRIES.length, 249);
+  assert.equal(new Set(COUNTRIES).size, 249);
+  const collator = new Intl.Collator('es', { sensitivity: 'base', usage: 'sort' });
+  assert.deepEqual(COUNTRIES, [...COUNTRIES].sort(collator.compare));
+  for (const country of ['Afganistán', 'Costa Rica', 'España', 'Estados Unidos', 'Anguila', 'Mayotte', 'Zimbabue']) {
+    assert.ok(COUNTRIES.includes(country), country);
+  }
+  assert.equal(resolveCountry('Spain'), 'España');
+  assert.equal(resolveCountry('ES'), 'España');
+  assert.equal(resolveCountry('U.S.A.'), 'Estados Unidos');
+  assert.equal(resolveCountry('costa-rica'), 'Costa Rica');
+  assert.equal(resolveCountry('Atlantis'), null);
+  assert.ok(countryVariants('Estados Unidos').includes('United States'));
+  assert.ok(countryVariants('Spain').includes('España'));
+  const base = { tipo_contacto: 'EMPLEADOR', title: 'Mr', first_name: 'País', last_name: 'Prueba',
+    email: 'pais@example.org', position: 'Gerente', industry: 'Servicios', company_name: 'Empresa Externa' };
+  assert.equal(validateContact({ ...base, country_name: 'Japan' }, 'EMPLEADOR').sanitized.country_name, 'Japón');
+  assert.match(validateContact({ ...base, country_name: 'Atlantis' }, 'EMPLEADOR').errors.country, /válido/);
+});
+
+test('filtro de país conserva contactos históricos guardados en inglés', async t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-country-filter-'));
+  const server = await startServer(storage);
+  t.after(async () => { await server.stop(); fs.rmSync(storage, { recursive: true, force: true }); });
+  const admin = await request(server, '/api/auth/login', 'POST', { username: testUsername, password: testPassword });
+  const { DatabaseSync } = require('node:sqlite');
+  const db = new DatabaseSync(path.join(storage, 'tec_qs.sqlite'));
+  db.prepare(`INSERT INTO contactos
+    (id,tipo_contacto,title,first_name,last_name,email,email_normalized,country_name,estado,metodo_ingreso,created_by,created_at)
+    VALUES (?, 'EMPLEADOR', 'Mr', 'Histórico', 'País', ?, ?, 'United States', 'NUEVO', 'CARGA_MASIVA', 'test', ?)`)
+    .run('country-historical', 'country.historical@example.org', 'country.historical@example.org', new Date().toISOString());
+  db.close();
+  for (const filter of ['Estados%20Unidos', 'United%20States', 'US']) {
+    const result = await request(server, '/api/contacts?country_name=' + filter, 'GET', undefined, admin.cookies);
+    assert.equal(result.status, 200, result.text);
+    assert.ok(result.json().contacts.some(contact => contact.id === 'country-historical'));
+  }
+});
+
+test('registro académico y de empleador muestra búsqueda sobre el catálogo completo de países', () => {
+  const source = fs.readFileSync(path.join(appRoot, 'public/js/register.js'), 'utf8');
+  assert.equal((source.match(/list="country-options"/g) || []).length, 2);
+  assert.equal((source.match(/<datalist id="country-options">/g) || []).length, 2);
+  assert.match(source, /Escriba parte del nombre y seleccione una opción del catálogo/);
+  assert.match(source, /resolveCountryFromCatalog/);
+});
+
 test('institución externa obligatoria reconoce variantes TEC e ITCR sin bloquear palabras que solo contienen tec', () => {
   const policy=require(path.join(appRoot,'public/js/organizationPolicy'));
   const {validateContact}=require(path.join(appRoot,'src/utils/validator'));
@@ -64,7 +114,7 @@ test('formulario bloquea institución y empresa TEC con el mismo mensaje que el 
   const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'válido',textContent:'',innerHTML:'',classList:{add(){},remove(){}}});return nodes.get(id);};
   const context=vm.createContext({document:{getElementById:node}});
   vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/organizationPolicy.js'),'utf8')+'\n'+fs.readFileSync(path.join(appRoot,'public/js/register.js'),'utf8')+'\nglobalThis.mod=RegisterModule;',context);
-  const mod=context.mod;mod.isReporterVerified=()=>true;mod.submitting=true;
+  const mod=context.mod;mod.catalogs={paises:['Costa Rica']};mod.isReporterVerified=()=>true;mod.submitting=true;
   const data={title:'Dr',first_name:'Persona',last_name:'Externa',email:'externa@example.org',country_name:'Costa Rica',phone:'',sede_id:'sede-cartago',departamento_id:'dep-comp',recomienda_nombre:'Persona TEC',recomienda_email:'cbrenes@itcr.ac.cr',
     job_title:'Profesor',department_unit:'Física',subject_area:'Física',institution:'Universidad Externa',position:'Gerente',industry:'Servicios',company_name:'Empresa Externa'};
   mod.getFormData=()=>data;
@@ -2398,7 +2448,7 @@ test('consolidado histórico conserva faltantes, texto literal y correos TEC con
   assert.equal(all.length,4);assert.equal(all.filter(c=>c.email==='historico.dual@example.org').length,1);
   const academic=all.find(c=>c.email==='historico.dual@example.org'&&c.tipo_contacto==='ACADEMICO');
   assert.equal(academic.last_name,attack);assert.equal(academic.job_title,'');assert.equal(academic.subject_area,'');
-  assert.equal(academic.country_name,'Spain');assert.equal(academic.escuela_proponente,'Centro Uno');
+  assert.equal(academic.country_name,'España');assert.equal(academic.escuela_proponente,'Centro Uno');
   const internal=all.find(c=>c.email==='historico.interno@itcr.ac.cr');
   assert.equal(internal.country_name,'');assert.equal(internal.title,'');assert.equal(internal.estado,'NUEVO');
   const detail=(await request(server,'/api/contacts/'+academic.id,'GET',undefined,admin.cookies)).json();

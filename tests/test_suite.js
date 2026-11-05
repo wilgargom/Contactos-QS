@@ -1077,6 +1077,32 @@ test('migración conserva contactos, retira sesiones antiguas y respeta vencimie
   check.close();
 });
 
+test('arranque migra un padrón anterior a organizaciones antes de crear el índice compuesto', t => {
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-old-staff-schema-'));
+  t.after(() => fs.rmSync(storage, { recursive: true, force: true }));
+  const { DatabaseSync } = require('node:sqlite');
+  const file = path.join(storage, 'tec_qs.sqlite');
+  const db = new DatabaseSync(file);
+  db.exec(`CREATE TABLE funcionarios (
+    id TEXT PRIMARY KEY, nombre TEXT NOT NULL, email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    email_normalized TEXT NOT NULL UNIQUE, dependencia TEXT NOT NULL, sede TEXT NOT NULL,
+    sede_id TEXT, departamento_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    cargo TEXT NOT NULL DEFAULT '', activo INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1
+  );`);
+  db.prepare(`INSERT INTO funcionarios (id,nombre,email,email_normalized,dependencia,sede,created_at,updated_at)
+    VALUES ('old-1','Persona anterior','anterior@itcr.ac.cr','anterior@itcr.ac.cr','Escuela anterior','Cartago',?,?)`)
+    .run(new Date().toISOString(), new Date().toISOString());
+  db.close();
+  const result = spawnSync(process.execPath, ['-e', `const db=require('./src/database/db').getDb();
+    const row=db.prepare("SELECT organizacion,email_normalized FROM funcionarios WHERE id='old-1'").get();
+    process.stdout.write(JSON.stringify({row,indexes:db.prepare("PRAGMA index_list(funcionarios)").all().map(i=>i.name)}));`],
+    { cwd: appRoot, encoding: 'utf8', env: { ...process.env, STORAGE_DIR: storage } });
+  assert.equal(result.status, 0, result.stderr);
+  const migrated = JSON.parse(result.stdout);
+  assert.deepEqual(migrated.row, { organizacion: 'TEC', email_normalized: 'anterior@itcr.ac.cr' });
+  assert.ok(migrated.indexes.includes('idx_funcionarios_org_email'));
+});
+
 
 test('sin configuración privada se conserva Usuario y se bloquea administración', async t => {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'qs-unconfigured-'));

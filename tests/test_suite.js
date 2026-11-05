@@ -93,7 +93,7 @@ test('formulario bloquea institución y empresa TEC con el mismo mensaje que el 
   const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'válido',textContent:'',innerHTML:'',classList:{add(){},remove(){}}});return nodes.get(id);};
   const context=vm.createContext({document:{getElementById:node}});
   vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/organizationPolicy.js'),'utf8')+'\n'+fs.readFileSync(path.join(appRoot,'public/js/register.js'),'utf8')+'\nglobalThis.mod=RegisterModule;',context);
-  const mod=context.mod;mod.isReporterVerified=()=>true;mod.submitting=true;
+  const mod=context.mod;mod.catalogs={paises:['Costa Rica']};mod.isReporterVerified=()=>true;mod.submitting=true;
   const data={title:'Dr',first_name:'Persona',last_name:'Externa',email:'externa@example.org',country_name:'Costa Rica',phone:'',sede_id:'sede-cartago',departamento_id:'dep-comp',recomienda_nombre:'Persona TEC',recomienda_email:'cbrenes@itcr.ac.cr',
     job_title:'Profesor',department_unit:'Física',subject_area:'Física',institution:'Universidad Externa',position:'Gerente',industry:'Servicios',company_name:'Empresa Externa'};
   mod.getFormData=()=>data;
@@ -2427,7 +2427,7 @@ test('consolidado histórico conserva faltantes, texto literal y correos TEC con
   assert.equal(all.length,4);assert.equal(all.filter(c=>c.email==='historico.dual@example.org').length,1);
   const academic=all.find(c=>c.email==='historico.dual@example.org'&&c.tipo_contacto==='ACADEMICO');
   assert.equal(academic.last_name,attack);assert.equal(academic.job_title,'');assert.equal(academic.subject_area,'');
-  assert.equal(academic.country_name,'Spain');assert.equal(academic.escuela_proponente,'Centro Uno');
+  assert.equal(academic.country_name,'España');assert.equal(academic.escuela_proponente,'Centro Uno');
   const internal=all.find(c=>c.email==='historico.interno@itcr.ac.cr');
   assert.equal(internal.country_name,'');assert.equal(internal.title,'');assert.equal(internal.estado,'NUEVO');
   const detail=(await request(server,'/api/contacts/'+academic.id,'GET',undefined,admin.cookies)).json();

@@ -348,7 +348,8 @@ const App = {
       directory: document.getElementById('nav-btn-directory'),
       personal: document.getElementById('nav-btn-personal'),
       export: document.getElementById('nav-btn-export'),
-      admin: document.getElementById('nav-btn-admin')
+      admin: document.getElementById('nav-btn-admin'),
+      about: document.getElementById('nav-btn-about')
     };
 
     const activeClasses = ['bg-blue-50', 'text-blue-900', 'border', 'border-blue-200/80', 'shadow-sm', 'font-semibold'];
@@ -385,7 +386,7 @@ const App = {
     }
 
     // Ocultar todas las vistas de contenido
-    const views = ['register-view', 'bulk-upload-view', 'directory-view', 'export-view', 'admin-view', 'personal-view'];
+    const views = ['register-view', 'bulk-upload-view', 'directory-view', 'export-view', 'admin-view', 'personal-view', 'about-view'];
     views.forEach(v => {
       const el = document.getElementById(v);
       if (el) el.style.display = 'none';
@@ -401,6 +402,7 @@ const App = {
     else if (tabName === 'personal') PersonalDirectoryModule.init();
     else if (tabName === 'export') ExportModule.init(this.catalogs);
     else if (tabName === 'admin') AdminModule.init(this.catalogs);
+    else if (tabName === 'about') AboutModule.init();
   },
 
   initToastContainer() {

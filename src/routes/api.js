@@ -17,6 +17,7 @@ const {
 } = require('../utils/validator');
 const config = require('../config');
 const { verifyReporter } = require('../services/funcionarioService');
+const { normalizeOrganization, isValidOrganization, validReporterEmail } = require('../utils/reporterOrganizations');
 
 function visibleDuplicate(info, user) {
   if (!info?.existingContact || user.rol === 'ADMIN' || info.existingContact.created_by === user.id) return info;
@@ -25,10 +26,15 @@ function visibleDuplicate(info, user) {
 }
 
 function requireReporter(body, res, user) {
-  const reporter = verifyReporter(body.recomienda_email);
+  if (body.organizacion_reportante !== undefined && !isValidOrganization(body.organizacion_reportante)) {
+    res.status(422).json({ success: false, code: 'REPORTER_ORGANIZATION', field: 'organizacion_reportante', message: 'Seleccione una organización válida.' });
+    return null;
+  }
+  const organization = normalizeOrganization(body.organizacion_reportante);
+  const reporter = verifyReporter(body.recomienda_email, organization);
   if (!reporter) {
     res.status(422).json({ success: false, code: 'REPORTER_NOT_VERIFIED', field: 'recomienda_email',
-      message: 'Verifique un correo institucional registrado en el padrón del TEC antes de guardar o cargar contactos.' });
+      message: `Verifique un correo registrado y activo en el padrón de ${organization} antes de guardar o cargar contactos.` });
   }
   if (!reporter) return null;
   try { return require('../services/funcionarioScope').selectDepartment(reporter, body.departamento_id); }
@@ -90,12 +96,14 @@ function handleApi(req, res, pathname, query, body, user) {
     if (!['/api/personal/identity', '/api/personal/contacts'].includes(pathname) || method !== 'GET') {
       return res.status(404).json({ success: false, message: 'Consulta no encontrada.' });
     }
-    const funcionario = verifyReporter(query.email);
-    if (!funcionario) return res.status(422).json({ success: false, field: 'email', message: 'Ingrese un correo institucional registrado y activo en el padrón del TEC.' });
+    if (query.organizacion !== undefined && !isValidOrganization(query.organizacion)) return res.status(422).json({ success: false, field: 'organizacion', message: 'Seleccione una organización válida.' });
+    const organization = normalizeOrganization(query.organizacion);
+    const funcionario = verifyReporter(query.email, organization);
+    if (!funcionario) return res.status(422).json({ success: false, field: 'email', message: `Ingrese un correo registrado y activo en el padrón de ${organization}.` });
     if (pathname === '/api/personal/identity') return res.json({ success: true,
       funcionario: require('../services/funcionarioScope').identity(funcionario) });
     try {
-      const { email, ...filters } = query;
+      const { email, organizacion, ...filters } = query;
       return res.json({ success: true, ...require('../services/personalDirectoryService').list({ funcionario }, filters) });
     } catch (err) {
       const errorId = err.statusCode ? undefined : require('../services/errorService').recordError(err, { method, pathname });
@@ -264,20 +272,24 @@ function handleApi(req, res, pathname, query, body, user) {
     });
   }
 
-  // 3.2 Búsqueda y autocompletado de funcionarios del TEC
+  // 3.2 Búsqueda y autocompletado de personas funcionarias por organización
   if (pathname === '/api/funcionarios/by-email' && method === 'GET') {
     const email = (query.email || '').trim().toLowerCase();
+    if (query.organizacion !== undefined && !isValidOrganization(query.organizacion)) return res.status(400).json({ success: false, message: 'Organización inválida.' });
+    const organization = normalizeOrganization(query.organizacion);
     const funcService = require('../services/funcionarioService');
-    const funcionario = funcService.getFuncionarioByEmail(email);
+    const funcionario = funcService.getFuncionarioByEmail(email, organization);
     return res.json({ success: true, exists: !!funcionario, funcionario });
   }
 
   if ((pathname === '/api/funcionarios' || pathname === '/api/funcionarios/search') && method === 'GET') {
     const funcService = require('../services/funcionarioService');
+    if (query.organizacion !== undefined && !isValidOrganization(query.organizacion)) return res.status(400).json({ success: false, message: 'Organización inválida.' });
+    const organization = normalizeOrganization(query.organizacion);
     if (query.q) {
-      return res.json({ success: true, funcionarios: funcService.searchFuncionarios(query.q) });
+      return res.json({ success: true, funcionarios: funcService.searchFuncionarios(query.q, organization) });
     }
-    return res.json({ success: true, funcionarios: funcService.listFuncionarios() });
+    return res.json({ success: true, funcionarios: funcService.listFuncionarios(organization) });
   }
 
   if (pathname === '/api/funcionarios' && method === 'POST') {
@@ -306,8 +318,9 @@ function handleApi(req, res, pathname, query, body, user) {
       'Teléfono',
       'Sede TEC',
       'Dependencia TEC',
-      'Recomendado Por (Funcionario)',
-      'Correo Funcionario TEC',
+      'Organización reportante',
+      'Recomendado Por (Persona funcionaria)',
+      'Correo de la persona funcionaria',
       'Estado',
       'Método de Ingreso',
       'Fecha de Registro'
@@ -326,6 +339,7 @@ function handleApi(req, res, pathname, query, body, user) {
       c.phone || '',
       c.sede_nombre || 'Sede no asignada',
       c.departamento_nombre || 'Depto no asignado',
+      c.organizacion_reportante || 'TEC',
       c.recomienda_nombre || c.created_by_name || 'Funcionario TEC',
       c.recomienda_email || '',
       c.estado,
@@ -355,7 +369,8 @@ function handleApi(req, res, pathname, query, body, user) {
     const allowOverride = body.allow_duplicate_override === true;
     const result = contactService.createContact({ ...body, recomienda_nombre: reporter.nombre,
       recomienda_email: reporter.email_normalized, sede_id: reporter.sede_id,
-      departamento_id: reporter.departamento_id }, user, {
+      departamento_id: reporter.departamento_id, organizacion_reportante: reporter.organizacion || 'TEC',
+      reportante_funcionario_id: reporter.id }, user, {
       allowDuplicateOverride: allowOverride,
       metodoIngreso: 'INDIVIDUAL'
     });
@@ -499,6 +514,8 @@ function handleApi(req, res, pathname, query, body, user) {
 
     // Si la carga corresponde al Padrón de Funcionarios del TEC
     if (tipoContacto === 'FUNCIONARIOS') {
+      if (body.organizacion_reportante !== undefined && !isValidOrganization(body.organizacion_reportante)) return res.status(400).json({ success: false, message: 'Seleccione la organización del padrón.' });
+      const staffOrganization = normalizeOrganization(body.organizacion_reportante);
       let correctos = 0;
       let conErrores = 0;
       let duplicadosExactos = 0;
@@ -529,9 +546,9 @@ function handleApi(req, res, pathname, query, body, user) {
           const msg = 'Formato de correo inválido.';
           rowErrors.push(msg);
           errorDetails.push({ row: rowNum, column: 'Correo electrónico', field: 'email', foundValue: email || '(vacío)', problem: msg, recommendation: 'Corrija la dirección de correo electrónico.' });
-        } else if (!email.endsWith('@itcr.ac.cr') && !email.endsWith('@tec.ac.cr')) {
+        } else if (!validReporterEmail(email, staffOrganization)) {
           rowStatus = 'ERROR';
-          const msg = 'El correo debe pertenecer al dominio del TEC (@itcr.ac.cr o @tec.ac.cr).';
+          const msg = staffOrganization === 'TEC' ? 'El correo debe pertenecer al dominio del TEC (@itcr.ac.cr o @tec.ac.cr).' : 'Ingrese un correo electrónico completo y válido.';
           rowErrors.push(msg);
           errorDetails.push({ row: rowNum, column: 'Correo electrónico', field: 'email', foundValue: email, problem: msg, recommendation: 'Ingrese un correo institucional válido.' });
         }
@@ -562,7 +579,7 @@ function handleApi(req, res, pathname, query, body, user) {
         }
 
         // Las coincidencias del padrón se actualizan por correo; solo las filas repetidas del archivo se excluyen.
-        const existingInDb = rowStatus === 'CORRECTO' && getDb().prepare('SELECT id FROM funcionarios WHERE email_normalized = ?').get(email);
+        const existingInDb = rowStatus === 'CORRECTO' && getDb().prepare('SELECT id FROM funcionarios WHERE organizacion = ? AND email_normalized = ?').get(staffOrganization, email);
         if (existingInDb) rowErrors.push('Se actualizará la ficha y sus dependencias del padrón. Las asignaciones manuales se conservan.');
 
         if (rowStatus === 'CORRECTO') correctos++;
@@ -573,6 +590,7 @@ function handleApi(req, res, pathname, query, body, user) {
           data: {
             nombre,
             email,
+            organizacion: staffOrganization,
             dependencia,
             sede,
             cargo: row.cargo || row.Cargo || row.puesto || '',
@@ -734,13 +752,14 @@ function handleApi(req, res, pathname, query, body, user) {
 
       const funcionarioService = require('../services/funcionarioService');
       let importResult;
-      try { importResult = funcionarioService.bulkImportFuncionarios(rowsToImport, user); }
+      try { importResult = funcionarioService.bulkImportFuncionarios(rowsToImport, user, normalizeOrganization(body.organizacion_reportante)); }
       catch (err) { return res.status(422).json({ success: false, message: err.message,
         ...(err.code === 'STAFF_DEPARTMENT_REVIEW' ? { code: err.code, conflicts: err.conflicts } : {}) }); }
 
       // Guardar archivo original en staging Drive
       if (fileBase64) {
-        driveService.saveDocumentArchive(fileName || 'padron_funcionarios.xlsx', Buffer.from(fileBase64, 'base64'), 'PADRON_FUNCIONARIOS')
+        const staffOrg = normalizeOrganization(body.organizacion_reportante);
+        driveService.saveDocumentArchive(fileName || `padron_funcionarios_${staffOrg}.xlsx`, Buffer.from(fileBase64, 'base64'), `PADRON_FUNCIONARIOS_${staffOrg}`)
           .catch(err => console.error('Error al archivar en Drive:', err));
       }
 
@@ -763,6 +782,7 @@ function handleApi(req, res, pathname, query, body, user) {
     const reporterEmail = reporter.email_normalized;
     const defaultSede = reporter.sede_id;
     const defaultDepto = reporter.departamento_id;
+    const reporterOrganization = reporter.organizacion || 'TEC';
 
     try {
       runTransaction((trx) => {
@@ -770,11 +790,11 @@ function handleApi(req, res, pathname, query, body, user) {
         trx.prepare(`
           INSERT INTO lotes_carga (
             id, nombre_archivo, tipo_contacto, total_filas, correctos, con_errores,
-            posibles_duplicados, duplicados_exactos, cargado_por, cargado_por_email, created_at, detalles_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            posibles_duplicados, duplicados_exactos, cargado_por, cargado_por_email, organizacion_reportante, created_at, detalles_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           loteId, fileName || 'carga_excel.xlsx', tipo_contacto, rowsToImport.length,
-          rowsToImport.length, 0, 0, 0, reporterName, reporterEmail, now, JSON.stringify({ count: rowsToImport.length })
+          rowsToImport.length, 0, 0, 0, reporterName, reporterEmail, reporterOrganization, now, JSON.stringify({ count: rowsToImport.length })
         );
 
         const stmtContact = trx.prepare(`
@@ -782,9 +802,9 @@ function handleApi(req, res, pathname, query, body, user) {
             id, tipo_contacto, source, title, first_name, last_name, email, email_normalized, phone,
             country_name, sede_id, departamento_id, job_title, department_unit, institution, subject_area,
             position, industry, company_name, estado, metodo_ingreso, lote_id,
-            recomienda_nombre, recomienda_email,
+            recomienda_nombre, recomienda_email, organizacion_reportante, reportante_funcionario_id,
             created_by, created_by_name, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         for (const [index, rawRow] of rowsToImport.entries()) {
@@ -827,6 +847,8 @@ function handleApi(req, res, pathname, query, body, user) {
             loteId,
             reporterName,
             reporterEmail,
+            reporterOrganization,
+            reporter.id,
             user.id,
             user.nombre_completo,
             now

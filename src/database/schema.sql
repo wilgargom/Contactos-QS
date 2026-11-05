@@ -143,5 +143,7 @@ CREATE TABLE IF NOT EXISTS funcionarios (
   ,UNIQUE (organizacion, email_normalized)
 );
 
-CREATE INDEX IF NOT EXISTS idx_funcionarios_email_norm ON funcionarios(organizacion, email_normalized);
+-- Debe ser compatible con bases anteriores a la columna organizacion; db.js
+-- crea el índice compuesto después de ejecutar la migración.
+CREATE INDEX IF NOT EXISTS idx_funcionarios_email_norm ON funcionarios(email_normalized);
 

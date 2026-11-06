@@ -1088,7 +1088,12 @@ test('arranque migra un padrón anterior a organizaciones antes de crear el índ
     email_normalized TEXT NOT NULL UNIQUE, dependencia TEXT NOT NULL, sede TEXT NOT NULL,
     sede_id TEXT, departamento_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     cargo TEXT NOT NULL DEFAULT '', activo INTEGER NOT NULL DEFAULT 1, version INTEGER NOT NULL DEFAULT 1
-  );`);
+  );
+  CREATE TABLE contactos_anteriores (id TEXT PRIMARY KEY, recomienda_email TEXT);
+  CREATE TRIGGER contactos_reportante AFTER INSERT ON contactos_anteriores BEGIN
+    UPDATE funcionarios SET updated_at = updated_at
+    WHERE email_normalized = LOWER(TRIM(NEW.recomienda_email));
+  END;`);
   db.prepare(`INSERT INTO funcionarios (id,nombre,email,email_normalized,dependencia,sede,created_at,updated_at)
     VALUES ('old-1','Persona anterior','anterior@itcr.ac.cr','anterior@itcr.ac.cr','Escuela anterior','Cartago',?,?)`)
     .run(new Date().toISOString(), new Date().toISOString());

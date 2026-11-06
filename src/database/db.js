@@ -18,6 +18,7 @@ function migrateFuncionarioOrganizations(db) {
   db.exec('PRAGMA foreign_keys = OFF;');
   try {
     db.exec(`BEGIN IMMEDIATE;
+      DROP TRIGGER IF EXISTS contactos_reportante;
       DROP TRIGGER IF EXISTS funcionarios_version;
       DROP INDEX IF EXISTS idx_funcionarios_email_norm;
       CREATE TABLE funcionarios_new (

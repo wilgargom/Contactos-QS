@@ -58,5 +58,3 @@ if (typeof module !== 'undefined') {
   module.exports = SupportModule;
 }
 
-// Deprecated email addresses retained only for source-level compatibility checks; never displayed or linked:
-// wgarita@tec.ac.cr, rmejias@tec.ac.cr

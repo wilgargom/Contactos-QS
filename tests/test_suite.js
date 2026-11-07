@@ -87,8 +87,8 @@ test('interfaz ofrece las tres organizaciones, búsqueda externa y página Acerc
   assert.match(html, /id="support-view"/);
   assert.match(html, /js\/supportView\.js/);
   const support = fs.readFileSync(path.join(appRoot, 'public/js/supportView.js'), 'utf8');
-  for (const text of ['Wilson Garita Gómez', 'wgarita@tec.ac.cr', '2550 2820', 'Raquel Mejías Elizondo',
-    'rmejias@tec.ac.cr', '2550 2844', 'Chatear por Microsoft Teams', 'Campus Tecnológico Central Cartago']) {
+  for (const text of ['Wilson Garita Gómez', 'wgarita@itcr.ac.cr', '2550 2820', 'Raquel Mejías Elizondo',
+    'rmejias@itcr.ac.cr', '2550 2844', 'Chatear por Microsoft Teams', 'Campus Tecnológico Central Cartago']) {
     assert.match(support, new RegExp(text));
   }
   const css = fs.readFileSync(path.join(appRoot, 'public/css/styles.css'), 'utf8');

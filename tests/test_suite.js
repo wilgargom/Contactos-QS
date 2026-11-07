@@ -141,7 +141,7 @@ test('instituciones TEC se bloquean en registro, vista previa y confirmación ma
   }
 });
 
-test('formulario bloquea institución y empresa TEC con el mismo mensaje que el servidor', () => {
+test('formulario habilita guardar para los tres padrones y bloquea organizaciones TEC externas', () => {
   const vm=require('node:vm'),nodes=new Map();
   const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'válido',textContent:'',innerHTML:'',classList:{add(){},remove(){}}});return nodes.get(id);};
   const context=vm.createContext({document:{getElementById:node}});
@@ -150,10 +150,25 @@ test('formulario bloquea institución y empresa TEC con el mismo mensaje que el 
   const data={title:'Dr',first_name:'Persona',last_name:'Externa',email:'externa@example.org',country_name:'Costa Rica',phone:'',sede_id:'sede-cartago',departamento_id:'dep-comp',recomienda_nombre:'Persona TEC',recomienda_email:'cbrenes@itcr.ac.cr',
     job_title:'Profesor',department_unit:'Física',subject_area:'Física',institution:'Universidad Externa',position:'Gerente',industry:'Servicios',company_name:'Empresa Externa'};
   mod.getFormData=()=>data;
-  for(const [tipo,field]of[['ACADEMICO','institution'],['EMPLEADOR','company_name']]) {
-    mod.currentType=tipo;data[field]='I.T.C.R.';assert.equal(mod.validateLive(),false);assert.equal(node('btn-save').disabled,true);assert.match(node('err-'+field).innerHTML,/Restricción institucional/);
-    data[field]='Organización Externa';assert.equal(mod.validateLive(),true);
+  for(const [organization,reporterEmail] of [['TEC','cbrenes@itcr.ac.cr'],['FUNDATEC','persona.fundatec@example.org'],['DOCINADE','persona.docinade@example.org']]) {
+    mod.reporterOrganization=organization;data.recomienda_email=reporterEmail;
+    for(const [tipo,field]of[['ACADEMICO','institution'],['EMPLEADOR','company_name']]) {
+      mod.currentType=tipo;data[field]='I.T.C.R.';assert.equal(mod.validateLive(),false);assert.equal(node('btn-save').disabled,true);assert.match(node('err-'+field).innerHTML,/Restricción institucional/);
+      data[field]='Organización Externa';assert.equal(mod.validateLive(),true,`${organization} ${tipo}`);assert.equal(node('btn-save').disabled,false,`${organization} ${tipo}`);
+    }
   }
+});
+
+test('cambiar la organización reportante elimina el contacto escrito y su borrador', () => {
+  const vm=require('node:vm');let removed='';
+  const context=vm.createContext({clearTimeout(){},App:{currentUser:{id:'prueba'}},localStorage:{removeItem(){}},sessionStorage:{removeItem:key=>{removed=key;}},document:{getElementById(){return null;}}});
+  vm.runInContext(fs.readFileSync(path.join(appRoot,'public/js/register.js'),'utf8')+'\nglobalThis.mod=RegisterModule;',context);
+  const mod=context.mod;mod.reporterOrganization='TEC';mod.currentType='ACADEMICO';mod.draft={type:'ACADEMICO',fields:{'field-email':'contacto@example.org'}};
+  mod.emailExists=true;mod.emailValid=true;mod.emailIsTecDomain=true;mod.isCustomSubject=true;mod.submitting=true;mod.render=()=>{};
+  mod.changeReporterOrganization('FUNDATEC');
+  assert.equal(mod.reporterOrganization,'FUNDATEC');assert.equal(mod.currentType,null);assert.equal(mod.draft,null);
+  assert.equal(mod.emailExists,false);assert.equal(mod.emailValid,false);assert.equal(mod.emailIsTecDomain,false);assert.equal(mod.submitting,false);
+  assert.match(removed,/tec_qs_contact_draft_/);
 });
 
 test('correo único global bloquea consolidado previo, otras categorías, confirmaciones y carreras sin borrar históricos', async t => {

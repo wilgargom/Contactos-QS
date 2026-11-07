@@ -453,7 +453,10 @@ const RegisterModule = {
 
   changeReporterOrganization(organization) {
     if (!['TEC','FUNDATEC','DOCINADE'].includes(organization) || organization === this.reporterOrganization) return;
-    this.captureDraft(); this.reporterOrganization = organization; this.resetReporter(); this.render();
+    this.reporterOrganization = organization;
+    this.clearContactEntry();
+    this.resetReporter();
+    this.render();
   },
 
   searchFuncionarios(value) {
@@ -1663,7 +1666,7 @@ const RegisterModule = {
 
     // 0. Identificación de quien registra el contacto (Validación desde la tarjeta institucional)
     const recEmailClean = (data.recomienda_email || '').toLowerCase().trim();
-    const isRecEmailValid = recEmailClean.length >= 6 && (recEmailClean.endsWith('@itcr.ac.cr') || recEmailClean.endsWith('@tec.ac.cr')) && !/\s/.test(recEmailClean);
+    const isRecEmailValid = recEmailClean.length >= 6 && this.isInstitutionalEmail(recEmailClean) && !/\s/.test(recEmailClean);
     if (!data.recomienda_nombre || data.recomienda_nombre.length < 3) {
       isValid = false;
     }
@@ -1772,7 +1775,6 @@ const RegisterModule = {
       return;
     }
     if (!this.selectedDeptoId) { this.chooseReporterDepartment(); return; }
-    this.submitting = true;
     if (this.emailIsTecDomain) {
       App.showToast('Restricción QS: No se permiten correos del dominio institucional (@itcr.ac.cr / @tec.ac.cr). Los contactos deben ser externos.', 'error');
       return;
@@ -1783,7 +1785,10 @@ const RegisterModule = {
       return;
     }
 
+    this.submitting = true;
     if (!this.validateLive()) {
+      this.submitting = false;
+      this.validateLive();
       App.showToast('Por favor complete los campos obligatorios indicados.', 'warning');
       return;
     }
@@ -1814,13 +1819,14 @@ const RegisterModule = {
         App.showToast(err.message || 'Revise los campos indicados.', 'error');
       }
     } finally {
+      this.submitting = false;
       if (btnSave) {
-        btnSave.disabled = !this.isReporterVerified();
         btnSave.innerHTML = `
           <i class="fa-solid fa-floppy-disk"></i>
           Guardar Contacto
         `;
       }
+      this.validateLive();
     }
   },
 
@@ -1840,8 +1846,7 @@ const RegisterModule = {
     try { sessionStorage.removeItem(this.draftKey()); } catch (_) {}
   },
 
-  resetForm() {
-    if (this.draft && !window.confirm('¿Desea descartar el borrador del contacto?')) return;
+  clearContactEntry() {
     this.clearDraft();
     clearTimeout(this.emailCheckTimeout);
     this.emailExists = false;
@@ -1852,6 +1857,11 @@ const RegisterModule = {
     this.touchedFields = {};
     this.submitting = false;
     this.currentType = null;
+  },
+
+  resetForm() {
+    if (this.draft && !window.confirm('¿Desea descartar el borrador del contacto?')) return;
+    this.clearContactEntry();
     this.resetReporter();
     this.render();
   },

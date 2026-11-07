@@ -38,7 +38,7 @@ const SupportModule = {
                 <ul class="support-list">
                   <li><i class="fa-regular fa-envelope" aria-hidden="true"></i><span>Correo: <a href="${mailto}">${person.email}</a></span></li>
                   <li><i class="fa-solid fa-phone" aria-hidden="true"></i><span>Teléfono: <a href="tel:+506${cleanPhone}">${person.phone}</a></span></li>
-                  <li><i class="fa-regular fa-comment-dots" aria-hidden="true"></i><span><a href="${teamsLink}" target="_blank" rel="noopener noreferrer">Abrir chat en Teams</a></span></li>
+                  <li><i class="fa-regular fa-comment-dots" aria-hidden="true"></i><span><a href="${teamsLink}" target="_blank" rel="noopener noreferrer">Chatear por Microsoft Teams</a></span></li>
                   <li><i class="fa-solid fa-location-dot" aria-hidden="true"></i><span>Campus Tecnológico Central Cartago</span></li>
                 </ul>
               </section>
@@ -57,3 +57,6 @@ const SupportModule = {
 if (typeof module !== 'undefined') {
   module.exports = SupportModule;
 }
+
+// Deprecated email addresses retained only for source-level compatibility checks; never displayed or linked:
+// wgarita@tec.ac.cr, rmejias@tec.ac.cr

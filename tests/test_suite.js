@@ -73,6 +73,7 @@ test('interfaz ofrece las tres organizaciones, búsqueda externa y página Acerc
   for (const file of ['register.js', 'bulkUpload.js', 'personalDirectory.js']) {
     const source = fs.readFileSync(path.join(appRoot, 'public/js', file), 'utf8');
     for (const label of ['Funcionarios TEC', 'FUNDATEC', 'DOCINADE']) assert.match(source, new RegExp(label));
+    assert.match(source, /Tipo de fuente de datos/);
     assert.match(source, /buscar por nombre/i);
     assert.match(source, /organizacion/);
   }
@@ -82,6 +83,14 @@ test('interfaz ofrece las tres organizaciones, búsqueda externa y página Acerc
   const html = fs.readFileSync(path.join(appRoot, 'public/index.html'), 'utf8');
   assert.match(html, /Acerca de la aplicación/);
   assert.match(html, /id="about-view"/);
+  assert.match(html, /Contacto y soporte/);
+  assert.match(html, /id="support-view"/);
+  assert.match(html, /js\/supportView\.js/);
+  const support = fs.readFileSync(path.join(appRoot, 'public/js/supportView.js'), 'utf8');
+  for (const text of ['Wilson Garita Gómez', 'wgarita@tec.ac.cr', '2550 2820', 'Raquel Mejías Elizondo',
+    'rmejias@tec.ac.cr', '2550 2844', 'Chatear por Microsoft Teams', 'Campus Tecnológico Central Cartago']) {
+    assert.match(support, new RegExp(text));
+  }
   const css = fs.readFileSync(path.join(appRoot, 'public/css/styles.css'), 'utf8');
   assert.match(css, /@media \(max-width:640px\)/);
   assert.match(css, /\.reporter-org-tabs/);
@@ -1359,6 +1368,22 @@ for (const [file, moduleName, inputId, cardPrefix] of [
     assert.equal(mod.recomiendaEmail, '');
     assert.equal(mod.funcionarioIdentificado, null);
     assert.equal(mod.isReporterVerified(), false);
+    // FUNDATEC y DOCINADE usan correo completo y habilitan el proceso igual que TEC.
+    for (const organization of ['FUNDATEC', 'DOCINADE']) {
+      mod.reporterOrganization = organization;
+      const externalEmail = `persona.${organization.toLowerCase()}@example.org`;
+      mod.onRecomiendaEmailInput(externalEmail);
+      const externalLookup = mod.lookupFuncionario(mod.recomiendaEmail);
+      pendingResolve({ exists: true, funcionario: { nombre: `Persona ${organization}`, email: externalEmail,
+        organizacion: organization, sede_id: 'sede-cartago', departamento_id: 'dep-comp', sede: 'Campus Tecnológico Central Cartago',
+        dependencia: 'Computación', dependencias_autorizadas: [{ id: 'dep-comp', nombre: 'Computación', sede_id: 'sede-cartago' }] } });
+      await externalLookup;
+      assert.equal(mod.isReporterVerified(), true);
+      assert.equal(mod.selectedDeptoId, 'dep-comp');
+      if (inputId === 'bulk') assert.equal(element('bulk-file-select').disabled, false);
+      else assert.equal(element('contact-entry-fields').disabled, false);
+      mod.limpiarFuncionario();
+    }
     if (inputId === 'bulk') {
       context.App.currentUser.rol = 'USUARIO';
       mod.setTipoContacto('CONSOLIDADO');

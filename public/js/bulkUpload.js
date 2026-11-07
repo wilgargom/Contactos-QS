@@ -176,7 +176,7 @@ const BulkUploadModule = {
   },
 
   renderOrganizationTabs() {
-    return `<div class="reporter-org-tabs" role="tablist" aria-label="Organización de la persona que aporta el contacto">${[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([value,label]) => `<button type="button" role="tab" aria-selected="${this.reporterOrganization === value}" class="reporter-org-tab ${this.reporterOrganization === value ? 'is-active' : ''}" onclick="BulkUploadModule.changeReporterOrganization('${value}')">${label}</button>`).join('')}</div>`;
+    return `<div class="reporter-source-selector"><h4 class="reporter-org-heading">Tipo de fuente de datos</h4><p class="reporter-org-help">Seleccione la organización a la que pertenece la persona responsable de la carga.</p><div class="reporter-org-tabs" role="tablist" aria-label="Organización de la persona que aporta el contacto">${[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([value,label]) => `<button type="button" role="tab" aria-selected="${this.reporterOrganization === value}" class="reporter-org-tab ${this.reporterOrganization === value ? 'is-active' : ''}" onclick="BulkUploadModule.changeReporterOrganization('${value}')">${label}</button>`).join('')}</div></div>`;
   },
 
   changeReporterOrganization(organization) {

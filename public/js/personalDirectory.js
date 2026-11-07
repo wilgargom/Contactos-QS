@@ -56,7 +56,7 @@ const PersonalDirectoryModule = {
     if (document.getElementById('personal-name-search')) document.getElementById('personal-name-search').oninput = event => this.searchByName(event.target.value);
   },
   renderOrganizationTabs() {
-    return `<div class="reporter-org-tabs" role="tablist" aria-label="Organización de la persona consultada">${[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([value,label]) => `<button type="button" role="tab" aria-selected="${this.organization === value}" class="reporter-org-tab ${this.organization === value ? 'is-active' : ''}" onclick="PersonalDirectoryModule.changeOrganization('${value}')">${label}</button>`).join('')}</div>`;
+    return `<div class="reporter-source-selector"><h4 class="reporter-org-heading">Tipo de fuente de datos</h4><p class="reporter-org-help">Seleccione la organización de la persona cuyos contactos desea consultar.</p><div class="reporter-org-tabs" role="tablist" aria-label="Organización de la persona consultada">${[['TEC','Funcionarios TEC'],['FUNDATEC','FUNDATEC'],['DOCINADE','DOCINADE']].map(([value,label]) => `<button type="button" role="tab" aria-selected="${this.organization === value}" class="reporter-org-tab ${this.organization === value ? 'is-active' : ''}" onclick="PersonalDirectoryModule.changeOrganization('${value}')">${label}</button>`).join('')}</div></div>`;
   },
   changeOrganization(organization) {
     if (!['TEC','FUNDATEC','DOCINADE'].includes(organization) || organization === this.organization) return;

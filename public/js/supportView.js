@@ -3,8 +3,8 @@ const SupportModule = {
     const container = document.getElementById('support-view');
     if (!container) return;
     const people = [
-      { name: 'Wilson Garita Gómez', role: 'Unidad de Análisis y Gestión de la Información', email: 'wgarita@tec.ac.cr', phone: '2550 2820' },
-      { name: 'Raquel Mejías Elizondo', role: 'Coordinación', email: 'rmejias@tec.ac.cr', phone: '2550 2844' }
+      { name: 'Wilson Garita Gómez', role: 'Unidad de Análisis y Gestión de la Información', email: 'wgarita@itcr.ac.cr', phone: '2550 2820' },
+      { name: 'Raquel Mejías Elizondo', role: 'Coordinación', email: 'rmejias@itcr.ac.cr', phone: '2550 2844' }
     ];
     container.innerHTML = `<article class="support-page">
       <header class="support-header"><h2><i class="fa-solid fa-headset" aria-hidden="true"></i> Contacto y soporte</h2><p>Si presenta un inconveniente con la identificación, el registro de contactos, una carga masiva o la consulta de información, comuníquese con alguna de las personas responsables.</p></header>
